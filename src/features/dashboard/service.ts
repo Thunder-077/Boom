@@ -1,6 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import type {
   ExamAllocationSettings,
+  ExamGenerationProgress,
   ExamSessionTime,
   ExamSessionTimeUpsert,
   ExamPlanOverview,
@@ -14,7 +15,6 @@ import type {
   ExamStaffTask,
   ExamStaffTaskQuery,
   TeacherDutyStat,
-  GenerateLatestExamPlanResult,
   ExportLatestExamAllocationBundleResult,
 } from "../../entities/exam-plan/model";
 import type { ListResult } from "../../shared/types/api";
@@ -27,7 +27,8 @@ export interface ExamAllocationService {
     examTitle: string;
     examNotices: string[];
   }): Promise<{ success: boolean }>;
-  generate(payload?: { defaultCapacity?: number; maxCapacity?: number }): Promise<GenerateLatestExamPlanResult>;
+  startGenerate(payload?: { defaultCapacity?: number; maxCapacity?: number }): Promise<{ success: boolean }>;
+  getGenerationProgress(): Promise<ExamGenerationProgress>;
   getOverview(): Promise<ExamPlanOverview>;
   listSessions(params: ExamPlanSessionQuery): Promise<ListResult<ExamPlanSession>>;
   getSessionDetail(sessionId: number): Promise<ExamPlanSessionDetail>;
@@ -50,8 +51,11 @@ export const examAllocationService: ExamAllocationService = {
   updateSettings(payload) {
     return invoke<{ success: boolean }>("update_exam_allocation_settings", { payload });
   },
-  generate(payload) {
-    return invoke<GenerateLatestExamPlanResult>("generate_latest_exam_plan", { payload });
+  startGenerate(payload) {
+    return invoke<{ success: boolean }>("start_generate_latest_exam_plan", { payload });
+  },
+  getGenerationProgress() {
+    return invoke<ExamGenerationProgress>("get_exam_generation_progress");
   },
   getOverview() {
     return invoke<ExamPlanOverview>("get_latest_exam_plan_overview");

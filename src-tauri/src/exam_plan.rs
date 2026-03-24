@@ -3,8 +3,8 @@ use tauri::AppHandle;
 use crate::exam_allocation;
 
 pub use crate::exam_allocation::{
-    ExamAllocationSettings, ExamPlanOverview, ExamPlanSessionDetail, GenerateLatestExamPlanPayload,
-    GenerateLatestExamPlanResult, ListExamPlanSessionsParams, SuccessResponse,
+    ExamAllocationSettings, ExamGenerationProgress, ExamPlanOverview, ExamPlanSessionDetail, GenerateLatestExamPlanPayload,
+    ListExamPlanSessionsParams, SuccessResponse,
 };
 pub use crate::score::ListResult;
 
@@ -24,16 +24,21 @@ pub fn update_exam_allocation_settings(
 pub use crate::exam_allocation::UpdateExamAllocationSettingsPayload;
 
 #[tauri::command]
-pub fn generate_latest_exam_plan(
+pub fn start_generate_latest_exam_plan(
     app: AppHandle,
     payload: Option<GenerateLatestExamPlanPayload>,
-) -> Result<GenerateLatestExamPlanResult, String> {
-    exam_allocation::generate_latest_exam_plan(app, payload)
+) -> Result<SuccessResponse, String> {
+    exam_allocation::start_generate_latest_exam_plan(app, payload)
 }
 
 #[tauri::command]
 pub fn get_latest_exam_plan_overview(app: AppHandle) -> Result<ExamPlanOverview, String> {
     exam_allocation::get_latest_exam_plan_overview(app)
+}
+
+#[tauri::command]
+pub fn get_exam_generation_progress(app: AppHandle) -> Result<ExamGenerationProgress, String> {
+    exam_allocation::get_exam_generation_progress(app)
 }
 
 #[tauri::command]

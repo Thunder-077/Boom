@@ -1,5 +1,7 @@
 use std::cmp::Ordering;
 use std::collections::{HashMap, HashSet};
+use std::thread;
+use std::time::Duration;
 
 use chrono::{DateTime, NaiveDateTime, Utc};
 use rusqlite::types::Value;
@@ -9,11 +11,13 @@ use tauri::AppHandle;
 
 use crate::app_log;
 use crate::class_config;
+use crate::export_bundle;
 use crate::score::{self, AppError, ListResult, Subject};
 use crate::teacher;
 
 const DEFAULT_CAPACITY: i64 = 40;
 const DEFAULT_MAX_CAPACITY: i64 = 41;
+const GENERATION_STAGE_PAUSE_MS: u64 = 650;
 const DEFAULT_EXAM_TITLE: &str = "2026年3月月考";
 const DEFAULT_EXAM_NOTICES: [&str; 5] = [
     "1. 考生进入考场，准备好2B铅笔、书写用0.5mm黑色签字笔、橡皮等考试必需用品。",
@@ -150,6 +154,20 @@ pub struct ExamPlanOverview {
     self_study_room_count: i64,
     student_allocation_count: i64,
     warning_count: i64,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ExamGenerationProgress {
+    status: String,
+    stage: String,
+    stage_label: String,
+    percent: i64,
+    message: String,
+    current_grade: Option<String>,
+    total_grades: i64,
+    completed_grades: i64,
+    updated_at: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -594,6 +612,19 @@ fn ensure_schema(conn: &Connection) -> Result<(), AppError> {
             warning_count INTEGER NOT NULL
         );
 
+        CREATE TABLE IF NOT EXISTS exam_generation_progress (
+            id INTEGER PRIMARY KEY,
+            status TEXT NOT NULL,
+            stage TEXT NOT NULL,
+            stage_label TEXT NOT NULL,
+            percent INTEGER NOT NULL,
+            message TEXT NOT NULL,
+            current_grade TEXT,
+            total_grades INTEGER NOT NULL DEFAULT 0,
+            completed_grades INTEGER NOT NULL DEFAULT 0,
+            updated_at TEXT NOT NULL
+        );
+
         CREATE TABLE IF NOT EXISTS latest_exam_plan_sessions (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             grade_name TEXT NOT NULL,
@@ -778,6 +809,10 @@ fn ensure_schema(conn: &Connection) -> Result<(), AppError> {
     conn.execute(
         "INSERT OR IGNORE INTO exam_allocation_settings (id, default_capacity, max_capacity, exam_title, exam_notices_json, updated_at) VALUES (1, ?1, ?2, ?3, ?4, ?5)",
         params![DEFAULT_CAPACITY, DEFAULT_MAX_CAPACITY, DEFAULT_EXAM_TITLE, default_notices_json, now],
+    )?;
+    conn.execute(
+        "INSERT OR IGNORE INTO exam_generation_progress (id, status, stage, stage_label, percent, message, current_grade, total_grades, completed_grades, updated_at) VALUES (1, 'idle', 'idle', '等待开始', 0, '等待开始分配考场', NULL, 0, 0, ?1)",
+        params![now],
     )?;
     conn.execute(
         "UPDATE exam_allocation_settings SET exam_title = ?1 WHERE id = 1 AND TRIM(COALESCE(exam_title, '')) = ''",
@@ -1397,6 +1432,51 @@ fn subject_chain_from_text(value: &str) -> Vec<Subject> {
         .split(',')
         .filter_map(|s| Subject::from_key(s.trim()))
         .collect()
+}
+
+fn update_exam_generation_progress(
+    conn: &Connection,
+    status: &str,
+    stage: &str,
+    stage_label: &str,
+    percent: i64,
+    message: &str,
+    current_grade: Option<&str>,
+    total_grades: i64,
+    completed_grades: i64,
+) -> Result<(), AppError> {
+    let now = Utc::now().to_rfc3339();
+    conn.execute(
+        r#"
+        UPDATE exam_generation_progress
+        SET status = ?1,
+            stage = ?2,
+            stage_label = ?3,
+            percent = ?4,
+            message = ?5,
+            current_grade = ?6,
+            total_grades = ?7,
+            completed_grades = ?8,
+            updated_at = ?9
+        WHERE id = 1
+        "#,
+        params![
+            status,
+            stage,
+            stage_label,
+            percent.clamp(0, 100),
+            message,
+            current_grade,
+            total_grades.max(0),
+            completed_grades.max(0),
+            now
+        ],
+    )?;
+    Ok(())
+}
+
+fn pause_after_generation_stage() {
+    thread::sleep(Duration::from_millis(GENERATION_STAGE_PAUSE_MS));
 }
 
 fn load_session_time_template_rows(conn: &Connection) -> Result<Vec<ExamSessionTime>, AppError> {
@@ -2276,13 +2356,24 @@ pub fn upsert_exam_space_staff_requirements(
     result.map_err(|e| e.to_string())
 }
 
-pub fn generate_latest_exam_plan(
-    app: AppHandle,
+fn generate_latest_exam_plan_internal(
+    app: &AppHandle,
     payload: Option<GenerateLatestExamPlanPayload>,
-) -> Result<GenerateLatestExamPlanResult, String> {
-    let result = (|| -> Result<GenerateLatestExamPlanResult, AppError> {
+) -> Result<GenerateLatestExamPlanResult, AppError> {
         let mut conn = score::open_connection(&app)?;
         ensure_schema(&conn)?;
+        update_exam_generation_progress(
+            &conn,
+            "running",
+            "loading_config",
+            "读取配置",
+            5,
+            "正在读取考试配置、班级配置与考试时间设置",
+            None,
+            0,
+            0,
+        )?;
+        pause_after_generation_stage();
         let settings = load_settings(&conn)?;
         let default_capacity = payload
             .as_ref()
@@ -2297,15 +2388,53 @@ pub fn generate_latest_exam_plan(
         let grade_contexts = load_grade_contexts(&conn)?;
         let mut grades: Vec<String> = grade_contexts.keys().cloned().collect();
         grades.sort_by(|a, b| grade_order_key(a).cmp(&grade_order_key(b)).then(a.cmp(b)));
+        let total_grades = grades.len() as i64;
+        update_exam_generation_progress(
+            &conn,
+            "running",
+            "clearing_snapshot",
+            "清理旧结果",
+            12,
+            "正在清理上一轮考场分配结果",
+            None,
+            total_grades,
+            0,
+        )?;
+        pause_after_generation_stage();
 
         let generated_at = Utc::now().to_rfc3339();
         let tx = conn.transaction()?;
         clear_latest_plan(&tx)?;
+        update_exam_generation_progress(
+            &tx,
+            "running",
+            "building_sessions",
+            "生成场次",
+            20,
+            "正在按年级和科目生成考试场次",
+            None,
+            total_grades,
+            0,
+        )?;
+        pause_after_generation_stage();
 
         let mut session_count = 0_i64;
         let mut warning_count = 0_i64;
 
-        for grade_name in &grades {
+        for (grade_index, grade_name) in grades.iter().enumerate() {
+            let alloc_percent = 28 + (((grade_index as i64) * 44) / total_grades.max(1));
+            update_exam_generation_progress(
+                &tx,
+                "running",
+                "allocating_rooms",
+                "分配考场",
+                alloc_percent,
+                &format!("正在为 {grade_name} 生成考场与座位安排"),
+                Some(grade_name),
+                total_grades,
+                grade_index as i64,
+            )?;
+            pause_after_generation_stage();
             let Some(grade_ctx) = grade_contexts.get(grade_name) else {
                 continue;
             };
@@ -2339,7 +2468,58 @@ pub fn generate_latest_exam_plan(
             params![generated_at, default_capacity, max_capacity, grades.len() as i64, session_count, warning_count],
         )?;
         tx.commit()?;
+        update_exam_generation_progress(
+            &conn,
+            "running",
+            "finalizing_results",
+            "整理结果",
+            76,
+            "正在整理场次时间与分配结果摘要",
+            None,
+            total_grades,
+            total_grades,
+        )?;
+        pause_after_generation_stage();
         seed_default_session_times(&conn)?;
+        update_exam_generation_progress(
+            &conn,
+            "running",
+            "exporting_files",
+            "生成文件",
+            82,
+            "考场分配已完成，正在生成各年级导出文件",
+            None,
+            total_grades,
+            0,
+        )?;
+        pause_after_generation_stage();
+        export_bundle::generate_export_files(&app, &conn, |grade_name, done, total| {
+            let percent = 82 + (((done as i64) * 16) / (total as i64).max(1));
+            let _ = update_exam_generation_progress(
+                &conn,
+                "running",
+                "exporting_files",
+                "生成文件",
+                percent,
+                &format!("已生成 {grade_name} 的导出文件"),
+                Some(grade_name),
+                total as i64,
+                done as i64,
+            );
+            pause_after_generation_stage();
+        })?;
+        update_exam_generation_progress(
+            &conn,
+            "completed",
+            "completed",
+            "已完成",
+            100,
+            "考场分配与导出文件生成已完成，可按需打包 ZIP",
+            None,
+            total_grades,
+            total_grades,
+        )?;
+        pause_after_generation_stage();
 
         Ok(GenerateLatestExamPlanResult {
             generated_at,
@@ -2347,11 +2527,57 @@ pub fn generate_latest_exam_plan(
             session_count,
             warning_count,
         })
+}
+
+pub fn start_generate_latest_exam_plan(
+    app: AppHandle,
+    payload: Option<GenerateLatestExamPlanPayload>,
+) -> Result<SuccessResponse, String> {
+    let result = (|| -> Result<SuccessResponse, AppError> {
+        let conn = score::open_connection(&app)?;
+        ensure_schema(&conn)?;
+        let running: String = conn.query_row(
+            "SELECT status FROM exam_generation_progress WHERE id = 1",
+            [],
+            |row| row.get(0),
+        )?;
+        if running == "running" {
+            return Err(AppError::new("考场分配正在执行中，请稍候"));
+        }
+        update_exam_generation_progress(
+            &conn,
+            "running",
+            "queued",
+            "准备开始",
+            1,
+            "已接收任务，准备开始分配考场",
+            None,
+            0,
+            0,
+        )?;
+        let app_handle = app.clone();
+        thread::spawn(move || {
+            if let Err(error) = generate_latest_exam_plan_internal(&app_handle, payload) {
+                if let Ok(conn) = score::open_connection(&app_handle) {
+                    let _ = ensure_schema(&conn);
+                    let _ = update_exam_generation_progress(
+                        &conn,
+                        "error",
+                        "error",
+                        "执行失败",
+                        0,
+                        &error.to_string(),
+                        None,
+                        0,
+                        0,
+                    );
+                }
+                app_log::log_error(&app_handle, "exam_allocation.start_generate_latest_exam_plan", &error.to_string());
+            }
+        });
+        Ok(SuccessResponse { success: true })
     })();
-    result.map_err(|e| {
-        app_log::log_error(&app, "exam_allocation.generate_latest_exam_plan", &e.to_string());
-        e.to_string()
-    })
+    result.map_err(|e| e.to_string())
 }
 
 pub fn generate_latest_exam_staff_plan(app: AppHandle) -> Result<GenerateLatestExamStaffPlanResult, String> {
@@ -2575,6 +2801,32 @@ pub fn get_latest_exam_plan_overview(app: AppHandle) -> Result<ExamPlanOverview,
             self_study_room_count,
             student_allocation_count,
         })
+    })();
+    result.map_err(|e| e.to_string())
+}
+
+pub fn get_exam_generation_progress(app: AppHandle) -> Result<ExamGenerationProgress, String> {
+    let result = (|| -> Result<ExamGenerationProgress, AppError> {
+        let conn = score::open_connection(&app)?;
+        ensure_schema(&conn)?;
+        conn.query_row(
+            "SELECT status, stage, stage_label, percent, message, current_grade, total_grades, completed_grades, updated_at FROM exam_generation_progress WHERE id = 1",
+            [],
+            |row| {
+                Ok(ExamGenerationProgress {
+                    status: row.get(0)?,
+                    stage: row.get(1)?,
+                    stage_label: row.get(2)?,
+                    percent: row.get(3)?,
+                    message: row.get(4)?,
+                    current_grade: row.get(5)?,
+                    total_grades: row.get(6)?,
+                    completed_grades: row.get(7)?,
+                    updated_at: row.get(8)?,
+                })
+            },
+        )
+        .map_err(AppError::from)
     })();
     result.map_err(|e| e.to_string())
 }

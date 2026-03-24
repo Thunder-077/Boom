@@ -92,7 +92,7 @@
           <h3>开始分配考场</h3>
           <span class="progress-badge">{{ progressBadgeText }}</span>
         </div>
-        <p class="progress-desc">系统将先按班级聚合，再根据科目与监考需求进行自动编排。</p>
+        <p class="progress-desc">{{ progressDescription }}</p>
         <div class="cta-row">
           <button class="primary-btn" :disabled="store.viewState.generating || isApplyingConfig" @click="generateExamPlan">
             {{ generateActionText }}
@@ -135,7 +135,7 @@
           </div>
           <div class="complete-action">
             <button class="primary-btn export-btn" :disabled="store.viewState.exporting || !store.viewState.overview.generatedAt" @click="exportBundle">
-              {{ store.viewState.exporting ? "导出中..." : "导出分配结果" }}
+              {{ store.viewState.exporting ? "打包中..." : "打包导出 ZIP" }}
             </button>
           </div>
         </div>
@@ -154,6 +154,15 @@ import TableCard from "../../../widgets/common/TableCard.vue";
 import { useExamAllocationStore } from "../store";
 
 const store = useExamAllocationStore();
+const GENERATION_STAGE_ORDER: Record<string, number> = {
+  loading_config: 1,
+  clearing_snapshot: 2,
+  building_sessions: 3,
+  allocating_rooms: 4,
+  finalizing_results: 5,
+  exporting_files: 6,
+};
+const TOTAL_GENERATION_STAGES = 6;
 const capacityForm = reactive({
   defaultCapacity: 40,
   maxCapacity: 41,
@@ -165,18 +174,21 @@ const manualSubjectRows = reactive<Array<{ id: number; subject: Subject; examMon
 let manualSubjectRowId = 1;
 
 const progressPercent = computed(() => {
-  if (store.viewState.generating) {
-    return 68;
+  if (store.viewState.generating || store.viewState.generationProgress.status === "running") {
+    return store.viewState.generationProgress.percent;
   }
-  if (!store.viewState.overview.generatedAt) {
-    return 0;
+  if (store.viewState.generationProgress.status === "completed") {
+    return 100;
   }
-  return 100;
+  return store.viewState.overview.generatedAt ? 100 : 0;
 });
 
 const progressBadgeText = computed(() => {
-  if (store.viewState.generating) {
-    return "执行中";
+  if (store.viewState.generationProgress.status === "error") {
+    return "失败";
+  }
+  if (store.viewState.generating || store.viewState.generationProgress.status === "running") {
+    return store.viewState.generationProgress.stageLabel || "执行中";
   }
   if (store.viewState.overview.generatedAt) {
     return "已完成";
@@ -184,12 +196,38 @@ const progressBadgeText = computed(() => {
   return "待执行";
 });
 
+const progressDescription = computed(() => {
+  const progress = store.viewState.generationProgress;
+  const stageIndex = GENERATION_STAGE_ORDER[progress.stage];
+  if (store.viewState.generationProgress.status === "running") {
+    const parts = [
+      stageIndex ? `当前执行第 ${stageIndex}/${TOTAL_GENERATION_STAGES} 阶段：${progress.stageLabel}` : "当前正在执行考场分配",
+    ];
+    if (progress.currentGrade) {
+      parts.push(`当前年级：${progress.currentGrade}`);
+    }
+    if (progress.totalGrades > 0) {
+      parts.push(`年级进度：${progress.completedGrades}/${progress.totalGrades}`);
+    }
+    return parts.join("，");
+  }
+  return "系统会自动为所有年级的学生分配考场，并生成相关导出文件。";
+});
+
 const progressStepText = computed(() => {
-  if (store.viewState.generating) {
-    return "正在按班级聚合考生，并检查各科目考场容量与监考老师配额。";
+  const progress = store.viewState.generationProgress;
+  const stageIndex = GENERATION_STAGE_ORDER[progress.stage];
+  if (store.viewState.generationProgress.status === "error") {
+    return progress.message || "分配过程中出现错误，请查看日志。";
+  }
+  if (store.viewState.generating || store.viewState.generationProgress.status === "running") {
+    const stepPrefix = stageIndex
+      ? `第 ${stageIndex}/${TOTAL_GENERATION_STAGES} 阶段 · ${progress.stageLabel}`
+      : progress.stageLabel || "执行中";
+    return progress.message ? `${stepPrefix}：${progress.message}` : stepPrefix;
   }
   if (store.viewState.overview.generatedAt) {
-    return "已生成最新考场快照，可继续导出分配结果。";
+    return "已生成考场与导出文件，可按需打包 ZIP。";
   }
   return "等待开始，系统将按当前配置自动排考场。";
 });

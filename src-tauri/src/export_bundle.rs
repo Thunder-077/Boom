@@ -13,7 +13,7 @@ use zip::CompressionMethod;
 use zip::ZipWriter;
 
 use crate::app_log;
-use crate::score::{self, AppError, Subject};
+use crate::score::{AppError, Subject};
 
 const SUBJECT_EXPORT_ORDER: [(Subject, &str); 11] = [
     (Subject::Chinese, "语文"),
@@ -450,284 +450,316 @@ fn export_root_dir(app: &AppHandle) -> Result<PathBuf, AppError> {
     Ok(dir)
 }
 
-#[tauri::command]
-pub fn export_latest_exam_allocation_bundle(app: AppHandle) -> Result<ExportLatestExamAllocationBundleResult, String> {
-    let result = (|| -> Result<ExportLatestExamAllocationBundleResult, AppError> {
-        let conn = score::open_connection(&app)?;
-        let (exam_title, exam_notices) = settings_from_db(&conn)?;
-        if exam_title.trim().is_empty() {
-            return Err(AppError::new("未配置考试标题，无法导出"));
+fn export_batch_dir(root: &Path) -> PathBuf {
+    root.join("考场安排")
+}
+
+fn export_zip_path(root: &Path) -> PathBuf {
+    root.join("考场安排.zip")
+}
+
+pub fn generate_export_files<F>(app: &AppHandle, conn: &rusqlite::Connection, mut on_grade_done: F) -> Result<PathBuf, AppError>
+where
+    F: FnMut(&str, usize, usize),
+{
+    let (exam_title, exam_notices) = settings_from_db(conn)?;
+    if exam_title.trim().is_empty() {
+        return Err(AppError::new("未配置考试标题，无法导出"));
+    }
+
+    let grades = load_grades(conn)?;
+    if grades.is_empty() {
+        return Err(AppError::new("暂无考场分配快照数据，请先执行考场分配"));
+    }
+
+    let root = export_root_dir(app)?;
+    let batch_dir = export_batch_dir(&root);
+    let zip_path = export_zip_path(&root);
+    if batch_dir.exists() {
+        fs::remove_dir_all(&batch_dir).map_err(|e| AppError::new(format!("清理旧导出目录失败: {e}")))?;
+    }
+    if zip_path.exists() {
+        fs::remove_file(&zip_path).map_err(|e| AppError::new(format!("清理旧导出压缩包失败: {e}")))?;
+    }
+    fs::create_dir_all(&batch_dir).map_err(|e| AppError::new(format!("创建导出批次目录失败: {e}")))?;
+
+    let total_grades = grades.len();
+    for (grade_index, grade) in grades.iter().enumerate() {
+        let grade_dir = batch_dir.join(grade);
+        let class_dir = grade_dir.join("班级名册");
+        let room_dir = grade_dir.join("考场名册");
+        let ticket_dir = grade_dir.join("准考证");
+        fs::create_dir_all(&class_dir).map_err(|e| AppError::new(format!("创建班级名册目录失败: {e}")))?;
+        fs::create_dir_all(&room_dir).map_err(|e| AppError::new(format!("创建考场名册目录失败: {e}")))?;
+        fs::create_dir_all(&ticket_dir).map_err(|e| AppError::new(format!("创建准考证目录失败: {e}")))?;
+
+        let sessions = load_sessions_for_grade(conn, grade)?;
+        let rows = load_exam_rows_for_grade(conn, grade)?;
+        let students = load_students_for_grade(conn, grade)?;
+
+        let mut class_group: HashMap<String, Vec<&ExamRow>> = HashMap::new();
+        let mut room_group: HashMap<String, Vec<&ExamRow>> = HashMap::new();
+        for row in &rows {
+            class_group.entry(row.class_name.clone()).or_default().push(row);
+            room_group.entry(row.space_name.clone()).or_default().push(row);
         }
 
-        let grades = load_grades(&conn)?;
-        if grades.is_empty() {
-            return Err(AppError::new("暂无考场分配快照数据，请先执行考场分配"));
-        }
+        let header_fmt = Format::new().set_bold().set_align(FormatAlign::Center).set_border(FormatBorder::Thin);
+        let cell_fmt = Format::new().set_border(FormatBorder::Thin).set_align(FormatAlign::Center);
+        let summary_header_fmt = Format::new()
+            .set_bold()
+            .set_font_size(11.)
+            .set_align(FormatAlign::Center)
+            .set_align(FormatAlign::VerticalCenter)
+            .set_background_color(Color::RGB(0xD9D9D9))
+            .set_border(FormatBorder::Thin);
+        let summary_cell_fmt = Format::new()
+            .set_font_size(11.)
+            .set_align(FormatAlign::Center)
+            .set_align(FormatAlign::VerticalCenter)
+            .set_border(FormatBorder::Thin);
 
-        let exported_at = Utc::now().to_rfc3339();
-        let root = export_root_dir(&app)?;
-        let batch_dir = root.join("考场安排");
-        let zip_path = root.join("考场安排.zip");
-        if batch_dir.exists() {
-            fs::remove_dir_all(&batch_dir).map_err(|e| AppError::new(format!("清理旧导出目录失败: {e}")))?;
-        }
-        if zip_path.exists() {
-            fs::remove_file(&zip_path).map_err(|e| AppError::new(format!("清理旧导出压缩包失败: {e}")))?;
-        }
-        fs::create_dir_all(&batch_dir).map_err(|e| AppError::new(format!("创建导出批次目录失败: {e}")))?;
-
-        for grade in &grades {
-            let grade_dir = batch_dir.join(grade);
-            let class_dir = grade_dir.join("班级名册");
-            let room_dir = grade_dir.join("考场名册");
-            let ticket_dir = grade_dir.join("准考证");
-            fs::create_dir_all(&class_dir).map_err(|e| AppError::new(format!("创建班级名册目录失败: {e}")))?;
-            fs::create_dir_all(&room_dir).map_err(|e| AppError::new(format!("创建考场名册目录失败: {e}")))?;
-            fs::create_dir_all(&ticket_dir).map_err(|e| AppError::new(format!("创建准考证目录失败: {e}")))?;
-
-            let sessions = load_sessions_for_grade(&conn, grade)?;
-            let rows = load_exam_rows_for_grade(&conn, grade)?;
-            let students = load_students_for_grade(&conn, grade)?;
-
-            let mut class_group: HashMap<String, Vec<&ExamRow>> = HashMap::new();
-            let mut room_group: HashMap<String, Vec<&ExamRow>> = HashMap::new();
-            for row in &rows {
-                class_group.entry(row.class_name.clone()).or_default().push(row);
-                room_group.entry(row.space_name.clone()).or_default().push(row);
-            }
-
-            let header_fmt = Format::new().set_bold().set_align(FormatAlign::Center).set_border(FormatBorder::Thin);
-            let cell_fmt = Format::new().set_border(FormatBorder::Thin).set_align(FormatAlign::Center);
-            let summary_header_fmt = Format::new()
-                .set_bold()
-                .set_font_size(11.)
-                .set_align(FormatAlign::Center)
-                .set_align(FormatAlign::VerticalCenter)
-                .set_background_color(Color::RGB(0xD9D9D9))
-                .set_border(FormatBorder::Thin);
-            let summary_cell_fmt = Format::new()
-                .set_font_size(11.)
-                .set_align(FormatAlign::Center)
-                .set_align(FormatAlign::VerticalCenter)
-                .set_border(FormatBorder::Thin);
-
-            let mut classes = class_group.keys().cloned().collect::<Vec<_>>();
-            classes.sort_by(|a, b| sort_class_like(a, b));
-            for class_name in classes {
-                let mut wb = Workbook::new();
-                let class_rows = class_group.get(&class_name).cloned().unwrap_or_default();
-                for (subject, label) in SUBJECT_EXPORT_ORDER {
-                    let mut sheet_rows = class_rows
-                        .iter()
-                        .copied()
-                        .filter(|r| r.subject == subject)
-                        .collect::<Vec<_>>();
-                    sheet_rows.sort_by(|a, b| {
-                        a.space_name
-                            .cmp(&b.space_name)
-                            .then(a.seat_no.cmp(&b.seat_no))
-                            .then(a.admission_no.cmp(&b.admission_no))
-                    });
-                    let sheet = wb.add_worksheet();
-                    sheet
-                        .set_name(subject_sheet_name(label))
-                        .map_err(|e| AppError::new(format!("设置 Sheet 名失败: {e}")))?;
-                    write_common_header(sheet, 0, &format!("{exam_title}（班级名册）"), true, &header_fmt)
-                        .map_err(|e| AppError::new(format!("写入班级名册表头失败: {e}")))?;
-                    write_rows(sheet, 2, &sheet_rows, &cell_fmt)
-                        .map_err(|e| AppError::new(format!("写入班级名册数据失败: {e}")))?;
-                }
-                let path = class_dir.join(format!("{class_name}-班级名册.xlsx"));
-                wb.save(&path)
-                    .map_err(|e| AppError::new(format!("保存班级名册失败: {e}")))?;
-            }
-
-            let mut rooms = room_group.keys().cloned().collect::<Vec<_>>();
-            rooms.sort_by(|a, b| sort_class_like(a, b));
-            for room_name in rooms {
-                let mut wb = Workbook::new();
-                let room_rows = room_group.get(&room_name).cloned().unwrap_or_default();
-                for (subject, label) in SUBJECT_EXPORT_ORDER {
-                    let mut sheet_rows = room_rows
-                        .iter()
-                        .copied()
-                        .filter(|r| r.subject == subject)
-                        .collect::<Vec<_>>();
-                    sheet_rows.sort_by(|a, b| a.seat_no.cmp(&b.seat_no).then(a.admission_no.cmp(&b.admission_no)));
-                    let sheet = wb.add_worksheet();
-                    sheet
-                        .set_name(subject_sheet_name(label))
-                        .map_err(|e| AppError::new(format!("设置 Sheet 名失败: {e}")))?;
-                    write_common_header(sheet, 0, &format!("{exam_title}（考场名册）"), true, &header_fmt)
-                        .map_err(|e| AppError::new(format!("写入考场名册表头失败: {e}")))?;
-                    write_rows(sheet, 2, &sheet_rows, &cell_fmt)
-                        .map_err(|e| AppError::new(format!("写入考场名册数据失败: {e}")))?;
-                }
-                let path = room_dir.join(format!("考场名册-{room_name}.xlsx"));
-                wb.save(&path)
-                    .map_err(|e| AppError::new(format!("保存考场名册失败: {e}")))?;
-            }
-
-            let mut summary_wb = Workbook::new();
-            let summary_sheet = summary_wb.add_worksheet();
-            summary_sheet
-                .set_name("总览")
-                .map_err(|e| AppError::new(format!("设置总览 Sheet 名失败: {e}")))?;
-            for (col, title) in ["姓名", "班级", "考号", "班级名次"].iter().enumerate() {
-                summary_sheet
-                    .merge_range(0, col as u16, 1, col as u16, *title, &summary_header_fmt)
-                    .map_err(|e| AppError::new(format!("合并总览基础表头失败: {e}")))?;
-            }
-
-            let mut summary_widths = vec![
-                display_width("姓名"),
-                display_width("班级"),
-                display_width("考号"),
-                display_width("班级名次"),
-            ];
-            summary_widths.resize(4 + SUBJECT_EXPORT_ORDER.len() * 2, display_width("座位号"));
-
-            for (idx, (subject, label)) in SUBJECT_EXPORT_ORDER.iter().enumerate() {
-                let col = 4_u16 + (idx as u16 * 2);
-                let title = if let Some(s) = sessions.get(subject) {
-                    if let (Some(start), Some(end)) = (s.start_at.as_deref(), s.end_at.as_deref()) {
-                        let display = format!(
-                            "{}-{}",
-                            format_hm(start).unwrap_or_else(|| start.to_string()),
-                            format_hm(end).unwrap_or_else(|| end.to_string())
-                        );
-                        format!("{}（{}）", label, display)
-                    } else {
-                        (*label).to_string()
-                    }
-                } else {
-                    (*label).to_string()
-                };
-                summary_sheet
-                    .merge_range(0, col, 0, col + 1, &title, &summary_header_fmt)
-                    .map_err(|e| AppError::new(format!("合并总览科目表头失败: {e}")))?;
-                summary_sheet
-                    .write_string_with_format(1, col, "考场号", &summary_header_fmt)
-                    .map_err(|e| AppError::new(format!("写总览子表头失败: {e}")))?;
-                summary_sheet
-                    .write_string_with_format(1, col + 1, "座位号", &summary_header_fmt)
-                    .map_err(|e| AppError::new(format!("写总览子表头失败: {e}")))?;
-                let title_width = display_width(&title);
-                let per_col_width = (title_width / 2).max(display_width("考场号")).max(display_width("座位号"));
-                summary_widths[col as usize] = summary_widths[col as usize].max(per_col_width);
-                summary_widths[col as usize + 1] = summary_widths[col as usize + 1].max(per_col_width);
-            }
-
-            let mut alloc_map: HashMap<(String, Subject), (String, i64)> = HashMap::new();
-            for row in &rows {
-                alloc_map.insert((row.admission_no.clone(), row.subject), (row.space_name.clone(), row.seat_no));
-            }
-            let exported_student_ids = rows
-                .iter()
-                .map(|row| row.admission_no.clone())
-                .collect::<std::collections::HashSet<_>>();
-            let exported_students = students
-                .iter()
-                .filter(|stu| exported_student_ids.contains(&stu.admission_no))
-                .collect::<Vec<_>>();
-
-            for (idx, stu) in exported_students.iter().enumerate() {
-                let r = 2 + idx as u32;
-                summary_sheet
-                    .write_string_with_format(r, 0, &stu.student_name, &summary_cell_fmt)
-                    .map_err(|e| AppError::new(format!("写总览数据失败: {e}")))?;
-                summary_sheet
-                    .write_string_with_format(r, 1, &stu.class_name, &summary_cell_fmt)
-                    .map_err(|e| AppError::new(format!("写总览数据失败: {e}")))?;
-                summary_sheet
-                    .write_string_with_format(r, 2, &stu.admission_no, &summary_cell_fmt)
-                    .map_err(|e| AppError::new(format!("写总览数据失败: {e}")))?;
-                summary_sheet
-                    .write_number_with_format(r, 3, stu.class_rank as f64, &summary_cell_fmt)
-                    .map_err(|e| AppError::new(format!("写总览数据失败: {e}")))?;
-                summary_widths[0] = summary_widths[0].max(display_width(&stu.student_name));
-                summary_widths[1] = summary_widths[1].max(display_width(&stu.class_name));
-                summary_widths[2] = summary_widths[2].max(display_width(&stu.admission_no));
-                summary_widths[3] = summary_widths[3].max(display_width(&stu.class_rank.to_string()));
-
-                for (sidx, (subject, _)) in SUBJECT_EXPORT_ORDER.iter().enumerate() {
-                    let col = 4_u16 + (sidx as u16 * 2);
-                    if let Some((room, seat)) = alloc_map.get(&(stu.admission_no.clone(), *subject)) {
-                        summary_sheet
-                            .write_string_with_format(r, col, room, &summary_cell_fmt)
-                            .map_err(|e| AppError::new(format!("写总览数据失败: {e}")))?;
-                        summary_sheet
-                            .write_number_with_format(r, col + 1, *seat as f64, &summary_cell_fmt)
-                            .map_err(|e| AppError::new(format!("写总览数据失败: {e}")))?;
-                        summary_widths[col as usize] = summary_widths[col as usize].max(display_width(room));
-                        summary_widths[col as usize + 1] =
-                            summary_widths[col as usize + 1].max(display_width(&seat.to_string()));
-                    }
-                }
-            }
-            apply_summary_column_widths(summary_sheet, &summary_widths)
-                .map_err(|e| AppError::new(format!("设置总览列宽失败: {e}")))?;
-
+        let mut classes = class_group.keys().cloned().collect::<Vec<_>>();
+        classes.sort_by(|a, b| sort_class_like(a, b));
+        for class_name in classes {
+            let mut wb = Workbook::new();
+            let class_rows = class_group.get(&class_name).cloned().unwrap_or_default();
             for (subject, label) in SUBJECT_EXPORT_ORDER {
-                let mut srows = rows.iter().filter(|r| r.subject == subject).collect::<Vec<_>>();
-                srows.sort_by(|a, b| {
+                let mut sheet_rows = class_rows
+                    .iter()
+                    .copied()
+                    .filter(|r| r.subject == subject)
+                    .collect::<Vec<_>>();
+                sheet_rows.sort_by(|a, b| {
                     a.space_name
                         .cmp(&b.space_name)
                         .then(a.seat_no.cmp(&b.seat_no))
                         .then(a.admission_no.cmp(&b.admission_no))
                 });
-                let sheet = summary_wb.add_worksheet();
+                let sheet = wb.add_worksheet();
                 sheet
                     .set_name(subject_sheet_name(label))
-                    .map_err(|e| AppError::new(format!("设置科目 Sheet 名失败: {e}")))?;
-                write_common_header(sheet, 0, "", false, &header_fmt)
-                    .map_err(|e| AppError::new(format!("写科目表头失败: {e}")))?;
-                write_rows(sheet, 1, &srows, &cell_fmt)
-                    .map_err(|e| AppError::new(format!("写科目数据失败: {e}")))?;
+                    .map_err(|e| AppError::new(format!("设置 Sheet 名失败: {e}")))?;
+                write_common_header(sheet, 0, &format!("{exam_title}（班级名册）"), true, &header_fmt)
+                    .map_err(|e| AppError::new(format!("写入班级名册表头失败: {e}")))?;
+                write_rows(sheet, 2, &sheet_rows, &cell_fmt)
+                    .map_err(|e| AppError::new(format!("写入班级名册数据失败: {e}")))?;
             }
-            summary_wb
-                .save(grade_dir.join("考场分配结果汇总.xlsx"))
-                .map_err(|e| AppError::new(format!("保存年级汇总失败: {e}")))?;
+            let path = class_dir.join(format!("{class_name}-班级名册.xlsx"));
+            wb.save(&path)
+                .map_err(|e| AppError::new(format!("保存班级名册失败: {e}")))?;
+        }
 
-            let mut ticket_students = Vec::<(StudentBase, Vec<TicketExamItem>)>::new();
-            for stu in &exported_students {
-                let mut exams = Vec::new();
-                for (subject, _) in SUBJECT_EXPORT_ORDER {
-                    if let Some((room, seat)) = alloc_map.get(&(stu.admission_no.clone(), subject)) {
-                        if let Some(session) = sessions.get(&subject) {
-                            if let (Some(start), Some(end), Some(start_ts)) =
-                                (session.start_at.as_deref(), session.end_at.as_deref(), session.start_ts)
-                            {
-                                exams.push(TicketExamItem {
-                                    subject_label: session.subject_label,
-                                    time_display: format_ticket_time(start, end).unwrap_or_default(),
-                                    room: room.clone(),
-                                    seat: *seat,
-                                    start_ts,
-                                });
-                            }
+        let mut rooms = room_group.keys().cloned().collect::<Vec<_>>();
+        rooms.sort_by(|a, b| sort_class_like(a, b));
+        for room_name in rooms {
+            let mut wb = Workbook::new();
+            let room_rows = room_group.get(&room_name).cloned().unwrap_or_default();
+            for (subject, label) in SUBJECT_EXPORT_ORDER {
+                let mut sheet_rows = room_rows
+                    .iter()
+                    .copied()
+                    .filter(|r| r.subject == subject)
+                    .collect::<Vec<_>>();
+                sheet_rows.sort_by(|a, b| a.seat_no.cmp(&b.seat_no).then(a.admission_no.cmp(&b.admission_no)));
+                let sheet = wb.add_worksheet();
+                sheet
+                    .set_name(subject_sheet_name(label))
+                    .map_err(|e| AppError::new(format!("设置 Sheet 名失败: {e}")))?;
+                write_common_header(sheet, 0, &format!("{exam_title}（考场名册）"), true, &header_fmt)
+                    .map_err(|e| AppError::new(format!("写入考场名册表头失败: {e}")))?;
+                write_rows(sheet, 2, &sheet_rows, &cell_fmt)
+                    .map_err(|e| AppError::new(format!("写入考场名册数据失败: {e}")))?;
+            }
+            let path = room_dir.join(format!("考场名册-{room_name}.xlsx"));
+            wb.save(&path)
+                .map_err(|e| AppError::new(format!("保存考场名册失败: {e}")))?;
+        }
+
+        let mut summary_wb = Workbook::new();
+        let summary_sheet = summary_wb.add_worksheet();
+        summary_sheet
+            .set_name("总览")
+            .map_err(|e| AppError::new(format!("设置总览 Sheet 名失败: {e}")))?;
+        for (col, title) in ["姓名", "班级", "考号", "班级名次"].iter().enumerate() {
+            summary_sheet
+                .merge_range(0, col as u16, 1, col as u16, *title, &summary_header_fmt)
+                .map_err(|e| AppError::new(format!("合并总览基础表头失败: {e}")))?;
+        }
+
+        let mut summary_widths = vec![
+            display_width("姓名"),
+            display_width("班级"),
+            display_width("考号"),
+            display_width("班级名次"),
+        ];
+        summary_widths.resize(4 + SUBJECT_EXPORT_ORDER.len() * 2, display_width("座位号"));
+
+        for (idx, (subject, label)) in SUBJECT_EXPORT_ORDER.iter().enumerate() {
+            let col = 4_u16 + (idx as u16 * 2);
+            let title = if let Some(s) = sessions.get(subject) {
+                if let (Some(start), Some(end)) = (s.start_at.as_deref(), s.end_at.as_deref()) {
+                    let display = format!(
+                        "{}-{}",
+                        format_hm(start).unwrap_or_else(|| start.to_string()),
+                        format_hm(end).unwrap_or_else(|| end.to_string())
+                    );
+                    format!("{}（{}）", label, display)
+                } else {
+                    (*label).to_string()
+                }
+            } else {
+                (*label).to_string()
+            };
+            summary_sheet
+                .merge_range(0, col, 0, col + 1, &title, &summary_header_fmt)
+                .map_err(|e| AppError::new(format!("合并总览科目表头失败: {e}")))?;
+            summary_sheet
+                .write_string_with_format(1, col, "考场号", &summary_header_fmt)
+                .map_err(|e| AppError::new(format!("写总览子表头失败: {e}")))?;
+            summary_sheet
+                .write_string_with_format(1, col + 1, "座位号", &summary_header_fmt)
+                .map_err(|e| AppError::new(format!("写总览子表头失败: {e}")))?;
+            let title_width = display_width(&title);
+            let per_col_width = (title_width / 2).max(display_width("考场号")).max(display_width("座位号"));
+            summary_widths[col as usize] = summary_widths[col as usize].max(per_col_width);
+            summary_widths[col as usize + 1] = summary_widths[col as usize + 1].max(per_col_width);
+        }
+
+        let mut alloc_map: HashMap<(String, Subject), (String, i64)> = HashMap::new();
+        for row in &rows {
+            alloc_map.insert((row.admission_no.clone(), row.subject), (row.space_name.clone(), row.seat_no));
+        }
+        let exported_student_ids = rows
+            .iter()
+            .map(|row| row.admission_no.clone())
+            .collect::<std::collections::HashSet<_>>();
+        let exported_students = students
+            .iter()
+            .filter(|stu| exported_student_ids.contains(&stu.admission_no))
+            .collect::<Vec<_>>();
+
+        for (idx, stu) in exported_students.iter().enumerate() {
+            let r = 2 + idx as u32;
+            summary_sheet
+                .write_string_with_format(r, 0, &stu.student_name, &summary_cell_fmt)
+                .map_err(|e| AppError::new(format!("写总览数据失败: {e}")))?;
+            summary_sheet
+                .write_string_with_format(r, 1, &stu.class_name, &summary_cell_fmt)
+                .map_err(|e| AppError::new(format!("写总览数据失败: {e}")))?;
+            summary_sheet
+                .write_string_with_format(r, 2, &stu.admission_no, &summary_cell_fmt)
+                .map_err(|e| AppError::new(format!("写总览数据失败: {e}")))?;
+            summary_sheet
+                .write_number_with_format(r, 3, stu.class_rank as f64, &summary_cell_fmt)
+                .map_err(|e| AppError::new(format!("写总览数据失败: {e}")))?;
+            summary_widths[0] = summary_widths[0].max(display_width(&stu.student_name));
+            summary_widths[1] = summary_widths[1].max(display_width(&stu.class_name));
+            summary_widths[2] = summary_widths[2].max(display_width(&stu.admission_no));
+            summary_widths[3] = summary_widths[3].max(display_width(&stu.class_rank.to_string()));
+
+            for (sidx, (subject, _)) in SUBJECT_EXPORT_ORDER.iter().enumerate() {
+                let col = 4_u16 + (sidx as u16 * 2);
+                if let Some((room, seat)) = alloc_map.get(&(stu.admission_no.clone(), *subject)) {
+                    summary_sheet
+                        .write_string_with_format(r, col, room, &summary_cell_fmt)
+                        .map_err(|e| AppError::new(format!("写总览数据失败: {e}")))?;
+                    summary_sheet
+                        .write_number_with_format(r, col + 1, *seat as f64, &summary_cell_fmt)
+                        .map_err(|e| AppError::new(format!("写总览数据失败: {e}")))?;
+                    summary_widths[col as usize] = summary_widths[col as usize].max(display_width(room));
+                    summary_widths[col as usize + 1] =
+                        summary_widths[col as usize + 1].max(display_width(&seat.to_string()));
+                }
+            }
+        }
+        apply_summary_column_widths(summary_sheet, &summary_widths)
+            .map_err(|e| AppError::new(format!("设置总览列宽失败: {e}")))?;
+
+        for (subject, label) in SUBJECT_EXPORT_ORDER {
+            let mut srows = rows.iter().filter(|r| r.subject == subject).collect::<Vec<_>>();
+            srows.sort_by(|a, b| {
+                a.space_name
+                    .cmp(&b.space_name)
+                    .then(a.seat_no.cmp(&b.seat_no))
+                    .then(a.admission_no.cmp(&b.admission_no))
+            });
+            let sheet = summary_wb.add_worksheet();
+            sheet
+                .set_name(subject_sheet_name(label))
+                .map_err(|e| AppError::new(format!("设置科目 Sheet 名失败: {e}")))?;
+            write_common_header(sheet, 0, "", false, &header_fmt)
+                .map_err(|e| AppError::new(format!("写科目表头失败: {e}")))?;
+            write_rows(sheet, 1, &srows, &cell_fmt)
+                .map_err(|e| AppError::new(format!("写科目数据失败: {e}")))?;
+        }
+        summary_wb
+            .save(grade_dir.join("考场分配结果汇总.xlsx"))
+            .map_err(|e| AppError::new(format!("保存年级汇总失败: {e}")))?;
+
+        let mut ticket_students = Vec::<(StudentBase, Vec<TicketExamItem>)>::new();
+        for stu in &exported_students {
+            let mut exams = Vec::new();
+            for (subject, _) in SUBJECT_EXPORT_ORDER {
+                if let Some((room, seat)) = alloc_map.get(&(stu.admission_no.clone(), subject)) {
+                    if let Some(session) = sessions.get(&subject) {
+                        if let (Some(start), Some(end), Some(start_ts)) =
+                            (session.start_at.as_deref(), session.end_at.as_deref(), session.start_ts)
+                        {
+                            exams.push(TicketExamItem {
+                                subject_label: session.subject_label,
+                                time_display: format_ticket_time(start, end).unwrap_or_default(),
+                                room: room.clone(),
+                                seat: *seat,
+                                start_ts,
+                            });
                         }
                     }
                 }
-                exams.sort_by(|a, b| a.start_ts.cmp(&b.start_ts).then(a.subject_label.cmp(b.subject_label)));
-                if !exams.is_empty() {
-                    ticket_students.push(((*stu).clone(), exams));
-                }
             }
-            let html = build_tickets_html(&exam_title, &exam_notices, &ticket_students);
-            let html_path = ticket_dir.join("准考证.html");
-            fs::write(&html_path, html).map_err(|e| AppError::new(format!("写入准考证 HTML 失败: {e}")))?;
+            exams.sort_by(|a, b| a.start_ts.cmp(&b.start_ts).then(a.subject_label.cmp(b.subject_label)));
+            if !exams.is_empty() {
+                ticket_students.push(((*stu).clone(), exams));
+            }
         }
+        let html = build_tickets_html(&exam_title, &exam_notices, &ticket_students);
+        let html_path = ticket_dir.join("准考证.html");
+        fs::write(&html_path, html).map_err(|e| AppError::new(format!("写入准考证 HTML 失败: {e}")))?;
+        on_grade_done(grade, grade_index + 1, total_grades);
+    }
 
-        let file_count = build_zip(&batch_dir, &zip_path)?;
-        Ok(ExportLatestExamAllocationBundleResult {
-            zip_path: zip_path.to_string_lossy().to_string(),
-            batch_dir: batch_dir.to_string_lossy().to_string(),
-            grade_count: grades.len() as i64,
-            file_count,
-            exported_at,
-        })
-    })();
+    Ok(batch_dir)
+}
+
+pub fn zip_existing_export_bundle(app: &AppHandle) -> Result<ExportLatestExamAllocationBundleResult, AppError> {
+    let exported_at = Utc::now().to_rfc3339();
+    let root = export_root_dir(app)?;
+    let batch_dir = export_batch_dir(&root);
+    let zip_path = export_zip_path(&root);
+    if !batch_dir.exists() {
+        return Err(AppError::new("尚未生成导出文件，请先执行考场分配"));
+    }
+    if zip_path.exists() {
+        fs::remove_file(&zip_path).map_err(|e| AppError::new(format!("清理旧导出压缩包失败: {e}")))?;
+    }
+    let grade_count = fs::read_dir(&batch_dir)
+        .map_err(|e| AppError::new(format!("读取导出目录失败: {e}")))?
+        .filter_map(Result::ok)
+        .filter(|entry| entry.path().is_dir())
+        .count() as i64;
+    let file_count = build_zip(&batch_dir, &zip_path)?;
+    Ok(ExportLatestExamAllocationBundleResult {
+        zip_path: zip_path.to_string_lossy().to_string(),
+        batch_dir: batch_dir.to_string_lossy().to_string(),
+        grade_count,
+        file_count,
+        exported_at,
+    })
+}
+
+#[tauri::command]
+pub fn export_latest_exam_allocation_bundle(app: AppHandle) -> Result<ExportLatestExamAllocationBundleResult, String> {
+    let result = zip_existing_export_bundle(&app);
     result.map_err(|e| {
         app_log::log_error(&app, "export_bundle.export_latest_exam_allocation_bundle", &e.to_string());
         e.to_string()
