@@ -27,6 +27,18 @@ export interface GenerateLatestExamPlanResult {
   warningCount: number;
 }
 
+export interface ExamGenerationProgress {
+  status: string;
+  stage: string;
+  stageLabel: string;
+  percent: number;
+  message: string;
+  currentGrade: string | null;
+  totalGrades: number;
+  completedGrades: number;
+  updatedAt: string;
+}
+
 export interface ExamPlanSession {
   id: number;
   gradeName: string;

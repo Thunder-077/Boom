@@ -2,6 +2,7 @@ import { computed, reactive, readonly } from "vue";
 import { Subject } from "../../entities/score/model";
 import type {
   ExamAllocationSettings,
+  ExamGenerationProgress,
   ExamPlanOverview,
   ExamPlanSession,
   ExamPlanSessionDetail,
@@ -43,6 +44,18 @@ const emptyStaffOverview: ExamStaffPlanOverview = {
   imbalanceMinutes: 0,
 };
 
+const emptyGenerationProgress: ExamGenerationProgress = {
+  status: "idle",
+  stage: "idle",
+  stageLabel: "等待开始",
+  percent: 0,
+  message: "等待开始分配考场",
+  currentGrade: null,
+  totalGrades: 0,
+  completedGrades: 0,
+  updatedAt: "",
+};
+
 interface SessionTimeDraft {
   startAt: string;
   endAt: string;
@@ -77,7 +90,9 @@ export function createExamAllocationStore(service: ExamAllocationService = examA
     staffTasks: [] as ExamStaffTask[],
     teacherDutyStats: [] as TeacherDutyStat[],
     lastExportZipPath: "",
+    generationProgress: { ...emptyGenerationProgress } as ExamGenerationProgress,
   });
+  let progressPollTimer: number | null = null;
 
   function normalizeTimeInput(value: string | null | undefined): string {
     if (!value) {
@@ -136,9 +151,14 @@ export function createExamAllocationStore(service: ExamAllocationService = examA
     state.loading = true;
     state.errorMessage = "";
     try {
-      const [settings, overview] = await Promise.all([service.getSettings(), service.getOverview()]);
+      const [settings, overview, generationProgress] = await Promise.all([
+        service.getSettings(),
+        service.getOverview(),
+        service.getGenerationProgress(),
+      ]);
       state.settings = settings;
       state.overview = overview;
+      state.generationProgress = generationProgress;
       await Promise.all([loadSessions(), loadSessionTimes()]);
 
       if (state.selectedSessionId) {
@@ -185,16 +205,48 @@ export function createExamAllocationStore(service: ExamAllocationService = examA
     }
   }
 
+  async function refreshGenerationProgress() {
+    state.generationProgress = await service.getGenerationProgress();
+  }
+
+  function stopProgressPolling() {
+    if (progressPollTimer !== null) {
+      window.clearInterval(progressPollTimer);
+      progressPollTimer = null;
+    }
+  }
+
+  function startProgressPolling() {
+    stopProgressPolling();
+    progressPollTimer = window.setInterval(() => {
+      void refreshGenerationProgress();
+    }, 500);
+  }
+
   async function generate() {
     state.generating = true;
     state.errorMessage = "";
+    state.lastExportZipPath = "";
     try {
-      await service.generate();
+      await refreshGenerationProgress();
+      startProgressPolling();
+      await service.startGenerate();
+      while (true) {
+        await refreshGenerationProgress();
+        if (state.generationProgress.status === "completed") {
+          break;
+        }
+        if (state.generationProgress.status === "error") {
+          throw new Error(state.generationProgress.message || "考场分配失败");
+        }
+        await new Promise((resolve) => window.setTimeout(resolve, 400));
+      }
       await loadAll();
     } catch (error) {
       state.errorMessage = error instanceof Error ? error.message : String(error);
       throw error;
     } finally {
+      stopProgressPolling();
       state.generating = false;
     }
   }
@@ -348,6 +400,7 @@ export function createExamAllocationStore(service: ExamAllocationService = examA
       staffTasks: state.staffTasks,
       teacherDutyStats: state.teacherDutyStats,
       lastExportZipPath: state.lastExportZipPath,
+      generationProgress: state.generationProgress,
     })),
   );
 
@@ -364,6 +417,7 @@ export function createExamAllocationStore(service: ExamAllocationService = examA
     setRequirementCount,
     saveRequirements,
     assignTeachers,
+    refreshGenerationProgress,
     get viewState() {
       return viewState.value;
     },

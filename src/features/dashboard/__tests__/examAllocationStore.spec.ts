@@ -16,8 +16,21 @@ const fakeService: ExamAllocationService = {
   async updateSettings() {
     return { success: true };
   },
-  async generate() {
-    return { generatedAt: "2026-03-24T10:00:00Z", gradeCount: 1, sessionCount: 1, warningCount: 0 };
+  async startGenerate() {
+    return { success: true };
+  },
+  async getGenerationProgress() {
+    return {
+      status: "idle",
+      stage: "idle",
+      stageLabel: "等待开始",
+      percent: 0,
+      message: "等待开始分配考场",
+      currentGrade: null,
+      totalGrades: 0,
+      completedGrades: 0,
+      updatedAt: "2026-03-24T10:00:00Z",
+    };
   },
   async getOverview() {
     return {
@@ -124,8 +137,8 @@ const fakeService: ExamAllocationService = {
   },
   async exportLatestExamAllocationBundle() {
     return {
-      zipPath: "D:/exports/exam_export_20260324_140000.zip",
-      batchDir: "D:/exports/exam_export_20260324_140000",
+      zipPath: "D:/exports/考场安排.zip",
+      batchDir: "D:/exports/考场安排",
       gradeCount: 1,
       fileCount: 8,
       exportedAt: "2026-03-24T10:00:00Z",
