@@ -1,0 +1,144 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <title>准考证</title>
+  <style>
+    body {
+      margin: 0;
+      font-family: "Microsoft YaHei", sans-serif;
+      background: #f2f2f2;
+    }
+
+    .page {
+      width: 794px;
+      margin: 0 auto;
+      background: #fff;
+      padding: 40px;
+    }
+
+    .title {
+      text-align: center;
+      font-size: 32px;
+      font-weight: bold;
+      margin-bottom: 20px;
+    }
+
+    .student-info {
+      display: flex;
+      justify-content: space-between;
+      font-size: 18px;
+      margin-bottom: 15px;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 16px;
+    }
+
+    th, td {
+      border: 1px solid #333;
+      padding: 6px;
+      text-align: center;
+    }
+
+    thead th {
+      background: #2f86c3;
+      color: #fff;
+    }
+
+    .notice-title {
+      text-align: center;
+      margin: 20px 0;
+      font-size: 22px;
+      letter-spacing: 10px;
+    }
+
+    .notice-list {
+      font-size: 14px;
+      line-height: 1.8;
+    }
+  </style>
+</head>
+<body>
+
+<div class="page">
+
+  <!-- 标题 -->
+  <div class="title" id="examTitle"></div>
+
+  <!-- 学生信息 -->
+  <div class="student-info">
+    <div>姓名：<span id="studentName"></span></div>
+    <div>班级：<span id="className"></span></div>
+    <div>考号：<span id="examNo"></span></div>
+  </div>
+
+  <!-- 考试表 -->
+  <table>
+    <thead>
+      <tr>
+        <th>考试科目</th>
+        <th>考试时间</th>
+        <th>考场</th>
+        <th>座号</th>
+      </tr>
+    </thead>
+    <tbody id="examTableBody">
+      <!-- 动态填充 -->
+    </tbody>
+  </table>
+
+  <!-- 考生须知 -->
+  <div class="notice-title">考生须知</div>
+  <ol class="notice-list" id="noticeList">
+    <!-- 动态填充 -->
+  </ol>
+
+</div>
+
+<script>
+  const fallbackData = {
+    title: "",
+    studentName: "",
+    className: "",
+    examNo: "",
+    exams: [],
+    notices: []
+  };
+  const injectedData = window.__ADMISSION_TICKET_DATA__;
+  const data = (injectedData && typeof injectedData === "object") ? injectedData : fallbackData;
+
+  // ===== 渲染逻辑 =====
+  document.getElementById("examTitle").innerText = data.title;
+  document.getElementById("studentName").innerText = data.studentName;
+  document.getElementById("className").innerText = data.className;
+  document.getElementById("examNo").innerText = data.examNo;
+
+  // 渲染考试表
+  const tbody = document.getElementById("examTableBody");
+  (data.exams || []).forEach(item => {
+    const tr = document.createElement("tr");
+
+    tr.innerHTML = `
+      <td>${item.subject}</td>
+      <td>${item.time}</td>
+      <td>${item.room}</td>
+      <td>${item.seat}</td>
+    `;
+
+    tbody.appendChild(tr);
+  });
+
+  // 渲染考生须知
+  const noticeList = document.getElementById("noticeList");
+  (data.notices || []).forEach(text => {
+    const li = document.createElement("li");
+    li.innerText = text;
+    noticeList.appendChild(li);
+  });
+</script>
+
+</body>
+</html>
