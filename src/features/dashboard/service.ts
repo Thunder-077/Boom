@@ -33,6 +33,7 @@ export interface ExamAllocationService {
   getSessionDetail(sessionId: number): Promise<ExamPlanSessionDetail>;
   listSessionTimes(): Promise<ExamSessionTime[]>;
   upsertSessionTimes(items: ExamSessionTimeUpsert[]): Promise<{ success: boolean }>;
+  deleteSessionTime(subject: ExamSessionTime["subject"]): Promise<{ success: boolean }>;
   listSpaceStaffRequirements(sessionId: number): Promise<SpaceStaffRequirement[]>;
   upsertSpaceStaffRequirements(sessionId: number, items: SpaceStaffRequirementUpsert[]): Promise<{ success: boolean }>;
   generateStaffPlan(): Promise<GenerateLatestExamStaffPlanResult>;
@@ -66,6 +67,9 @@ export const examAllocationService: ExamAllocationService = {
   },
   upsertSessionTimes(items) {
     return invoke<{ success: boolean }>("upsert_exam_session_times", { items });
+  },
+  deleteSessionTime(subject) {
+    return invoke<{ success: boolean }>("delete_exam_session_time", { subject });
   },
   listSpaceStaffRequirements(sessionId) {
     return invoke<SpaceStaffRequirement[]>("list_exam_space_staff_requirements", { sessionId });

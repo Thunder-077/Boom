@@ -80,6 +80,9 @@ const fakeService: ExamAllocationService = {
   async upsertSessionTimes() {
     return { success: true };
   },
+  async deleteSessionTime() {
+    return { success: true };
+  },
   async listSpaceStaffRequirements() {
     return [];
   },

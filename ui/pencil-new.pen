@@ -260,7 +260,7 @@
               "fill": "$color-text-muted",
               "textGrowth": "fixed-width",
               "width": "fill_container",
-              "content": "月考考场与监考安排配置",
+              "content": "考场分配与监考安排配置",
               "lineHeight": 1.35,
               "fontFamily": "Inter",
               "fontSize": 13,
@@ -316,7 +316,7 @@
                       "id": "eSdZC",
                       "name": "nav2Text",
                       "fill": "#0F6CBD",
-                      "content": "月考考场",
+                      "content": "考场分配",
                       "fontFamily": "Inter",
                       "fontSize": 15,
                       "fontWeight": "600"
@@ -444,7 +444,7 @@
                       "id": "5OZkA",
                       "name": "crumb",
                       "fill": "$color-text-muted",
-                      "content": "考试管理 / 月考考场",
+                      "content": "考试管理 / 考场分配",
                       "fontFamily": "Inter",
                       "fontSize": 13,
                       "fontWeight": "500"
@@ -454,7 +454,7 @@
                       "id": "1H3VV",
                       "name": "pageTitle",
                       "fill": "$color-text",
-                      "content": "月考考场",
+                      "content": "考场分配",
                       "fontFamily": "Inter",
                       "fontSize": 34,
                       "fontWeight": "700"
@@ -5580,7 +5580,7 @@
                       "id": "E4gyY",
                       "name": "nav2Text",
                       "fill": "#1C1F23",
-                      "content": "月考考场",
+                      "content": "考场分配",
                       "fontFamily": "Inter",
                       "fontSize": 15,
                       "fontWeight": "500"
@@ -5866,7 +5866,7 @@
                               "fill": "#1C1F23",
                               "textGrowth": "fixed-width",
                               "width": "fill_container",
-                              "content": "当前规则将应用到月考考场、监考抽签与津贴结算。",
+                              "content": "当前规则将应用到考场分配、监考抽签与津贴结算。",
                               "lineHeight": 1.4,
                               "fontFamily": "Inter",
                               "fontSize": 14,

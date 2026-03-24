@@ -46,6 +46,8 @@ export function createClassConfigStore(service: ClassConfigService = classConfig
       ...defaultForm,
       configType: type,
     };
+    state.selectedId = null;
+    state.detail = null;
     state.editingId = null;
   }
 

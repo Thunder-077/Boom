@@ -11,6 +11,8 @@ use rusqlite::{params, params_from_iter, Connection, Transaction};
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Manager};
 
+use crate::app_log;
+
 const FIXED_HEADERS: [&str; 14] = [
     "准考证号",
     "班级",
@@ -623,7 +625,10 @@ pub fn import_scores_from_excel(app: AppHandle, file_path: String) -> Result<Imp
             duration_ms: (Utc::now() - start).num_milliseconds(),
         })
     })();
-    result.map_err(|e| e.to_string())
+    result.map_err(|e| {
+        app_log::log_error(&app, "score.import_scores_from_excel", &format!("file_path={file_path} | {e}"));
+        e.to_string()
+    })
 }
 
 #[tauri::command]

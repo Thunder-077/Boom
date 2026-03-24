@@ -1,5 +1,11 @@
 <template>
   <section class="panel" :class="{ dragging: isDragging }">
+    <div v-if="isDragging" class="drag-overlay">
+      <div class="drag-card">
+        <strong>松开鼠标开始导入成绩表</strong>
+        <span>支持 `.xlsx` / `.xls`</span>
+      </div>
+    </div>
     <FilterToolbar :items="[]">
       <div class="toolbar-fields">
         <label>
@@ -16,7 +22,10 @@
       </div>
     </FilterToolbar>
 
-    <InfoHint text="可将 Excel 文件拖拽到页面任意位置导入成绩数据" />
+    <InfoHint :text="importHintText" />
+    <p v-if="store.viewState.importStatus !== 'idle'" class="import-status" :class="store.viewState.importStatus">
+      {{ store.viewState.importMessage }}
+    </p>
 
     <TableCard title="考试成绩列表" :meta="`已同步 ${store.viewState.total} 条`">
       <div class="table-scroll">
@@ -110,7 +119,7 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, onUnmounted, reactive, ref } from "vue";
+import { computed, onMounted, onUnmounted, reactive, ref } from "vue";
 import { SUBJECT_LABELS } from "../../../entities/class-config/model";
 import type { ScoreCellState, ScoreDetail, ScoreUpdatePayload } from "../../../entities/score/model";
 import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
@@ -136,6 +145,13 @@ const detailState = reactive<{
   saving: false,
   error: "",
   form: null,
+});
+
+const importHintText = computed(() => {
+  if (isDragging.value) {
+    return "松开鼠标即可导入成绩 Excel 文件";
+  }
+  return "可将 Excel 文件拖拽到页面任意位置导入成绩数据";
 });
 
 function rowClass(index: number) {
@@ -210,9 +226,39 @@ async function handleImport(filePath: string) {
   }
 }
 
-onMounted(async () => {
-  await store.load();
+function normalizeDroppedPath(rawPath: string): string {
+  const trimmed = rawPath.trim();
+  if (!trimmed.startsWith("file://")) {
+    return trimmed;
+  }
+  try {
+    const url = new URL(trimmed);
+    const decoded = decodeURIComponent(url.pathname);
+    const normalized = decoded
+      .replace(/^\/([A-Za-z]:\/)/, "$1")
+      .replace(/\//g, "\\");
+    return normalized;
+  } catch {
+    const withoutScheme = trimmed.replace(/^file:\/\//i, "");
+    const decoded = decodeURIComponent(withoutScheme);
+    return decoded
+      .replace(/^\/([A-Za-z]:\/)/, "$1")
+      .replace(/\//g, "\\");
+  }
+}
 
+function pickExcelPath(paths: string[]): string | undefined {
+  for (const rawPath of paths) {
+    const normalized = normalizeDroppedPath(rawPath);
+    const lowerPath = normalized.toLowerCase();
+    if (lowerPath.endsWith(".xlsx") || lowerPath.endsWith(".xls")) {
+      return normalized;
+    }
+  }
+  return undefined;
+}
+
+onMounted(async () => {
   const appWindow = getCurrentWebviewWindow();
   unlistenDragDrop = await appWindow.onDragDropEvent((event) => {
     if (event.payload.type === "enter" || event.payload.type === "over") {
@@ -225,12 +271,15 @@ onMounted(async () => {
     }
     if (event.payload.type === "drop") {
       isDragging.value = false;
-      const excelFilePath = event.payload.paths.find((path) => path.endsWith(".xlsx") || path.endsWith(".xls"));
+      const excelFilePath = pickExcelPath(event.payload.paths);
       if (excelFilePath) {
         void handleImport(excelFilePath);
+        return;
       }
+      store.setImportFeedback("error", "已收到拖拽，但未识别到可导入的 Excel 文件路径");
     }
   });
+  await store.load();
 });
 
 onUnmounted(() => {
@@ -245,12 +294,59 @@ onUnmounted(() => {
 .panel {
   display: flex;
   flex-direction: column;
+  min-height: 0;
   gap: 22px;
+  position: relative;
+}
+
+.panel :deep(.table-card) {
+  flex: 1;
+  min-height: 0;
+}
+
+.panel :deep(.table-card .content) {
+  display: flex;
+  min-height: 0;
 }
 
 .panel.dragging :deep(.toolbar) {
   border-color: #b9d6ff;
   background: rgba(232, 242, 255, 0.92);
+}
+
+.drag-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 10;
+  border-radius: 20px;
+  background: rgba(15, 108, 189, 0.08);
+  border: 2px dashed #7fb1ea;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+}
+
+.drag-card {
+  min-width: 280px;
+  padding: 18px 22px;
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.94);
+  box-shadow: 0 18px 36px rgba(15, 108, 189, 0.14);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  text-align: center;
+}
+
+.drag-card strong {
+  font-size: 15px;
+  color: var(--color-brand);
+}
+
+.drag-card span {
+  font-size: 13px;
+  color: var(--color-text-muted);
 }
 
 .toolbar-fields {
@@ -285,7 +381,8 @@ onUnmounted(() => {
 }
 
 .table-scroll {
-  max-height: 320px;
+  flex: 1;
+  min-height: 0;
   overflow: auto;
 }
 
@@ -408,6 +505,23 @@ onUnmounted(() => {
 .detail-error {
   color: var(--color-text-muted);
   font-size: 14px;
+}
+
+.import-status {
+  margin: -10px 4px 0;
+  font-size: 13px;
+}
+
+.import-status.importing {
+  color: var(--color-brand);
+}
+
+.import-status.success {
+  color: var(--color-success);
+}
+
+.import-status.error {
+  color: var(--color-danger);
 }
 
 </style>

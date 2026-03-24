@@ -1,3 +1,4 @@
+mod app_log;
 mod class_config;
 mod exam_allocation;
 mod exam_plan;
@@ -11,6 +12,9 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .invoke_handler(tauri::generate_handler![
+            app_log::append_app_log,
+            app_log::get_app_log_path,
+            app_log::reveal_in_explorer,
             score::import_scores_from_excel,
             score::list_latest_score_rows,
             score::get_score_detail,
@@ -31,6 +35,7 @@ pub fn run() {
             export_bundle::export_latest_exam_allocation_bundle,
             invigilation::list_exam_session_times,
             invigilation::upsert_exam_session_times,
+            invigilation::delete_exam_session_time,
             invigilation::list_exam_space_staff_requirements,
             invigilation::upsert_exam_space_staff_requirements,
             invigilation::generate_latest_exam_staff_plan,

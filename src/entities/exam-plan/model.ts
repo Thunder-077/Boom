@@ -105,6 +105,7 @@ export interface ExamSessionTime {
 
 export interface ExamSessionTimeUpsert {
   sessionId: number;
+  subject: Subject;
   startAt: string;
   endAt: string;
 }

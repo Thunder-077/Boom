@@ -77,6 +77,11 @@ export function createTeacherStore(service: TeacherService = teacherService) {
     }
   }
 
+  function setImportFeedback(status: ImportStatus, message: string) {
+    state.importStatus = status;
+    state.importMessage = message;
+  }
+
   const viewState = readonly(
     computed(() => ({
       loading: state.loading,
@@ -95,6 +100,7 @@ export function createTeacherStore(service: TeacherService = teacherService) {
     setFilters,
     resetFilters,
     importExcel,
+    setImportFeedback,
     get viewState() {
       return viewState.value;
     },

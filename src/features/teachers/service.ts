@@ -14,7 +14,13 @@ export interface TeacherService {
 
 export const teacherService: TeacherService = {
   list(params) {
-    return invoke<TeacherListResult>("list_latest_teachers", { params });
+    return invoke<TeacherListResult>("list_latest_teachers", {
+      params: {
+        nameKeyword: params.nameKeyword?.trim() || undefined,
+        className: params.className?.trim() || undefined,
+        subject: params.subject || undefined,
+      },
+    });
   },
   getSummary() {
     return invoke<TeacherSummary>("get_latest_teacher_summary");

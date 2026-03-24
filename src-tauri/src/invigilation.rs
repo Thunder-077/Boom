@@ -23,6 +23,11 @@ pub fn upsert_exam_session_times(
 }
 
 #[tauri::command]
+pub fn delete_exam_session_time(app: AppHandle, subject: crate::score::Subject) -> Result<SuccessResponse, String> {
+    exam_allocation::delete_exam_session_time(app, subject)
+}
+
+#[tauri::command]
 pub fn list_exam_space_staff_requirements(
     app: AppHandle,
     session_id: i64,
