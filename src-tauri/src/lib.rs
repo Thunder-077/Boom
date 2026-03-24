@@ -13,6 +13,8 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             score::import_scores_from_excel,
             score::list_latest_score_rows,
+            score::get_score_detail,
+            score::update_score_row,
             score::get_latest_summary,
             class_config::list_class_configs,
             class_config::get_class_config_detail,

@@ -64,8 +64,8 @@ const pageMap: Record<ManagementSection, { title: string; description: string; b
 const pageCopy = computed(() => pageMap[activeSection.value]);
 
 const railItems: RailItem[] = [
-  { key: "students", label: "学生模块", icon: "school" },
-  { key: "teachers", label: "教师模块", icon: "co_present" },
+  { key: "students", label: "学生模块", icon: "person" },
+  { key: "teachers", label: "教师模块", icon: "badge" },
   { key: "classes", label: "班级模块", icon: "domain" },
   { key: "dashboard", label: "考试模块", icon: "event_note" },
 ];

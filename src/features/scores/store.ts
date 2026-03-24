@@ -1,5 +1,5 @@
 import { computed, reactive, readonly } from "vue";
-import type { ImportResult, LatestScoreSummary, ScoreQuery, ScoreRow } from "../../entities/score/model";
+import type { ImportResult, LatestScoreSummary, ScoreDetail, ScoreQuery, ScoreRow, ScoreUpdatePayload } from "../../entities/score/model";
 import { scoreService, type ScoreService } from "./service";
 
 type ImportStatus = "idle" | "importing" | "success" | "error";
@@ -81,6 +81,15 @@ export function createScoreStore(service: ScoreService = scoreService) {
     }
   }
 
+  async function getDetail(admissionNo: string): Promise<ScoreDetail> {
+    return service.getDetail(admissionNo);
+  }
+
+  async function updateScore(payload: ScoreUpdatePayload) {
+    await service.updateScore(payload);
+    await load();
+  }
+
   const viewState = readonly(
     computed(() => ({
       loading: state.loading,
@@ -99,6 +108,8 @@ export function createScoreStore(service: ScoreService = scoreService) {
     setFilters,
     resetFilters,
     importExcel,
+    getDetail,
+    updateScore,
     get viewState() {
       return viewState.value;
     },

@@ -11,24 +11,7 @@
         :class="{ active: item.key === activeKey }"
         @click="$emit('select', item.key)"
       >
-        <svg v-if="item.icon === 'assignment'" viewBox="0 0 24 24" class="nav-icon" aria-hidden="true">
-          <path d="M19 3h-3.18A3 3 0 0 0 13 2h-2a3 3 0 0 0-2.82 1H5v18h14V3Zm-7 1a1 1 0 0 1 1 1h-2a1 1 0 0 1 1-1Zm5 15H7V5h1v2h8V5h1v14ZM9 9h6v2H9V9Zm0 4h6v2H9v-2Z" />
-        </svg>
-        <svg v-else-if="item.icon === 'badge'" viewBox="0 0 24 24" class="nav-icon" aria-hidden="true">
-          <path d="M17 11V3H7v8H3l2 11h14l2-11h-4Zm-8-6h6v6H9V5Zm3 15a3 3 0 1 1 0-6 3 3 0 0 1 0 6Z" />
-        </svg>
-        <svg v-else-if="item.icon === 'settings'" viewBox="0 0 24 24" class="nav-icon" aria-hidden="true">
-          <path d="m19.14 12.94.04-.94-.04-.94 2.03-1.58-1.92-3.32-2.39.96a7.25 7.25 0 0 0-1.63-.94L14.96 3h-3.92l-.27 2.18c-.58.22-1.13.53-1.63.94l-2.39-.96-1.92 3.32 2.03 1.58-.04.94.04.94-2.03 1.58 1.92 3.32 2.39-.96c.5.41 1.05.72 1.63.94l.27 2.18h3.92l.27-2.18c.58-.22 1.13-.53 1.63-.94l2.39.96 1.92-3.32-2.03-1.58ZM13 15.5A3.5 3.5 0 1 1 13 8.5a3.5 3.5 0 0 1 0 7Z" />
-        </svg>
-        <svg v-else-if="item.icon === 'inventory_2'" viewBox="0 0 24 24" class="nav-icon" aria-hidden="true">
-          <path d="M20.54 5.23 19.15 3H4.85L3.46 5.23A2 2 0 0 0 3 6.29V19a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6.29a2 2 0 0 0-.46-1.06ZM5.96 5h12.08l.62 1H5.34l.62-1ZM5 8h14v11H5V8Zm5 2v5l4-2.5L10 10Z" />
-        </svg>
-        <svg v-else-if="item.icon === 'shuffle'" viewBox="0 0 24 24" class="nav-icon" aria-hidden="true">
-          <path d="M17 3h4v4h-2V6.41l-3.29 3.3-1.42-1.42L17.59 5H17V3ZM3 7h4.59l9 9H19v-1.59l2 2V20h-4.59l-9-9H3V7Zm0 10h4.59l2.7-2.71 1.42 1.42L7.59 19H3v-2Zm11.29-8.29L16.41 11 19 8.41V10h2V4h-6v2h1.59l-2.3 2.29Z" />
-        </svg>
-        <svg v-else-if="item.icon === 'tune'" viewBox="0 0 24 24" class="nav-icon" aria-hidden="true">
-          <path d="M3 17v2h6v-2H3Zm0-6v2h10v-2H3Zm0-8v2h14V3H3Zm18 14v-2h-8v2h8Zm-4-10v2h4V7h-4Zm-6 12v-2h10v2H11Z" />
-        </svg>
+        <span v-if="item.icon" class="nav-icon material-symbols-rounded" aria-hidden="true">{{ item.icon }}</span>
         <span v-else class="nav-icon placeholder" aria-hidden="true" />
         {{ item.label }}
       </button>
@@ -83,6 +66,8 @@ defineEmits<{
 }
 
 .nav-item {
+  position: relative;
+  overflow: hidden;
   height: 52px;
   padding: 0 16px;
   border-radius: 16px;
@@ -96,6 +81,55 @@ defineEmits<{
   display: inline-flex;
   align-items: center;
   gap: 12px;
+  transition:
+    background-color 0.18s ease,
+    border-color 0.18s ease,
+    color 0.18s ease,
+    transform 0.18s ease,
+    box-shadow 0.18s ease;
+}
+
+.nav-item::before {
+  content: "";
+  position: absolute;
+  left: 8px;
+  top: 50%;
+  width: 4px;
+  height: 24px;
+  border-radius: 999px;
+  background: linear-gradient(180deg, #0f6cbd, #2e86de);
+  opacity: 0;
+  transform: translateY(-50%) scaleY(0.4);
+  transition: opacity 0.18s ease, transform 0.18s ease;
+}
+
+.nav-item::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(90deg, rgba(15, 108, 189, 0.08), rgba(255, 255, 255, 0));
+  opacity: 0;
+  transition: opacity 0.18s ease;
+}
+
+.nav-item:hover {
+  background: rgba(255, 255, 255, 0.6);
+  color: #334155;
+  transform: translateX(2px);
+}
+
+.nav-item:hover::after {
+  opacity: 1;
+}
+
+.nav-item:active {
+  transform: translateX(1px) scale(0.99);
+}
+
+.nav-item:focus-visible {
+  outline: none;
+  border-color: #b9d6ff;
+  box-shadow: 0 0 0 4px rgba(185, 214, 255, 0.3);
 }
 
 .nav-item.active {
@@ -103,16 +137,42 @@ defineEmits<{
   border-color: #c5dcff;
   background: rgba(234, 243, 255, 0.8);
   font-weight: 600;
+  transform: translateX(3px);
+  box-shadow: 0 8px 20px rgba(15, 108, 189, 0.08);
+}
+
+.nav-item.active::before {
+  opacity: 1;
+  transform: translateY(-50%) scaleY(1);
+}
+
+.nav-item.active::after {
+  opacity: 1;
 }
 
 .nav-icon {
+  position: relative;
+  z-index: 1;
   width: 20px;
   height: 20px;
-  fill: currentColor;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 20px;
+  line-height: 1;
+  font-variation-settings:
+    "FILL" 0,
+    "wght" 500,
+    "GRAD" 0,
+    "opsz" 20;
 }
 
 .placeholder {
   width: 20px;
   height: 20px;
+}
+
+.material-symbols-rounded {
+  font-family: "Material Symbols Rounded";
 }
 </style>

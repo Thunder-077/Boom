@@ -60,7 +60,7 @@
           <button class="primary-btn" :disabled="store.viewState.assigning" @click="assignTeachers">
             {{ store.viewState.assigning ? "分配中..." : "分配监考老师" }}
           </button>
-          <button class="secondary-btn" disabled>导出监考表</button>
+          <button class="secondary-btn" :disabled="!store.viewState.staffOverview.generatedAt">导出监考表</button>
         </div>
       </div>
     </ConfigCard>
