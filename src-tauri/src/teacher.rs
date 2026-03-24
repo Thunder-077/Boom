@@ -8,9 +8,8 @@ use rusqlite::{params, params_from_iter, Connection};
 use serde::{Deserialize, Serialize};
 use tauri::AppHandle;
 
+use crate::app_log;
 use crate::score::{self, AppError, ListResult};
-
-const TEACHER_HEADERS: [&str; 5] = ["序号", "教师姓名", "任教学科", "任教班级", "备注"];
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
 #[serde(rename_all = "snake_case")]
@@ -274,6 +273,21 @@ fn normalize_class_code(token: &str) -> String {
     trimmed.to_string()
 }
 
+fn class_sort_key(name: &str) -> (i32, i32, String) {
+    let matcher = Regex::new(r"^高([一二三])(\d+)班$").expect("class sort regex should be valid");
+    if let Some(caps) = matcher.captures(name) {
+        let grade = match &caps[1] {
+            "一" => 1,
+            "二" => 2,
+            "三" => 3,
+            _ => 99,
+        };
+        let class_no = caps[2].parse::<i32>().unwrap_or(999);
+        return (grade, class_no, name.to_string());
+    }
+    (99, 999, name.to_string())
+}
+
 fn parse_class_names(text: &str) -> Vec<String> {
     text.replace('，', ",")
         .replace('、', ",")
@@ -291,28 +305,14 @@ fn parse_homeroom_classes(remark: &str) -> Vec<String> {
     if !remark.contains("班主任") {
         return Vec::new();
     }
-    let normalized = remark
-        .replace('，', ",")
-        .replace('；', ",")
-        .replace(';', ",")
-        .replace('、', ",");
-    let parts = normalized
-        .split(',')
-        .map(|v| v.trim())
-        .filter(|v| !v.is_empty());
-
+    let matcher = Regex::new(r"(高[一二三]\d+班|[123]\d{2}班|[123]\d{2})")
+        .expect("homeroom class matcher regex should be valid");
     let mut set = HashSet::new();
-    for part in parts {
-        if !part.contains("班主任") {
-            continue;
-        }
-        let cleaned = part
-            .replace("班主任", "")
-            .replace("班", "班")
-            .trim()
-            .to_string();
-        for class_name in parse_class_names(&cleaned) {
-            set.insert(class_name);
+    for caps in matcher.captures_iter(remark) {
+        let token = caps.get(1).map(|m| m.as_str()).unwrap_or_default();
+        let normalized = normalize_class_code(token);
+        if !normalized.is_empty() {
+            set.insert(normalized);
         }
     }
     let mut out: Vec<String> = set.into_iter().collect();
@@ -324,26 +324,80 @@ fn is_middle_manager(remark: Option<&String>) -> bool {
     remark.is_some_and(|value| value.contains("中层"))
 }
 
-fn validate_header(row: &[Data]) -> Result<(), AppError> {
-    let parsed: Vec<String> = row
+fn build_teacher_remark(
+    homeroom_classes: &HashSet<String>,
+    is_middle_manager: bool,
+    fallback: Option<&String>,
+) -> Option<String> {
+    let mut parts = Vec::new();
+
+    let mut classes = homeroom_classes.iter().cloned().collect::<Vec<_>>();
+    classes.sort_by_key(|name| class_sort_key(name));
+    for class_name in classes {
+        parts.push(format!("{class_name}班主任"));
+    }
+    if is_middle_manager {
+        parts.push("中层领导".to_string());
+    }
+
+    if !parts.is_empty() {
+        return Some(parts.join("，"));
+    }
+
+    fallback
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+}
+
+#[derive(Debug, Clone, Copy)]
+struct TeacherHeaderIndexes {
+    teacher_name: usize,
+    subject: usize,
+    class_name: usize,
+    remark: Option<usize>,
+}
+
+fn normalize_header_name(text: &str) -> String {
+    text.trim().replace(' ', "").replace('\n', "")
+}
+
+fn matches_header(header: &str, aliases: &[&str]) -> bool {
+    aliases.iter().any(|alias| header == *alias)
+}
+
+fn detect_header_indexes(row: &[Data]) -> Result<TeacherHeaderIndexes, AppError> {
+    let headers = row
         .iter()
-        .take(TEACHER_HEADERS.len())
-        .map(|c| cell_to_string(Some(c)))
-        .collect();
-    if parsed.len() != TEACHER_HEADERS.len() {
-        return Err(AppError::new("教师 Excel 表头列数不正确"));
-    }
-    for (idx, expected) in TEACHER_HEADERS.iter().enumerate() {
-        if parsed[idx] != *expected {
-            return Err(AppError::new(format!(
-                "教师 Excel 表头不匹配: 第 {} 列应为 '{}'，实际为 '{}'",
-                idx + 1,
-                expected,
-                parsed[idx]
-            )));
-        }
-    }
-    Ok(())
+        .enumerate()
+        .map(|(idx, cell)| (idx, normalize_header_name(&cell_to_string(Some(cell)))))
+        .collect::<Vec<_>>();
+
+    let teacher_name = headers
+        .iter()
+        .find(|(_, text)| matches_header(text, &["教师姓名", "姓名", "老师姓名"]))
+        .map(|(idx, _)| *idx)
+        .ok_or_else(|| AppError::new("教师 Excel 缺少“教师姓名”列"))?;
+    let subject = headers
+        .iter()
+        .find(|(_, text)| matches_header(text, &["任教学科", "教学科目", "科目", "学科"]))
+        .map(|(idx, _)| *idx)
+        .ok_or_else(|| AppError::new("教师 Excel 缺少“任教学科”列"))?;
+    let class_name = headers
+        .iter()
+        .find(|(_, text)| matches_header(text, &["任教班级", "班级", "任课班级"]))
+        .map(|(idx, _)| *idx)
+        .ok_or_else(|| AppError::new("教师 Excel 缺少“任教班级”列"))?;
+    let remark = headers
+        .iter()
+        .find(|(_, text)| matches_header(text, &["备注", "说明"]))
+        .map(|(idx, _)| *idx);
+
+    Ok(TeacherHeaderIndexes {
+        teacher_name,
+        subject,
+        class_name,
+        remark,
+    })
 }
 
 fn parse_teacher_excel(file_path: &str) -> Result<Vec<ParsedTeacherRow>, AppError> {
@@ -354,16 +408,28 @@ fn parse_teacher_excel(file_path: &str) -> Result<Vec<ParsedTeacherRow>, AppErro
         .map_err(AppError::from)?;
 
     let mut rows = range.rows();
-    let header = rows.next().ok_or_else(|| AppError::new("Excel 文件为空，缺少表头"))?;
-    validate_header(header)?;
+    let first_row = rows.next().ok_or_else(|| AppError::new("Excel 文件为空，缺少表头"))?;
+    let (header_indexes, data_start_row_no) = match detect_header_indexes(first_row) {
+        Ok(indexes) => (indexes, 2_usize),
+        Err(_) => {
+            let second_row = rows
+                .next()
+                .ok_or_else(|| AppError::new("教师 Excel 缺少表头行，请检查第二行是否为表头"))?;
+            let indexes = detect_header_indexes(second_row)?;
+            (indexes, 3_usize)
+        }
+    };
 
     let mut out = Vec::new();
     for (offset, row) in rows.enumerate() {
-        let row_no = offset + 2;
-        let teacher_name = cell_to_string(row.get(1));
-        let subject_text = cell_to_string(row.get(2));
-        let class_text = cell_to_string(row.get(3));
-        let remark = cell_to_string(row.get(4));
+        let row_no = offset + data_start_row_no;
+        let teacher_name = cell_to_string(row.get(header_indexes.teacher_name));
+        let subject_text = cell_to_string(row.get(header_indexes.subject));
+        let class_text = cell_to_string(row.get(header_indexes.class_name));
+        let remark = header_indexes
+            .remark
+            .map(|idx| cell_to_string(row.get(idx)))
+            .unwrap_or_default();
 
         if teacher_name.is_empty() && subject_text.is_empty() && class_text.is_empty() {
             continue;
@@ -421,6 +487,12 @@ fn aggregate_rows(rows: Vec<ParsedTeacherRow>) -> Vec<AggregatedTeacher> {
         for class_name in row.class_names {
             entry.assignments.insert((row.subject, class_name));
         }
+
+        entry.remark = build_teacher_remark(
+            &entry.homeroom_classes,
+            entry.is_middle_manager,
+            entry.remark.as_ref().or(row.remark.as_ref()),
+        );
     }
     let mut items: Vec<AggregatedTeacher> = map.into_values().collect();
     items.sort_by(|a, b| a.teacher_name.cmp(&b.teacher_name));
@@ -486,7 +558,10 @@ pub fn import_teachers_from_excel(app: AppHandle, file_path: String) -> Result<T
             duration_ms: (Utc::now() - start).num_milliseconds(),
         })
     })();
-    result.map_err(|e| e.to_string())
+    result.map_err(|e| {
+        app_log::log_error(&app, "teacher.import_teachers_from_excel", &format!("file_path={file_path} | {e}"));
+        e.to_string()
+    })
 }
 
 #[tauri::command]
@@ -619,5 +694,19 @@ mod tests {
         let classes = parse_homeroom_classes("202班班主任，中层领导");
         assert_eq!(classes, vec!["高二2班"]);
         assert!(is_middle_manager(Some(&"202班班主任，中层领导".to_string())));
+    }
+
+    #[test]
+    fn test_parse_homeroom_classes_with_slash_and_middle_manager() {
+        let classes = parse_homeroom_classes("中层领导/202班主任");
+        assert_eq!(classes, vec!["高二2班"]);
+        assert!(is_middle_manager(Some(&"中层领导/202班主任".to_string())));
+    }
+
+    #[test]
+    fn test_build_teacher_remark_normalized() {
+        let classes = HashSet::from(["高一2班".to_string(), "高一10班".to_string()]);
+        let remark = build_teacher_remark(&classes, true, Some(&"中层领导/102班主任".to_string()));
+        assert_eq!(remark, Some("高一2班班主任，高一10班班主任，中层领导".to_string()));
     }
 }

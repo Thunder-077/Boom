@@ -46,7 +46,7 @@ const railItems: RailItem[] = [
 ];
 
 const secondaryItems: SecondaryNavItem[] = [
-  { key: "exam-assignment", label: "月考考场", icon: "inventory_2" },
+  { key: "exam-assignment", label: "考场分配", icon: "inventory_2" },
   { key: "monitor-draw", label: "监考抽签", icon: "shuffle" },
   { key: "monitor-config", label: "监考配置", icon: "tune" },
 ];
@@ -64,9 +64,9 @@ const pageCopy = computed(() => {
   }
   return {
     secondaryTitle: "考试管理",
-    secondaryDescription: "月考考场与监考安排配置",
-    breadcrumb: "考试管理 / 月考考场",
-    pageTitle: "月考考场",
+    secondaryDescription: "考场分配与监考安排配置",
+    breadcrumb: "考试管理 / 考场分配",
+    pageTitle: "考场分配",
   };
 });
 

@@ -1,5 +1,11 @@
 <template>
   <section class="panel" :class="{ dragging: isDragging }">
+    <div v-if="isDragging" class="drag-overlay">
+      <div class="drag-card">
+        <strong>松开鼠标开始导入教师名单</strong>
+        <span>支持 `.xlsx` / `.xls`</span>
+      </div>
+    </div>
     <FilterToolbar :items="[]">
       <div class="toolbar-fields">
         <label class="search-field">
@@ -24,7 +30,9 @@
       </div>
     </FilterToolbar>
 
-    <InfoHint text="教师可关联多个班级，拖拽 Excel 到页面任意位置可导入教师数据并按班级筛选" />
+    <p class="import-status" :class="store.viewState.importStatus">
+      {{ importStatusLabel }}：{{ importStatusMessage }}
+    </p>
 
     <TableCard title="教师列表" :meta="`共 ${store.viewState.total} 位`">
       <div class="table-scroll">
@@ -32,6 +40,7 @@
           <div class="cell head name-col">姓名</div>
           <div class="cell head class-col">班级</div>
           <div class="cell head subject-col">教学科目</div>
+          <div class="cell head remark-col">备注</div>
         </div>
         <div
           v-for="(row, index) in store.viewState.rows"
@@ -46,6 +55,7 @@
             </div>
           </div>
           <div class="cell subject-col">{{ row.subjects.map((subject) => TEACHER_SUBJECT_LABELS[subject]).join(" / ") }}</div>
+          <div class="cell remark-col">{{ row.remark || "--" }}</div>
         </div>
       </div>
     </TableCard>
@@ -57,7 +67,6 @@ import { computed, onMounted, onUnmounted, ref } from "vue";
 import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { TEACHER_SUBJECT_LABELS, type TeacherSubject } from "../../../entities/teacher/model";
 import FilterToolbar from "../../../widgets/common/FilterToolbar.vue";
-import InfoHint from "../../../widgets/common/InfoHint.vue";
 import TableCard from "../../../widgets/common/TableCard.vue";
 import { TEACHER_SUBJECT_OPTIONS, useTeacherStore } from "../store";
 
@@ -68,6 +77,26 @@ let unlistenDragDrop: (() => void) | null = null;
 const classOptions = computed(() =>
   Array.from(new Set(store.viewState.rows.flatMap((row) => row.classNames))).sort((a, b) => a.localeCompare(b, "zh-CN")),
 );
+
+const importStatusLabel = computed(() => {
+  if (store.viewState.importStatus === "idle") {
+    return "待导入";
+  }
+  if (store.viewState.importStatus === "importing") {
+    return "导入中";
+  }
+  if (store.viewState.importStatus === "success") {
+    return "导入成功";
+  }
+  return "导入失败";
+});
+
+const importStatusMessage = computed(() => {
+  if (store.viewState.importStatus === "idle") {
+    return "拖拽教师 Excel 文件到页面任意位置即可开始导入";
+  }
+  return store.viewState.importMessage;
+});
 
 function onNameInput(event: Event) {
   void store.setFilters({ nameKeyword: (event.target as HTMLInputElement).value });
@@ -93,8 +122,39 @@ async function handleImport(filePath: string) {
   }
 }
 
+function normalizeDroppedPath(rawPath: string): string {
+  const trimmed = rawPath.trim();
+  if (!trimmed.startsWith("file://")) {
+    return trimmed;
+  }
+  try {
+    const url = new URL(trimmed);
+    const decoded = decodeURIComponent(url.pathname);
+    const normalized = decoded
+      .replace(/^\/([A-Za-z]:\/)/, "$1")
+      .replace(/\//g, "\\");
+    return normalized;
+  } catch {
+    const withoutScheme = trimmed.replace(/^file:\/\//i, "");
+    const decoded = decodeURIComponent(withoutScheme);
+    return decoded
+      .replace(/^\/([A-Za-z]:\/)/, "$1")
+      .replace(/\//g, "\\");
+  }
+}
+
+function pickExcelPath(paths: string[]): string | undefined {
+  for (const rawPath of paths) {
+    const normalized = normalizeDroppedPath(rawPath);
+    const lowerPath = normalized.toLowerCase();
+    if (lowerPath.endsWith(".xlsx") || lowerPath.endsWith(".xls")) {
+      return normalized;
+    }
+  }
+  return undefined;
+}
+
 onMounted(async () => {
-  await store.load();
   const appWindow = getCurrentWebviewWindow();
   unlistenDragDrop = await appWindow.onDragDropEvent((event) => {
     if (event.payload.type === "enter" || event.payload.type === "over") {
@@ -107,12 +167,15 @@ onMounted(async () => {
     }
     if (event.payload.type === "drop") {
       isDragging.value = false;
-      const excelPath = event.payload.paths.find((path) => path.endsWith(".xlsx") || path.endsWith(".xls"));
+      const excelPath = pickExcelPath(event.payload.paths);
       if (excelPath) {
         void handleImport(excelPath);
+        return;
       }
+      store.setImportFeedback("error", "已收到拖拽，但未识别到可导入的 Excel 文件路径");
     }
   });
+  await store.load();
 });
 
 onUnmounted(() => {
@@ -127,12 +190,59 @@ onUnmounted(() => {
 .panel {
   display: flex;
   flex-direction: column;
+  min-height: 0;
   gap: 22px;
+  position: relative;
+}
+
+.panel :deep(.table-card) {
+  flex: 1;
+  min-height: 0;
+}
+
+.panel :deep(.table-card .content) {
+  display: flex;
+  min-height: 0;
 }
 
 .panel.dragging :deep(.toolbar) {
   border-color: #b9d6ff;
   background: rgba(232, 242, 255, 0.92);
+}
+
+.drag-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 10;
+  border-radius: 20px;
+  background: rgba(15, 108, 189, 0.08);
+  border: 2px dashed #7fb1ea;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+}
+
+.drag-card {
+  min-width: 280px;
+  padding: 18px 22px;
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.94);
+  box-shadow: 0 18px 36px rgba(15, 108, 189, 0.14);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  text-align: center;
+}
+
+.drag-card strong {
+  font-size: 15px;
+  color: var(--color-brand);
+}
+
+.drag-card span {
+  font-size: 13px;
+  color: var(--color-text-muted);
 }
 
 .toolbar-fields {
@@ -183,13 +293,14 @@ onUnmounted(() => {
 }
 
 .table-scroll {
-  max-height: 264px;
+  flex: 1;
+  min-height: 0;
   overflow: auto;
 }
 
 .teacher-grid {
   display: grid;
-  grid-template-columns: 220px 1fr 180px;
+  grid-template-columns: 180px minmax(0, 1.2fr) 160px minmax(0, 0.9fr);
   align-items: center;
 }
 
@@ -212,6 +323,7 @@ onUnmounted(() => {
   padding: 0 18px;
   font-size: 14px;
   color: var(--color-text);
+  min-width: 0;
 }
 
 .head {
@@ -224,15 +336,47 @@ onUnmounted(() => {
   font-weight: 600;
 }
 
+.subject-col {
+  word-break: break-all;
+}
+
+.remark-col {
+  word-break: break-word;
+  color: var(--color-text-muted);
+}
+
 .tag-row {
   display: flex;
   align-items: center;
+  align-content: center;
+  flex-wrap: wrap;
   gap: 10px;
-  overflow: hidden;
-  white-space: nowrap;
+  width: 100%;
+  padding: 10px 0;
 }
 
 .row-alt {
   background: #f8fbff;
+}
+
+.import-status {
+  margin: -10px 4px 0;
+  font-size: 13px;
+}
+
+.import-status.idle {
+  color: var(--color-text-muted);
+}
+
+.import-status.importing {
+  color: var(--color-brand);
+}
+
+.import-status.success {
+  color: var(--color-success);
+}
+
+.import-status.error {
+  color: var(--color-danger);
 }
 </style>

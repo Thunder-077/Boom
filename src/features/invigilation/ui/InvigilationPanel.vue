@@ -6,7 +6,7 @@
           <span class="metric-label">每个考场监考老师个数</span>
           <input class="metric-input" v-model.number="examRoomRequiredCount" type="number" min="1" @blur="saveRequirements" />
         </label>
-        <div class="rule-meta">当前规则将应用到月考考场、监考抽签与津贴结算。</div>
+        <div class="rule-meta">当前规则将应用到考场分配、监考抽签与津贴结算。</div>
       </div>
     </ConfigCard>
 
@@ -33,9 +33,18 @@
 
     <div class="time-row">
       <ConfigCard title="全员自习时间" description="设置无需监考时段，系统默认全体教师可安排为自习值守。">
-        <div class="metric-field short">
-          <span class="metric-label">时间范围</span>
-          <span class="metric-value">12:10 - 13:40</span>
+        <div class="self-study-grid">
+          <label class="metric-field short">
+            <span class="metric-label">科目</span>
+            <select v-model="selfStudySubject" class="glass-field slim-field">
+              <option value="" disabled>请选择科目</option>
+              <option v-for="item in selfStudySubjectOptions" :key="item.value" :value="item.value">{{ item.label }}</option>
+            </select>
+          </label>
+          <div class="metric-field short">
+            <span class="metric-label">时间范围</span>
+            <span class="metric-value">{{ selfStudyTimeRange }}</span>
+          </div>
         </div>
       </ConfigCard>
 
@@ -70,11 +79,13 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from "vue";
 import { SUBJECT_LABELS } from "../../../entities/class-config/model";
+import type { Subject } from "../../../entities/score/model";
 import ConfigCard from "../../../widgets/common/ConfigCard.vue";
 import { useExamAllocationStore } from "../../dashboard/store";
 
 const store = useExamAllocationStore();
 const examRoomRequiredCount = ref(1);
+const selfStudySubject = ref<Subject | "">("");
 
 const previewItems = computed(() => {
   const unassigned = store.viewState.staffTasks.filter((task) => task.status === "unassigned").slice(0, 2);
@@ -84,12 +95,49 @@ const previewItems = computed(() => {
   return store.viewState.staffTasks.slice(0, 2);
 });
 
+const selfStudySubjectOptions = computed(() => {
+  const keys = Array.from(new Set(store.viewState.sessionTimes.map((item) => item.subject)));
+  return keys.map((value) => ({ value, label: SUBJECT_LABELS[value] }));
+});
+
+const selfStudyTimeRange = computed(() => {
+  if (!selfStudySubject.value) {
+    return "--";
+  }
+  const rows = store.viewState.sessionTimes.filter((item) => item.subject === selfStudySubject.value);
+  if (rows.length === 0) {
+    return "--";
+  }
+  const starts = rows.map((item) => store.viewState.sessionTimeDrafts[item.sessionId]?.startAt ?? item.startAt ?? "").filter(Boolean);
+  const ends = rows.map((item) => store.viewState.sessionTimeDrafts[item.sessionId]?.endAt ?? item.endAt ?? "").filter(Boolean);
+  if (starts.length === 0 || ends.length === 0) {
+    return "--";
+  }
+  const start = starts.sort()[0];
+  const end = ends.sort()[ends.length - 1];
+  return `${start.slice(5, 10)} ${start.slice(11, 16)} - ${end.slice(11, 16)}`;
+});
+
 watch(
   () => store.viewState.requirements,
   (requirements) => {
     const firstExamRoom = requirements.find((item) => item.role === "exam_room_invigilator");
     if (firstExamRoom) {
       examRoomRequiredCount.value = firstExamRoom.requiredCount;
+    }
+  },
+  { immediate: true },
+);
+
+watch(
+  selfStudySubjectOptions,
+  (options) => {
+    if (options.length === 0) {
+      selfStudySubject.value = "";
+      return;
+    }
+    if (!options.some((item) => item.value === selfStudySubject.value)) {
+      selfStudySubject.value = options[0].value;
     }
   },
   { immediate: true },
@@ -195,6 +243,15 @@ onMounted(async () => {
 
 .short {
   width: 220px;
+}
+
+.self-study-grid {
+  display: flex;
+  gap: 12px;
+}
+
+.slim-field {
+  min-height: 34px;
 }
 
 .subsidy-row {

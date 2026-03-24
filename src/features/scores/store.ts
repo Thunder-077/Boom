@@ -81,6 +81,11 @@ export function createScoreStore(service: ScoreService = scoreService) {
     }
   }
 
+  function setImportFeedback(status: ImportStatus, message: string) {
+    state.importStatus = status;
+    state.importMessage = message;
+  }
+
   async function getDetail(admissionNo: string): Promise<ScoreDetail> {
     return service.getDetail(admissionNo);
   }
@@ -110,6 +115,7 @@ export function createScoreStore(service: ScoreService = scoreService) {
     importExcel,
     getDetail,
     updateScore,
+    setImportFeedback,
     get viewState() {
       return viewState.value;
     },

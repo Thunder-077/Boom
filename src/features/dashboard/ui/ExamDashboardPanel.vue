@@ -1,7 +1,7 @@
 <template>
   <section class="dashboard-grid">
     <div class="left-col">
-      <ConfigCard title="当前考试配置" description="统一设置考试标题、须知与各科目时间，保持编排逻辑集中可见。">
+      <ConfigCard title="当前考试配置" description="统一设置考试标题、须知与各科目时间。Ctrl+S 只保存本页配置，不会触发考场分配。">
         <div class="field-stack">
           <label class="field-block">
             <span class="metric-label">考试标题</span>
@@ -25,62 +25,64 @@
 
       <TableCard title="考试时间">
         <template #description>
-          <p class="table-hint">本页新增/修改的科目考试时间配置会在点击“开始分配考场”时统一持久化。</p>
+          <p class="table-hint">统一配置各科目考试时间。</p>
         </template>
         <template #actions>
           <button class="secondary-btn" type="button" @click="addManualSubjectRow">新增科目</button>
         </template>
-        <table class="table exam-table">
-          <thead>
-            <tr>
-              <th>科目</th>
-              <th>考试日期</th>
-              <th>开始时间</th>
-              <th>结束时间</th>
-              <th>操作</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr v-for="item in store.viewState.sessionTimes" :key="item.sessionId">
-              <td>{{ SUBJECT_LABELS[item.subject] }}</td>
-              <td>{{ formatMonthDay(item.startAt) }}</td>
-              <td>
-                <input class="time-input" type="time" :value="formatTimeInput(store.viewState.sessionTimeDrafts[item.sessionId]?.startAt)" @input="onTimeInput(item.sessionId, 'startAt', $event)" />
-              </td>
-              <td>
-                <input class="time-input" type="time" :value="formatTimeInput(store.viewState.sessionTimeDrafts[item.sessionId]?.endAt)" @input="onTimeInput(item.sessionId, 'endAt', $event)" />
-              </td>
-              <td>
-                <button class="icon-btn disabled" type="button" disabled title="已有科目场次不可删除">
-                  <span class="material-symbols-rounded" aria-hidden="true">delete</span>
-                </button>
-              </td>
-            </tr>
-            <tr v-for="item in manualSubjectRows" :key="item.id">
-              <td>
-                <div class="manual-subject-row">
-                  <select v-model="item.subject" class="subject-select">
-                    <option v-for="subject in SUBJECT_OPTIONS" :key="subject" :value="subject">{{ SUBJECT_LABELS[subject] }}</option>
-                  </select>
-                </div>
-              </td>
-              <td>
-                <input v-model.trim="item.examMonthDay" class="month-day-input" type="text" placeholder="03-24" />
-              </td>
-              <td>
-                <input v-model="item.startTime" class="time-input" type="time" />
-              </td>
-              <td>
-                <input v-model="item.endTime" class="time-input" type="time" />
-              </td>
-              <td>
-                <button class="icon-btn" type="button" @click="removeManualSubjectRow(item.id)" title="删除该科目时间配置">
-                  <span class="material-symbols-rounded" aria-hidden="true">delete</span>
-                </button>
-              </td>
-            </tr>
-          </tbody>
-        </table>
+        <div class="exam-table-scroll">
+          <table class="table exam-table">
+            <thead>
+              <tr>
+                <th>科目</th>
+                <th>考试日期</th>
+                <th>开始时间</th>
+                <th>结束时间</th>
+                <th>操作</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="item in store.viewState.sessionTimes" :key="item.sessionId">
+                <td>{{ SUBJECT_LABELS[item.subject] }}</td>
+                <td>{{ formatMonthDay(item.startAt) }}</td>
+                <td>
+                  <input class="time-input" type="time" :value="formatTimeInput(store.viewState.sessionTimeDrafts[item.sessionId]?.startAt)" @input="onTimeInput(item.sessionId, 'startAt', $event)" />
+                </td>
+                <td>
+                  <input class="time-input" type="time" :value="formatTimeInput(store.viewState.sessionTimeDrafts[item.sessionId]?.endAt)" @input="onTimeInput(item.sessionId, 'endAt', $event)" />
+                </td>
+                <td>
+                  <button class="icon-btn" type="button" :disabled="store.viewState.savingTimes" :title="`删除${SUBJECT_LABELS[item.subject]}考试时间配置`" @click="removeExistingSubjectTime(item.subject)">
+                    <span class="material-symbols-rounded" aria-hidden="true">delete</span>
+                  </button>
+                </td>
+              </tr>
+              <tr v-for="item in manualSubjectRows" :key="item.id">
+                <td>
+                  <div class="manual-subject-row">
+                    <select v-model="item.subject" class="subject-select">
+                      <option v-for="subject in SUBJECT_OPTIONS" :key="subject" :value="subject">{{ SUBJECT_LABELS[subject] }}</option>
+                    </select>
+                  </div>
+                </td>
+                <td>
+                  <input v-model.trim="item.examMonthDay" class="month-day-input" type="text" placeholder="03-24" />
+                </td>
+                <td>
+                  <input v-model="item.startTime" class="time-input" type="time" />
+                </td>
+                <td>
+                  <input v-model="item.endTime" class="time-input" type="time" />
+                </td>
+                <td>
+                  <button class="icon-btn" type="button" @click="removeManualSubjectRow(item.id)" title="删除该科目时间配置">
+                    <span class="material-symbols-rounded" aria-hidden="true">delete</span>
+                  </button>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
       </TableCard>
     </div>
 
@@ -128,7 +130,8 @@
         <div class="complete-meta">
           <div class="complete-summary">
             <span class="metric-label">结果摘要</span>
-            <strong>{{ completeSummary }}</strong>
+            <strong v-if="!store.viewState.lastExportZipPath">{{ completeSummary }}</strong>
+            <button v-else class="export-link" type="button" @click="openExportFolder">{{ exportFileName }}</button>
           </div>
           <div class="complete-action">
             <button class="primary-btn export-btn" :disabled="store.viewState.exporting || !store.viewState.overview.generatedAt" @click="exportBundle">
@@ -142,9 +145,10 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, reactive } from "vue";
+import { computed, onMounted, onUnmounted, reactive } from "vue";
 import { SUBJECT_LABELS } from "../../../entities/class-config/model";
 import { Subject } from "../../../entities/score/model";
+import { revealInExplorer } from "../../../shared/utils/appLog";
 import ConfigCard from "../../../widgets/common/ConfigCard.vue";
 import TableCard from "../../../widgets/common/TableCard.vue";
 import { useExamAllocationStore } from "../store";
@@ -187,7 +191,7 @@ const progressStepText = computed(() => {
   if (store.viewState.overview.generatedAt) {
     return "已生成最新考场快照，可继续导出分配结果。";
   }
-  return "等待开始分配，系统将按当前配置自动生成考场方案。";
+  return "等待开始，系统将按当前配置自动排考场。";
 });
 
 const completeBadgeText = computed(() => {
@@ -217,14 +221,22 @@ const completeDescription = computed(() => {
   if (!store.viewState.overview.generatedAt) {
     return "尚未生成考场分配结果，完成配置后点击“开始分配考场”即可执行。";
   }
-  return `完成 ${store.viewState.overview.examRoomCount} 个考场、${store.viewState.staffOverview.assignedCount} 位监考老师与 ${store.viewState.overview.studentAllocationCount} 名考生自动分配。`;
+  return `完成 ${store.viewState.overview.examRoomCount} 个考场与 ${store.viewState.overview.studentAllocationCount} 名考生自动分配。`;
 });
 
 const completeSummary = computed(() => {
-  if (!store.viewState.overview.generatedAt) {
-    return "等待生成分配结果";
+  if (store.viewState.lastExportZipPath) {
+    return "考场安排.zip";
   }
-  return `生成于 ${store.viewState.overview.generatedAt}，异常记录 ${store.viewState.overview.warningCount} 条`;
+  return "尚未导出分配文件";
+});
+const exportFileName = computed(() => {
+  const raw = store.viewState.lastExportZipPath;
+  if (!raw) {
+    return "";
+  }
+  const matched = raw.match(/[^\\/]+$/);
+  return matched?.[0] ?? "考场安排.zip";
 });
 
 const isCompletePending = computed(() => store.viewState.generating || !store.viewState.overview.generatedAt);
@@ -333,38 +345,34 @@ async function persistDrafts() {
     .filter((line) => line.length > 0);
   await store.saveSettings(capacityForm.defaultCapacity, capacityForm.maxCapacity, capacityForm.examTitle, examNotices);
 
-  const sessionIdsBySubject = new Map<Subject, number[]>();
-  for (const row of store.viewState.sessionTimes) {
-    const list = sessionIdsBySubject.get(row.subject) ?? [];
-    list.push(row.sessionId);
-    sessionIdsBySubject.set(row.subject, list);
-  }
-
-  const unresolvedSubjects: Subject[] = [];
+  const extraItems: Array<{ sessionId: number; subject: Subject; startAt: string; endAt: string }> = [];
   for (const row of manualSubjectRows) {
     if (!row.examMonthDay || !row.startTime || !row.endTime) {
       throw new Error(`请先完整填写 ${SUBJECT_LABELS[row.subject]} 的考试日期（月-日）、开始时间和结束时间`);
     }
-    const sessionIds = sessionIdsBySubject.get(row.subject) ?? [];
-    if (sessionIds.length === 0) {
-      unresolvedSubjects.push(row.subject);
+    const existing = store.viewState.sessionTimes.find((item) => item.subject === row.subject);
+    if (existing) {
+      const fallbackDate = getDraftDate(existing.sessionId);
+      const targetDate = resolveFullDateFromMonthDay(row.examMonthDay, fallbackDate);
+      store.setSessionTimeDraft(existing.sessionId, "startAt", `${targetDate}T${row.startTime}`);
+      store.setSessionTimeDraft(existing.sessionId, "endAt", `${targetDate}T${row.endTime}`);
       continue;
     }
-    for (const sessionId of sessionIds) {
-      const fallbackDate = getDraftDate(sessionId);
-      const targetDate = resolveFullDateFromMonthDay(row.examMonthDay, fallbackDate);
-      store.setSessionTimeDraft(sessionId, "startAt", `${targetDate}T${row.startTime}`);
-      store.setSessionTimeDraft(sessionId, "endAt", `${targetDate}T${row.endTime}`);
-    }
+    const targetDate = resolveFullDateFromMonthDay(row.examMonthDay, new Date().toISOString().slice(0, 10));
+    extraItems.push({
+      sessionId: -100 - manualSubjectRows.findIndex((item) => item.id === row.id),
+      subject: row.subject,
+      startAt: `${targetDate}T${row.startTime}`,
+      endAt: `${targetDate}T${row.endTime}`,
+    });
   }
 
-  if (unresolvedSubjects.length > 0) {
-    const labels = Array.from(new Set(unresolvedSubjects)).map((subject) => SUBJECT_LABELS[subject]).join("、");
-    throw new Error(`当前未生成以下科目的可分配场次：${labels}`);
-  }
-
-  await store.saveSessionTimes();
+  await store.saveSessionTimes(extraItems);
   manualSubjectRows.splice(0, manualSubjectRows.length);
+}
+
+async function removeExistingSubjectTime(subject: Subject) {
+  await store.deleteSessionTime(subject);
 }
 
 async function generateExamPlan() {
@@ -372,8 +380,30 @@ async function generateExamPlan() {
   await store.generate();
 }
 
+async function saveAllByShortcut() {
+  if (store.viewState.generating || isApplyingConfig.value) {
+    return;
+  }
+  await persistDrafts();
+}
+
+function onGlobalKeydown(event: KeyboardEvent) {
+  if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "s") {
+    event.preventDefault();
+    void saveAllByShortcut();
+  }
+}
+
 async function exportBundle() {
   await store.exportLatestBundle();
+}
+
+async function openExportFolder() {
+  const target = store.viewState.lastExportZipPath;
+  if (!target) {
+    return;
+  }
+  await revealInExplorer(target);
 }
 
 onMounted(async () => {
@@ -382,6 +412,11 @@ onMounted(async () => {
   capacityForm.maxCapacity = store.viewState.settings.maxCapacity;
   capacityForm.examTitle = store.viewState.settings.examTitle ?? "";
   capacityForm.examNoticesText = (store.viewState.settings.examNotices ?? []).join("\n");
+  window.addEventListener("keydown", onGlobalKeydown);
+});
+
+onUnmounted(() => {
+  window.removeEventListener("keydown", onGlobalKeydown);
 });
 </script>
 
@@ -390,6 +425,41 @@ onMounted(async () => {
   display: grid;
   grid-template-columns: 672px 346px;
   gap: 22px;
+}
+
+.exam-table-scroll {
+  max-height: 332px;
+  overflow-y: auto;
+  padding-right: 6px;
+}
+
+.exam-table-scroll thead th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: #f7f9fc;
+}
+
+.global-hint {
+  grid-column: 1 / -1;
+  margin: 0;
+  padding: 10px 12px;
+  border: 1px solid #dce8f8;
+  border-radius: 12px;
+  background: #f7fbff;
+  color: var(--color-text-muted);
+  font-size: 13px;
+}
+
+.export-link {
+  border: 0;
+  padding: 0;
+  background: transparent;
+  color: var(--color-brand);
+  font: inherit;
+  font-weight: 700;
+  text-decoration: underline;
+  cursor: pointer;
 }
 
 .left-col,

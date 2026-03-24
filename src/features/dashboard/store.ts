@@ -235,18 +235,40 @@ export function createExamAllocationStore(service: ExamAllocationService = examA
     state.sessionTimeDrafts[sessionId][field] = value;
   }
 
-  async function saveSessionTimes() {
+  async function saveSessionTimes(extraItems: Array<{ sessionId: number; subject: Subject; startAt: string; endAt: string }> = []) {
     state.savingTimes = true;
     state.errorMessage = "";
     try {
-      const items = Object.entries(state.sessionTimeDrafts)
-        .map(([sessionId, draft]) => ({
-          sessionId: Number(sessionId),
-          startAt: draft.startAt,
-          endAt: draft.endAt,
-        }))
-        .filter((item) => item.startAt && item.endAt);
+      const items = state.sessionTimes
+        .map((item) => {
+          const draft = state.sessionTimeDrafts[item.sessionId];
+          if (!draft) {
+            return null;
+          }
+          return {
+            sessionId: item.sessionId,
+            subject: item.subject,
+            startAt: draft.startAt,
+            endAt: draft.endAt,
+          };
+        })
+        .concat(extraItems)
+        .filter((item): item is { sessionId: number; subject: Subject; startAt: string; endAt: string } => !!item && !!item.startAt && !!item.endAt);
       await service.upsertSessionTimes(items);
+      await loadSessionTimes();
+    } catch (error) {
+      state.errorMessage = error instanceof Error ? error.message : String(error);
+      throw error;
+    } finally {
+      state.savingTimes = false;
+    }
+  }
+
+  async function deleteSessionTime(subject: Subject) {
+    state.savingTimes = true;
+    state.errorMessage = "";
+    try {
+      await service.deleteSessionTime(subject);
       await loadSessionTimes();
     } catch (error) {
       state.errorMessage = error instanceof Error ? error.message : String(error);
@@ -338,6 +360,7 @@ export function createExamAllocationStore(service: ExamAllocationService = examA
     setFilters,
     setSessionTimeDraft,
     saveSessionTimes,
+    deleteSessionTime,
     setRequirementCount,
     saveRequirements,
     assignTeachers,

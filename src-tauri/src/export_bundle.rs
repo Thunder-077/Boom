@@ -2,17 +2,17 @@ use std::collections::HashMap;
 use std::fs::{self, File};
 use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 use chrono::{DateTime, Datelike, NaiveDateTime, Timelike, Utc};
 use rusqlite::params;
-use rust_xlsxwriter::{Format, FormatAlign, FormatBorder, Workbook, Worksheet, XlsxError};
+use rust_xlsxwriter::{Color, Format, FormatAlign, FormatBorder, Workbook, Worksheet, XlsxError};
 use serde::Serialize;
 use tauri::{AppHandle, Manager};
 use zip::write::SimpleFileOptions;
 use zip::CompressionMethod;
 use zip::ZipWriter;
 
+use crate::app_log;
 use crate::score::{self, AppError, Subject};
 
 const SUBJECT_EXPORT_ORDER: [(Subject, &str); 11] = [
@@ -344,6 +344,21 @@ fn subject_sheet_name(label: &str) -> String {
     label.chars().take(31).collect::<String>()
 }
 
+fn display_width(value: &str) -> usize {
+    value
+        .chars()
+        .map(|ch| if ch.is_ascii() { 1 } else { 2 })
+        .sum::<usize>()
+}
+
+fn apply_summary_column_widths(sheet: &mut Worksheet, widths: &[usize]) -> Result<(), XlsxError> {
+    for (idx, width) in widths.iter().enumerate() {
+        let visual = (*width).max(10) as f64 + 2.0;
+        sheet.set_column_width(idx as u16, visual)?;
+    }
+    Ok(())
+}
+
 fn build_tickets_html(exam_title: &str, notices: &[String], students: &[(StudentBase, Vec<TicketExamItem>)]) -> String {
     let mut html = String::from(
         r#"<!DOCTYPE html><html lang="zh-CN"><head><meta charset="UTF-8"/><title>准考证</title><style>
@@ -355,7 +370,8 @@ table{width:100%;border-collapse:collapse;font-size:14px}
 th,td{border:1px solid #333;padding:6px;text-align:center}
 thead th{background:#2f86c3;color:#fff}
 .notice-title{text-align:center;margin:18px 0 10px;font-size:20px;letter-spacing:6px}
-.notice-list{font-size:13px;line-height:1.8;margin:0;padding-left:20px}
+.notice-list{font-size:13px;line-height:1.8}
+.notice-item{margin:0 0 6px}
 </style></head><body>"#,
     );
 
@@ -375,11 +391,11 @@ thead th{background:#2f86c3;color:#fff}
                 item.subject_label, item.time_display, item.room, item.seat
             ));
         }
-        html.push_str(r#"</tbody></table><div class="notice-title">考生须知</div><ol class="notice-list">"#);
+        html.push_str(r#"</tbody></table><div class="notice-title">考生须知</div><div class="notice-list">"#);
         for notice in notices {
-            html.push_str(&format!(r#"<li>{}</li>"#, notice));
+            html.push_str(&format!(r#"<p class="notice-item">{}</p>"#, notice));
         }
-        html.push_str("</ol></div>");
+        html.push_str("</div></div>");
     }
 
     html.push_str("</body></html>");
@@ -434,70 +450,6 @@ fn export_root_dir(app: &AppHandle) -> Result<PathBuf, AppError> {
     Ok(dir)
 }
 
-fn run_puppeteer_pdf(html_path: &Path, pdf_path: &Path) -> Result<(), AppError> {
-    let script = r#"
-import puppeteer from 'puppeteer';
-import { pathToFileURL } from 'node:url';
-import { existsSync } from 'node:fs';
-
-const [, , htmlPath, pdfPath] = process.argv;
-if (!htmlPath || !pdfPath) {
-  console.error('missing args: htmlPath pdfPath');
-  process.exit(2);
-}
-
-const browserCandidates = [
-  process.env.PUPPETEER_EXECUTABLE_PATH,
-  'C:/Program Files/Google/Chrome/Application/chrome.exe',
-  'C:/Program Files (x86)/Google/Chrome/Application/chrome.exe',
-  'C:/Program Files/Microsoft/Edge/Application/msedge.exe',
-  'C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe'
-].filter(Boolean);
-
-const executablePath = browserCandidates.find((p) => existsSync(p));
-
-const browser = await puppeteer.launch({
-  headless: true,
-  executablePath,
-  args: ['--no-sandbox', '--disable-setuid-sandbox']
-});
-try {
-  const page = await browser.newPage();
-  await page.goto(pathToFileURL(htmlPath).href, { waitUntil: 'networkidle0' });
-  await page.pdf({
-    path: pdfPath,
-    format: 'A4',
-    printBackground: true,
-    margin: { top: '10mm', right: '10mm', bottom: '10mm', left: '10mm' }
-  });
-} finally {
-  await browser.close();
-}
-"#;
-    let script_path = html_path
-        .parent()
-        .unwrap_or_else(|| Path::new("."))
-        .join("_render_pdf.mjs");
-    fs::write(&script_path, script).map_err(|e| AppError::new(format!("写入 Puppeteer 脚本失败: {e}")))?;
-
-    let output = Command::new("node")
-        .arg(&script_path)
-        .arg(html_path)
-        .arg(pdf_path)
-        .output()
-        .map_err(|e| AppError::new(format!("调用 Node/Puppeteer 失败，请确认已安装 Node.js 与 puppeteer: {e}")))?;
-
-    let _ = fs::remove_file(&script_path);
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(AppError::new(format!(
-            "生成准考证 PDF 失败（puppeteer）: {}",
-            stderr.trim()
-        )));
-    }
-    Ok(())
-}
-
 #[tauri::command]
 pub fn export_latest_exam_allocation_bundle(app: AppHandle) -> Result<ExportLatestExamAllocationBundleResult, String> {
     let result = (|| -> Result<ExportLatestExamAllocationBundleResult, AppError> {
@@ -513,9 +465,15 @@ pub fn export_latest_exam_allocation_bundle(app: AppHandle) -> Result<ExportLate
         }
 
         let exported_at = Utc::now().to_rfc3339();
-        let stamp = Utc::now().format("%Y%m%d_%H%M%S").to_string();
         let root = export_root_dir(&app)?;
-        let batch_dir = root.join(format!("exam_export_{stamp}"));
+        let batch_dir = root.join("考场安排");
+        let zip_path = root.join("考场安排.zip");
+        if batch_dir.exists() {
+            fs::remove_dir_all(&batch_dir).map_err(|e| AppError::new(format!("清理旧导出目录失败: {e}")))?;
+        }
+        if zip_path.exists() {
+            fs::remove_file(&zip_path).map_err(|e| AppError::new(format!("清理旧导出压缩包失败: {e}")))?;
+        }
         fs::create_dir_all(&batch_dir).map_err(|e| AppError::new(format!("创建导出批次目录失败: {e}")))?;
 
         for grade in &grades {
@@ -540,6 +498,18 @@ pub fn export_latest_exam_allocation_bundle(app: AppHandle) -> Result<ExportLate
 
             let header_fmt = Format::new().set_bold().set_align(FormatAlign::Center).set_border(FormatBorder::Thin);
             let cell_fmt = Format::new().set_border(FormatBorder::Thin).set_align(FormatAlign::Center);
+            let summary_header_fmt = Format::new()
+                .set_bold()
+                .set_font_size(11.)
+                .set_align(FormatAlign::Center)
+                .set_align(FormatAlign::VerticalCenter)
+                .set_background_color(Color::RGB(0xD9D9D9))
+                .set_border(FormatBorder::Thin);
+            let summary_cell_fmt = Format::new()
+                .set_font_size(11.)
+                .set_align(FormatAlign::Center)
+                .set_align(FormatAlign::VerticalCenter)
+                .set_border(FormatBorder::Thin);
 
             let mut classes = class_group.keys().cloned().collect::<Vec<_>>();
             classes.sort_by(|a, b| sort_class_like(a, b));
@@ -603,30 +573,19 @@ pub fn export_latest_exam_allocation_bundle(app: AppHandle) -> Result<ExportLate
             summary_sheet
                 .set_name("总览")
                 .map_err(|e| AppError::new(format!("设置总览 Sheet 名失败: {e}")))?;
-            summary_sheet
-                .write_string_with_format(0, 0, "姓名", &header_fmt)
-                .map_err(|e| AppError::new(format!("写总览表头失败: {e}")))?;
-            summary_sheet
-                .write_string_with_format(0, 1, "班级", &header_fmt)
-                .map_err(|e| AppError::new(format!("写总览表头失败: {e}")))?;
-            summary_sheet
-                .write_string_with_format(0, 2, "考号", &header_fmt)
-                .map_err(|e| AppError::new(format!("写总览表头失败: {e}")))?;
-            summary_sheet
-                .write_string_with_format(0, 3, "班级名次", &header_fmt)
-                .map_err(|e| AppError::new(format!("写总览表头失败: {e}")))?;
-            summary_sheet
-                .write_string_with_format(1, 0, "", &header_fmt)
-                .map_err(|e| AppError::new(format!("写总览表头失败: {e}")))?;
-            summary_sheet
-                .write_string_with_format(1, 1, "", &header_fmt)
-                .map_err(|e| AppError::new(format!("写总览表头失败: {e}")))?;
-            summary_sheet
-                .write_string_with_format(1, 2, "", &header_fmt)
-                .map_err(|e| AppError::new(format!("写总览表头失败: {e}")))?;
-            summary_sheet
-                .write_string_with_format(1, 3, "", &header_fmt)
-                .map_err(|e| AppError::new(format!("写总览表头失败: {e}")))?;
+            for (col, title) in ["姓名", "班级", "考号", "班级名次"].iter().enumerate() {
+                summary_sheet
+                    .merge_range(0, col as u16, 1, col as u16, *title, &summary_header_fmt)
+                    .map_err(|e| AppError::new(format!("合并总览基础表头失败: {e}")))?;
+            }
+
+            let mut summary_widths = vec![
+                display_width("姓名"),
+                display_width("班级"),
+                display_width("考号"),
+                display_width("班级名次"),
+            ];
+            summary_widths.resize(4 + SUBJECT_EXPORT_ORDER.len() * 2, display_width("座位号"));
 
             for (idx, (subject, label)) in SUBJECT_EXPORT_ORDER.iter().enumerate() {
                 let col = 4_u16 + (idx as u16 * 2);
@@ -645,48 +604,69 @@ pub fn export_latest_exam_allocation_bundle(app: AppHandle) -> Result<ExportLate
                     (*label).to_string()
                 };
                 summary_sheet
-                    .merge_range(0, col, 0, col + 1, &title, &header_fmt)
+                    .merge_range(0, col, 0, col + 1, &title, &summary_header_fmt)
                     .map_err(|e| AppError::new(format!("合并总览科目表头失败: {e}")))?;
                 summary_sheet
-                    .write_string_with_format(1, col, "考场号", &header_fmt)
+                    .write_string_with_format(1, col, "考场号", &summary_header_fmt)
                     .map_err(|e| AppError::new(format!("写总览子表头失败: {e}")))?;
                 summary_sheet
-                    .write_string_with_format(1, col + 1, "座位号", &header_fmt)
+                    .write_string_with_format(1, col + 1, "座位号", &summary_header_fmt)
                     .map_err(|e| AppError::new(format!("写总览子表头失败: {e}")))?;
+                let title_width = display_width(&title);
+                let per_col_width = (title_width / 2).max(display_width("考场号")).max(display_width("座位号"));
+                summary_widths[col as usize] = summary_widths[col as usize].max(per_col_width);
+                summary_widths[col as usize + 1] = summary_widths[col as usize + 1].max(per_col_width);
             }
 
             let mut alloc_map: HashMap<(String, Subject), (String, i64)> = HashMap::new();
             for row in &rows {
                 alloc_map.insert((row.admission_no.clone(), row.subject), (row.space_name.clone(), row.seat_no));
             }
+            let exported_student_ids = rows
+                .iter()
+                .map(|row| row.admission_no.clone())
+                .collect::<std::collections::HashSet<_>>();
+            let exported_students = students
+                .iter()
+                .filter(|stu| exported_student_ids.contains(&stu.admission_no))
+                .collect::<Vec<_>>();
 
-            for (idx, stu) in students.iter().enumerate() {
+            for (idx, stu) in exported_students.iter().enumerate() {
                 let r = 2 + idx as u32;
                 summary_sheet
-                    .write_string_with_format(r, 0, &stu.student_name, &cell_fmt)
+                    .write_string_with_format(r, 0, &stu.student_name, &summary_cell_fmt)
                     .map_err(|e| AppError::new(format!("写总览数据失败: {e}")))?;
                 summary_sheet
-                    .write_string_with_format(r, 1, &stu.class_name, &cell_fmt)
+                    .write_string_with_format(r, 1, &stu.class_name, &summary_cell_fmt)
                     .map_err(|e| AppError::new(format!("写总览数据失败: {e}")))?;
                 summary_sheet
-                    .write_string_with_format(r, 2, &stu.admission_no, &cell_fmt)
+                    .write_string_with_format(r, 2, &stu.admission_no, &summary_cell_fmt)
                     .map_err(|e| AppError::new(format!("写总览数据失败: {e}")))?;
                 summary_sheet
-                    .write_number_with_format(r, 3, stu.class_rank as f64, &cell_fmt)
+                    .write_number_with_format(r, 3, stu.class_rank as f64, &summary_cell_fmt)
                     .map_err(|e| AppError::new(format!("写总览数据失败: {e}")))?;
+                summary_widths[0] = summary_widths[0].max(display_width(&stu.student_name));
+                summary_widths[1] = summary_widths[1].max(display_width(&stu.class_name));
+                summary_widths[2] = summary_widths[2].max(display_width(&stu.admission_no));
+                summary_widths[3] = summary_widths[3].max(display_width(&stu.class_rank.to_string()));
 
                 for (sidx, (subject, _)) in SUBJECT_EXPORT_ORDER.iter().enumerate() {
                     let col = 4_u16 + (sidx as u16 * 2);
                     if let Some((room, seat)) = alloc_map.get(&(stu.admission_no.clone(), *subject)) {
                         summary_sheet
-                            .write_string_with_format(r, col, room, &cell_fmt)
+                            .write_string_with_format(r, col, room, &summary_cell_fmt)
                             .map_err(|e| AppError::new(format!("写总览数据失败: {e}")))?;
                         summary_sheet
-                            .write_number_with_format(r, col + 1, *seat as f64, &cell_fmt)
+                            .write_number_with_format(r, col + 1, *seat as f64, &summary_cell_fmt)
                             .map_err(|e| AppError::new(format!("写总览数据失败: {e}")))?;
+                        summary_widths[col as usize] = summary_widths[col as usize].max(display_width(room));
+                        summary_widths[col as usize + 1] =
+                            summary_widths[col as usize + 1].max(display_width(&seat.to_string()));
                     }
                 }
             }
+            apply_summary_column_widths(summary_sheet, &summary_widths)
+                .map_err(|e| AppError::new(format!("设置总览列宽失败: {e}")))?;
 
             for (subject, label) in SUBJECT_EXPORT_ORDER {
                 let mut srows = rows.iter().filter(|r| r.subject == subject).collect::<Vec<_>>();
@@ -710,7 +690,7 @@ pub fn export_latest_exam_allocation_bundle(app: AppHandle) -> Result<ExportLate
                 .map_err(|e| AppError::new(format!("保存年级汇总失败: {e}")))?;
 
             let mut ticket_students = Vec::<(StudentBase, Vec<TicketExamItem>)>::new();
-            for stu in &students {
+            for stu in &exported_students {
                 let mut exams = Vec::new();
                 for (subject, _) in SUBJECT_EXPORT_ORDER {
                     if let Some((room, seat)) = alloc_map.get(&(stu.admission_no.clone(), subject)) {
@@ -730,16 +710,15 @@ pub fn export_latest_exam_allocation_bundle(app: AppHandle) -> Result<ExportLate
                     }
                 }
                 exams.sort_by(|a, b| a.start_ts.cmp(&b.start_ts).then(a.subject_label.cmp(b.subject_label)));
-                ticket_students.push((stu.clone(), exams));
+                if !exams.is_empty() {
+                    ticket_students.push(((*stu).clone(), exams));
+                }
             }
             let html = build_tickets_html(&exam_title, &exam_notices, &ticket_students);
             let html_path = ticket_dir.join("准考证.html");
             fs::write(&html_path, html).map_err(|e| AppError::new(format!("写入准考证 HTML 失败: {e}")))?;
-            let pdf_path = ticket_dir.join("准考证.pdf");
-            run_puppeteer_pdf(&html_path, &pdf_path)?;
         }
 
-        let zip_path = batch_dir.with_extension("zip");
         let file_count = build_zip(&batch_dir, &zip_path)?;
         Ok(ExportLatestExamAllocationBundleResult {
             zip_path: zip_path.to_string_lossy().to_string(),
@@ -749,5 +728,8 @@ pub fn export_latest_exam_allocation_bundle(app: AppHandle) -> Result<ExportLate
             exported_at,
         })
     })();
-    result.map_err(|e| e.to_string())
+    result.map_err(|e| {
+        app_log::log_error(&app, "export_bundle.export_latest_exam_allocation_bundle", &e.to_string());
+        e.to_string()
+    })
 }

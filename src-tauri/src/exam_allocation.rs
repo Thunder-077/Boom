@@ -7,12 +7,21 @@ use rusqlite::{params, params_from_iter, Connection};
 use serde::{Deserialize, Serialize};
 use tauri::AppHandle;
 
+use crate::app_log;
 use crate::class_config;
 use crate::score::{self, AppError, ListResult, Subject};
 use crate::teacher;
 
 const DEFAULT_CAPACITY: i64 = 40;
 const DEFAULT_MAX_CAPACITY: i64 = 41;
+const DEFAULT_EXAM_TITLE: &str = "2026年3月月考";
+const DEFAULT_EXAM_NOTICES: [&str; 5] = [
+    "1. 考生进入考场，准备好2B铅笔、书写用0.5mm黑色签字笔、橡皮等考试必需用品。",
+    "2. 每科开考前20分钟考生进入考场，不允许提前，也不允许退后。考生入场需在考场门口自觉排队等待监考教师安检入场，不可未经查验直接进入考场。进入考场后考生需对号入座，并将准考证放在课桌座号标签处。",
+    "3. 考生不得提前交卷出场。",
+    "4. 严禁携带手机等各种通讯工具、手表、电子存储记忆录放设备、发送接收设备、书包、学习资料、涂改液、修正带、计算器、计算尺等规定以外的物品进入考场。请考生将自己的物品妥善放置，以防丢失。",
+    "5. 所有考场均启用视频监控，实时抓拍违规行为，请考生诚信应考。",
+];
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -267,6 +276,65 @@ impl TaskStatus {
     }
 }
 
+fn default_exam_notices_json() -> Result<String, AppError> {
+    serde_json::to_string(&DEFAULT_EXAM_NOTICES)
+        .map_err(|e| AppError::new(format!("默认考试须知序列化失败: {e}")))
+}
+
+fn should_replace_exam_notices(current_json: &str) -> bool {
+    let trimmed = current_json.trim();
+    if trimmed.is_empty() || trimmed == "[]" {
+        return true;
+    }
+    match serde_json::from_str::<Vec<String>>(trimmed) {
+        Ok(items) => items.iter().any(|item| item.contains("考试科目及时间")),
+        Err(_) => true,
+    }
+}
+
+fn default_session_time_for_subject(subject: Subject) -> Option<(&'static str, &'static str)> {
+    match subject {
+        Subject::Chinese => Some(("2026-03-25T07:30", "2026-03-25T10:00")),
+        Subject::Geography => Some(("2026-03-25T10:30", "2026-03-25T12:00")),
+        Subject::Math => Some(("2026-03-25T14:00", "2026-03-25T16:00")),
+        Subject::Biology => Some(("2026-03-25T16:30", "2026-03-25T18:00")),
+        Subject::Physics => Some(("2026-03-25T18:50", "2026-03-25T20:20")),
+        Subject::English => Some(("2026-03-26T08:00", "2026-03-26T10:00")),
+        Subject::History => Some(("2026-03-26T10:30", "2026-03-26T12:00")),
+        Subject::Chemistry => Some(("2026-03-26T14:10", "2026-03-26T15:40")),
+        Subject::Politics => Some(("2026-03-26T16:10", "2026-03-26T17:40")),
+        Subject::Russian | Subject::Japanese => None,
+    }
+}
+
+fn seed_default_subject_time_templates(conn: &Connection) -> Result<(), AppError> {
+    let now = Utc::now().to_rfc3339();
+    for subject in [
+        Subject::Chinese,
+        Subject::Geography,
+        Subject::Math,
+        Subject::Biology,
+        Subject::Physics,
+        Subject::English,
+        Subject::History,
+        Subject::Chemistry,
+        Subject::Politics,
+    ] {
+        let Some((start_at, end_at)) = default_session_time_for_subject(subject) else {
+            continue;
+        };
+        conn.execute(
+            r#"
+            INSERT INTO exam_subject_time_templates (subject, start_at, end_at, updated_at)
+            VALUES (?1, ?2, ?3, ?4)
+            ON CONFLICT(subject) DO NOTHING
+            "#,
+            params![subject.as_key(), start_at, end_at, now],
+        )?;
+    }
+    Ok(())
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ExamSessionTime {
@@ -281,6 +349,7 @@ pub struct ExamSessionTime {
 #[serde(rename_all = "camelCase")]
 pub struct ExamSessionTimeUpsert {
     pub session_id: i64,
+    pub subject: Subject,
     pub start_at: String,
     pub end_at: String,
 }
@@ -586,6 +655,13 @@ fn ensure_schema(conn: &Connection) -> Result<(), AppError> {
             FOREIGN KEY(session_id) REFERENCES latest_exam_plan_sessions(id) ON DELETE CASCADE
         );
 
+        CREATE TABLE IF NOT EXISTS exam_subject_time_templates (
+            subject TEXT PRIMARY KEY,
+            start_at TEXT NOT NULL,
+            end_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        );
+
         CREATE TABLE IF NOT EXISTS exam_space_staff_requirements (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             session_id INTEGER NOT NULL,
@@ -652,6 +728,7 @@ fn ensure_schema(conn: &Connection) -> Result<(), AppError> {
         );
 
         CREATE INDEX IF NOT EXISTS idx_exam_session_times_subject ON exam_session_times(subject);
+        CREATE INDEX IF NOT EXISTS idx_exam_subject_time_templates_subject ON exam_subject_time_templates(subject);
         CREATE INDEX IF NOT EXISTS idx_exam_space_staff_req_session ON exam_space_staff_requirements(session_id);
         CREATE INDEX IF NOT EXISTS idx_latest_exam_staff_tasks_session ON latest_exam_staff_tasks(session_id);
         CREATE INDEX IF NOT EXISTS idx_latest_exam_staff_tasks_role_status ON latest_exam_staff_tasks(role, status);
@@ -697,10 +774,27 @@ fn ensure_schema(conn: &Connection) -> Result<(), AppError> {
     )?;
 
     let now = Utc::now().to_rfc3339();
+    let default_notices_json = default_exam_notices_json()?;
     conn.execute(
-        "INSERT OR IGNORE INTO exam_allocation_settings (id, default_capacity, max_capacity, updated_at) VALUES (1, ?1, ?2, ?3)",
-        params![DEFAULT_CAPACITY, DEFAULT_MAX_CAPACITY, now],
+        "INSERT OR IGNORE INTO exam_allocation_settings (id, default_capacity, max_capacity, exam_title, exam_notices_json, updated_at) VALUES (1, ?1, ?2, ?3, ?4, ?5)",
+        params![DEFAULT_CAPACITY, DEFAULT_MAX_CAPACITY, DEFAULT_EXAM_TITLE, default_notices_json, now],
     )?;
+    conn.execute(
+        "UPDATE exam_allocation_settings SET exam_title = ?1 WHERE id = 1 AND TRIM(COALESCE(exam_title, '')) = ''",
+        params![DEFAULT_EXAM_TITLE],
+    )?;
+    let current_notices_json: String = conn.query_row(
+        "SELECT COALESCE(exam_notices_json, '') FROM exam_allocation_settings WHERE id = 1",
+        [],
+        |row| row.get(0),
+    )?;
+    if should_replace_exam_notices(&current_notices_json) {
+        conn.execute(
+            "UPDATE exam_allocation_settings SET exam_notices_json = ?1 WHERE id = 1",
+            params![default_exam_notices_json()?],
+        )?;
+    }
+    seed_default_subject_time_templates(conn)?;
     Ok(())
 }
 
@@ -744,6 +838,10 @@ fn subject_order(subject: Subject) -> i32 {
         Subject::Russian => 10,
         Subject::Japanese => 11,
     }
+}
+
+fn template_session_id(subject: Subject) -> i64 {
+    -(subject_order(subject) as i64)
 }
 
 fn class_number(name: &str, suffix: char) -> Option<i64> {
@@ -1043,6 +1141,8 @@ fn build_session(
     let mut warnings = 0_i64;
     let is_foreign = is_foreign_subject(subject);
     let foreign_seq = foreign_order(subject);
+    let not_selected = load_not_selected_students(tx, grade_name, subject)?;
+    let self_study_class_names: HashSet<String> = not_selected.iter().map(|item| item.class_name.clone()).collect();
 
     let mut subject_classes = HashSet::new();
     if is_foreign {
@@ -1073,7 +1173,7 @@ fn build_session(
     let mut teaching_candidates: Vec<Classroom> = grade_ctx
         .teaching_classes
         .iter()
-        .filter(|c| subject_classes.contains(&c.class_name))
+        .filter(|c| subject_classes.contains(&c.class_name) && !self_study_class_names.contains(&c.class_name))
         .cloned()
         .collect();
     if is_foreign {
@@ -1134,7 +1234,7 @@ fn build_session(
 
     let mut self_study_spaces: Vec<SpaceCandidate> = Vec::new();
     for classroom in &grade_ctx.teaching_classes {
-        if used_teaching_classes.contains(&classroom.class_name) {
+        if !self_study_class_names.contains(&classroom.class_name) {
             continue;
         }
         self_study_spaces.push(SpaceCandidate {
@@ -1255,19 +1355,11 @@ fn build_session(
             break;
         }
     }
-
-    let not_selected = load_not_selected_students(tx, grade_name, subject)?;
-    let mut rr_index = 0usize;
     for student in not_selected {
-        let mapped_id = self_study_space_by_class.get(&student.class_name).copied().or_else(|| {
-            if self_study_ids.is_empty() {
-                None
-            } else {
-                let next = self_study_ids[rr_index % self_study_ids.len()];
-                rr_index += 1;
-                Some(next)
-            }
-        });
+        let mapped_id = self_study_space_by_class
+            .get(&student.class_name)
+            .copied()
+            .ok_or_else(|| AppError::new(format!("{} 未找到本班自习教室，无法完成自习安排", student.class_name)))?;
         tx.execute(
             r#"
             INSERT INTO latest_exam_plan_student_allocations
@@ -1307,12 +1399,77 @@ fn subject_chain_from_text(value: &str) -> Vec<Subject> {
         .collect()
 }
 
-fn load_session_time_rows(conn: &Connection) -> Result<Vec<ExamSessionTime>, AppError> {
+fn load_session_time_template_rows(conn: &Connection) -> Result<Vec<ExamSessionTime>, AppError> {
     let mut stmt = conn.prepare(
         r#"
-        SELECT s.id, s.grade_name, s.subject, t.start_at, t.end_at
+        SELECT subject, start_at, end_at
+        FROM exam_subject_time_templates
+        ORDER BY subject ASC
+        "#,
+    )?;
+    let rows = stmt.query_map([], |row| {
+        let subject_key: String = row.get(0)?;
+        let subject = Subject::from_key(&subject_key)
+            .ok_or_else(|| rusqlite::Error::InvalidColumnType(0, "subject".to_string(), rusqlite::types::Type::Text))?;
+        Ok(ExamSessionTime {
+            session_id: template_session_id(subject),
+            grade_name: "全局".to_string(),
+            subject,
+            start_at: row.get(1)?,
+            end_at: row.get(2)?,
+        })
+    })?;
+    let mut out = Vec::new();
+    for row in rows {
+        out.push(row?);
+    }
+    out.sort_by(|a, b| subject_order(a.subject).cmp(&subject_order(b.subject)));
+    Ok(out)
+}
+
+fn seed_default_session_times(conn: &Connection) -> Result<(), AppError> {
+    let now = Utc::now().to_rfc3339();
+    let mut stmt = conn.prepare("SELECT id, subject FROM latest_exam_plan_sessions ORDER BY id ASC")?;
+    let rows = stmt.query_map([], |row| Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?)))?;
+    for row in rows {
+        let (session_id, subject_key) = row?;
+        let Some(subject) = Subject::from_key(&subject_key) else {
+            continue;
+        };
+        let template_time: Option<(String, String)> = conn
+            .query_row(
+                "SELECT start_at, end_at FROM exam_subject_time_templates WHERE subject = ?1",
+                params![subject.as_key()],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .ok();
+        let Some((start_at, end_at)) = template_time else {
+            continue;
+        };
+        conn.execute(
+            r#"
+            INSERT INTO exam_session_times (session_id, subject, start_at, end_at, updated_at)
+            VALUES (?1, ?2, ?3, ?4, ?5)
+            ON CONFLICT(session_id) DO NOTHING
+            "#,
+            params![session_id, subject.as_key(), start_at, end_at, now],
+        )?;
+    }
+    Ok(())
+}
+
+fn load_session_times_runtime(conn: &Connection) -> Result<Vec<SessionTimeRuntime>, AppError> {
+    let mut stmt = conn.prepare(
+        r#"
+        SELECT
+            s.id,
+            s.grade_name,
+            s.subject,
+            COALESCE(t.start_at, tpl.start_at) AS start_at,
+            COALESCE(t.end_at, tpl.end_at) AS end_at
         FROM latest_exam_plan_sessions s
         LEFT JOIN exam_session_times t ON t.session_id = s.id
+        LEFT JOIN exam_subject_time_templates tpl ON tpl.subject = s.subject
         ORDER BY s.grade_name ASC, s.id ASC
         "#,
     )?;
@@ -1330,15 +1487,7 @@ fn load_session_time_rows(conn: &Connection) -> Result<Vec<ExamSessionTime>, App
     })?;
     let mut out = Vec::new();
     for row in rows {
-        out.push(row?);
-    }
-    Ok(out)
-}
-
-fn load_session_times_runtime(conn: &Connection) -> Result<Vec<SessionTimeRuntime>, AppError> {
-    let rows = load_session_time_rows(conn)?;
-    let mut out = Vec::new();
-    for row in rows {
+        let row = row?;
         let start_at = row
             .start_at
             .clone()
@@ -1951,7 +2100,8 @@ pub fn list_exam_session_times(app: AppHandle) -> Result<Vec<ExamSessionTime>, S
     let result = (|| -> Result<Vec<ExamSessionTime>, AppError> {
         let conn = score::open_connection(&app)?;
         ensure_schema(&conn)?;
-        load_session_time_rows(&conn)
+        seed_default_subject_time_templates(&conn)?;
+        load_session_time_template_rows(&conn)
     })();
     result.map_err(|e| e.to_string())
 }
@@ -1963,29 +2113,73 @@ pub fn upsert_exam_session_times(app: AppHandle, items: Vec<ExamSessionTimeUpser
         let tx = conn.transaction()?;
         let now = Utc::now().to_rfc3339();
         for item in items {
-            let session_subject_key: String = tx
-                .query_row(
-                    "SELECT subject FROM latest_exam_plan_sessions WHERE id = ?1",
-                    params![item.session_id],
-                    |row| row.get(0),
-                )
-                .map_err(|_| AppError::new(format!("场次 {} 不存在", item.session_id)))?;
-            let start_ts = parse_datetime_to_ts(&item.start_at)?;
-            let end_ts = parse_datetime_to_ts(&item.end_at)?;
+            let start_at = item.start_at.clone();
+            let end_at = item.end_at.clone();
+            let start_ts = parse_datetime_to_ts(&start_at)?;
+            let end_ts = parse_datetime_to_ts(&end_at)?;
             duration_minutes(start_ts, end_ts)?;
             tx.execute(
                 r#"
-                INSERT INTO exam_session_times (session_id, subject, start_at, end_at, updated_at)
-                VALUES (?1, ?2, ?3, ?4, ?5)
-                ON CONFLICT(session_id) DO UPDATE SET
-                    subject = excluded.subject,
+                INSERT INTO exam_subject_time_templates (subject, start_at, end_at, updated_at)
+                VALUES (?1, ?2, ?3, ?4)
+                ON CONFLICT(subject) DO UPDATE SET
                     start_at = excluded.start_at,
                     end_at = excluded.end_at,
                     updated_at = excluded.updated_at
                 "#,
-                params![item.session_id, session_subject_key, item.start_at, item.end_at, now],
+                params![item.subject.as_key(), &start_at, &end_at, &now],
+            )?;
+            let session_exists = item.session_id > 0
+                && tx
+                    .query_row(
+                        "SELECT 1 FROM latest_exam_plan_sessions WHERE id = ?1",
+                        params![item.session_id],
+                        |row| row.get::<_, i64>(0),
+                    )
+                    .ok()
+                    .is_some();
+            if session_exists {
+                tx.execute(
+                    r#"
+                    INSERT INTO exam_session_times (session_id, subject, start_at, end_at, updated_at)
+                    VALUES (?1, ?2, ?3, ?4, ?5)
+                    ON CONFLICT(session_id) DO UPDATE SET
+                        subject = excluded.subject,
+                        start_at = excluded.start_at,
+                        end_at = excluded.end_at,
+                        updated_at = excluded.updated_at
+                    "#,
+                    params![item.session_id, item.subject.as_key(), &start_at, &end_at, &now],
+                )?;
+            }
+            tx.execute(
+                r#"
+                UPDATE exam_session_times
+                SET start_at = ?1, end_at = ?2, updated_at = ?3
+                WHERE subject = ?4
+                "#,
+                params![&start_at, &end_at, &now, item.subject.as_key()],
             )?;
         }
+        tx.commit()?;
+        Ok(SuccessResponse { success: true })
+    })();
+    result.map_err(|e| e.to_string())
+}
+
+pub fn delete_exam_session_time(app: AppHandle, subject: Subject) -> Result<SuccessResponse, String> {
+    let result = (|| -> Result<SuccessResponse, AppError> {
+        let mut conn = score::open_connection(&app)?;
+        ensure_schema(&conn)?;
+        let tx = conn.transaction()?;
+        tx.execute(
+            "DELETE FROM exam_subject_time_templates WHERE subject = ?1",
+            params![subject.as_key()],
+        )?;
+        tx.execute(
+            "DELETE FROM exam_session_times WHERE subject = ?1",
+            params![subject.as_key()],
+        )?;
         tx.commit()?;
         Ok(SuccessResponse { success: true })
     })();
@@ -2145,6 +2339,7 @@ pub fn generate_latest_exam_plan(
             params![generated_at, default_capacity, max_capacity, grades.len() as i64, session_count, warning_count],
         )?;
         tx.commit()?;
+        seed_default_session_times(&conn)?;
 
         Ok(GenerateLatestExamPlanResult {
             generated_at,
@@ -2153,7 +2348,10 @@ pub fn generate_latest_exam_plan(
             warning_count,
         })
     })();
-    result.map_err(|e| e.to_string())
+    result.map_err(|e| {
+        app_log::log_error(&app, "exam_allocation.generate_latest_exam_plan", &e.to_string());
+        e.to_string()
+    })
 }
 
 pub fn generate_latest_exam_staff_plan(app: AppHandle) -> Result<GenerateLatestExamStaffPlanResult, String> {
@@ -2361,7 +2559,11 @@ pub fn get_latest_exam_plan_overview(app: AppHandle) -> Result<ExamPlanOverview,
             [],
             |row| row.get(0),
         )?;
-        let student_allocation_count: i64 = conn.query_row("SELECT COUNT(*) FROM latest_exam_plan_student_allocations", [], |row| row.get(0))?;
+        let student_allocation_count: i64 = conn.query_row(
+            "SELECT COUNT(DISTINCT admission_no) FROM latest_exam_plan_student_allocations WHERE allocation_type = 'exam'",
+            [],
+            |row| row.get(0),
+        )?;
         Ok(ExamPlanOverview {
             generated_at: meta_row.as_ref().map(|v| v.0.clone()),
             default_capacity: settings.default_capacity,
