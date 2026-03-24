@@ -25,6 +25,23 @@ export interface ScoreRow {
   selectedSubjectCount: number;
 }
 
+export interface ScoreSubjectItem {
+  subject: Subject;
+  score: number | null;
+  state: ScoreCellState;
+}
+
+export interface ScoreDetail extends ScoreRow {
+  subjects: ScoreSubjectItem[];
+}
+
+export interface ScoreUpdatePayload {
+  admissionNo: string;
+  className: string;
+  studentName: string;
+  subjects: ScoreSubjectItem[];
+}
+
 export interface ScoreQuery {
   nameKeyword?: string;
   className?: string;

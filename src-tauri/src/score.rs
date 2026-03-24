@@ -7,7 +7,7 @@ use calamine::{open_workbook_auto, Data, Reader};
 use chrono::Utc;
 use regex::Regex;
 use rusqlite::types::Value;
-use rusqlite::{params, params_from_iter, Connection};
+use rusqlite::{params, params_from_iter, Connection, Transaction};
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Manager};
 
@@ -198,6 +198,42 @@ pub struct ScoreListParams {
     pub grade_name: Option<String>,
     pub page: Option<i64>,
     pub page_size: Option<i64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ScoreSubjectItem {
+    subject: Subject,
+    score: Option<f64>,
+    state: ScoreCellState,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ScoreDetail {
+    admission_no: String,
+    class_name: String,
+    grade_name: String,
+    student_name: String,
+    total_score: f64,
+    class_rank: i64,
+    grade_rank: i64,
+    selected_subject_count: i64,
+    subjects: Vec<ScoreSubjectItem>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdateScorePayload {
+    admission_no: String,
+    class_name: String,
+    student_name: String,
+    subjects: Vec<ScoreSubjectItem>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct SuccessResponse {
+    success: bool,
 }
 
 pub fn db_path(app: &AppHandle) -> Result<PathBuf, AppError> {
@@ -433,6 +469,95 @@ fn apply_ranks(students: &mut [ParsedStudent]) {
     assign_competition_rank(students, grade_groups, false);
 }
 
+#[derive(Debug, Clone)]
+struct RankRow {
+    admission_no: String,
+    class_name: String,
+    grade_name: String,
+    total_score: f64,
+    class_rank: i64,
+    grade_rank: i64,
+}
+
+fn assign_rank_rows(rows: &mut [RankRow]) {
+    let mut class_groups: HashMap<String, Vec<usize>> = HashMap::new();
+    let mut grade_groups: HashMap<String, Vec<usize>> = HashMap::new();
+    for (idx, row) in rows.iter().enumerate() {
+        class_groups.entry(row.class_name.clone()).or_default().push(idx);
+        grade_groups.entry(row.grade_name.clone()).or_default().push(idx);
+    }
+    for (_, mut indexes) in class_groups {
+        indexes.sort_by(|a, b| {
+            rows[*b]
+                .total_score
+                .partial_cmp(&rows[*a].total_score)
+                .unwrap_or(std::cmp::Ordering::Equal)
+                .then(rows[*a].admission_no.cmp(&rows[*b].admission_no))
+        });
+        let mut current_rank = 1_i64;
+        let mut previous_score: Option<f64> = None;
+        for (position, index) in indexes.iter().enumerate() {
+            let total = rows[*index].total_score;
+            if let Some(prev) = previous_score {
+                if (prev - total).abs() > 1e-9 {
+                    current_rank = (position + 1) as i64;
+                }
+            }
+            previous_score = Some(total);
+            rows[*index].class_rank = current_rank;
+        }
+    }
+    for (_, mut indexes) in grade_groups {
+        indexes.sort_by(|a, b| {
+            rows[*b]
+                .total_score
+                .partial_cmp(&rows[*a].total_score)
+                .unwrap_or(std::cmp::Ordering::Equal)
+                .then(rows[*a].admission_no.cmp(&rows[*b].admission_no))
+        });
+        let mut current_rank = 1_i64;
+        let mut previous_score: Option<f64> = None;
+        for (position, index) in indexes.iter().enumerate() {
+            let total = rows[*index].total_score;
+            if let Some(prev) = previous_score {
+                if (prev - total).abs() > 1e-9 {
+                    current_rank = (position + 1) as i64;
+                }
+            }
+            previous_score = Some(total);
+            rows[*index].grade_rank = current_rank;
+        }
+    }
+}
+
+fn recompute_ranks_tx(tx: &Transaction<'_>) -> Result<(), AppError> {
+    let mut stmt = tx.prepare(
+        "SELECT admission_no, class_name, grade_name, total_score FROM latest_student_scores ORDER BY admission_no ASC",
+    )?;
+    let rows_iter = stmt.query_map([], |row| {
+        Ok(RankRow {
+            admission_no: row.get(0)?,
+            class_name: row.get(1)?,
+            grade_name: row.get(2)?,
+            total_score: row.get(3)?,
+            class_rank: 0,
+            grade_rank: 0,
+        })
+    })?;
+    let mut rows = Vec::new();
+    for row in rows_iter {
+        rows.push(row?);
+    }
+    assign_rank_rows(&mut rows);
+    for row in rows {
+        tx.execute(
+            "UPDATE latest_student_scores SET class_rank = ?1, grade_rank = ?2 WHERE admission_no = ?3",
+            params![row.class_rank, row.grade_rank, row.admission_no],
+        )?;
+    }
+    Ok(())
+}
+
 fn persist_latest_snapshot(conn: &mut Connection, source_file: &str, imported_at: &str, students: &[ParsedStudent]) -> Result<(), AppError> {
     let tx = conn.transaction()?;
     tx.execute("DELETE FROM latest_subject_scores", [])?;
@@ -567,6 +692,183 @@ pub fn list_latest_score_rows(app: AppHandle, params: ScoreListParams) -> Result
             items.push(row?);
         }
         Ok(ListResult { items, total })
+    })();
+    result.map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn get_score_detail(app: AppHandle, admission_no: String) -> Result<ScoreDetail, String> {
+    let result = (|| -> Result<ScoreDetail, AppError> {
+        let conn = open_connection(&app)?;
+        init_schema(&conn)?;
+        let student = conn
+            .query_row(
+                r#"
+                SELECT admission_no, class_name, grade_name, student_name, total_score, class_rank, grade_rank, selected_subject_count
+                FROM latest_student_scores
+                WHERE admission_no = ?1
+                "#,
+                params![admission_no],
+                |row| {
+                    Ok(ScoreDetail {
+                        admission_no: row.get(0)?,
+                        class_name: row.get(1)?,
+                        grade_name: row.get(2)?,
+                        student_name: row.get(3)?,
+                        total_score: row.get(4)?,
+                        class_rank: row.get(5)?,
+                        grade_rank: row.get(6)?,
+                        selected_subject_count: row.get(7)?,
+                        subjects: Vec::new(),
+                    })
+                },
+            )
+            .map_err(|_| AppError::new("未找到该成绩记录"))?;
+
+        let mut map: HashMap<Subject, ScoreSubjectItem> = HashMap::new();
+        let mut stmt = conn.prepare(
+            "SELECT subject, score, is_selected, is_absent FROM latest_subject_scores WHERE admission_no = ?1",
+        )?;
+        let rows = stmt.query_map(params![student.admission_no.clone()], |row| {
+            let subject_key: String = row.get(0)?;
+            let score: Option<f64> = row.get(1)?;
+            let is_selected: i64 = row.get(2)?;
+            let is_absent: i64 = row.get(3)?;
+            Ok((subject_key, score, is_selected, is_absent))
+        })?;
+        for row in rows {
+            let (subject_key, score, is_selected, is_absent) = row?;
+            let Some(subject) = Subject::from_key(&subject_key) else {
+                continue;
+            };
+            let state = if is_selected == 0 {
+                ScoreCellState::NotSelected
+            } else if is_absent == 1 {
+                ScoreCellState::Absent
+            } else {
+                ScoreCellState::Scored
+            };
+            map.insert(
+                subject,
+                ScoreSubjectItem {
+                    subject,
+                    score,
+                    state,
+                },
+            );
+        }
+
+        let mut subjects = Vec::new();
+        for (_, subject, _) in SUBJECT_COLUMNS {
+            if let Some(item) = map.get(&subject) {
+                subjects.push(item.clone());
+            } else {
+                subjects.push(ScoreSubjectItem {
+                    subject,
+                    score: None,
+                    state: ScoreCellState::NotSelected,
+                });
+            }
+        }
+        Ok(ScoreDetail { subjects, ..student })
+    })();
+    result.map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn update_score_row(app: AppHandle, payload: UpdateScorePayload) -> Result<SuccessResponse, String> {
+    let result = (|| -> Result<SuccessResponse, AppError> {
+        let mut conn = open_connection(&app)?;
+        init_schema(&conn)?;
+
+        let admission_no = payload.admission_no.trim().to_string();
+        let class_name = payload.class_name.trim().to_string();
+        let student_name = payload.student_name.trim().to_string();
+        if admission_no.is_empty() || class_name.is_empty() || student_name.is_empty() {
+            return Err(AppError::new("准考证号、班级、姓名不能为空"));
+        }
+
+        let exists: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM latest_student_scores WHERE admission_no = ?1",
+            params![admission_no.clone()],
+            |row| row.get(0),
+        )?;
+        if exists == 0 {
+            return Err(AppError::new("未找到要更新的成绩记录"));
+        }
+
+        let mut subject_map: HashMap<Subject, ScoreSubjectItem> = HashMap::new();
+        for item in payload.subjects {
+            subject_map.insert(item.subject, item);
+        }
+
+        let mut normalized = Vec::new();
+        let mut total_score = 0.0_f64;
+        let mut selected_subject_count = 0_i64;
+        for (_, subject, _) in SUBJECT_COLUMNS {
+            let mut item = subject_map.remove(&subject).unwrap_or(ScoreSubjectItem {
+                subject,
+                score: None,
+                state: ScoreCellState::NotSelected,
+            });
+            match item.state {
+                ScoreCellState::NotSelected => {
+                    item.score = None;
+                }
+                ScoreCellState::Absent => {
+                    item.score = Some(0.0);
+                    selected_subject_count += 1;
+                }
+                ScoreCellState::Scored => {
+                    let score = item
+                        .score
+                        .ok_or_else(|| AppError::new(format!("{}成绩不能为空", subject.as_key())))?;
+                    if score < 0.0 {
+                        return Err(AppError::new(format!("{}成绩不能小于 0", subject.as_key())));
+                    }
+                    selected_subject_count += 1;
+                    total_score += score;
+                }
+            }
+            normalized.push(item);
+        }
+
+        let grade_name = extract_grade_name(&class_name);
+        let tx = conn.transaction()?;
+        tx.execute(
+            r#"
+            UPDATE latest_student_scores
+            SET class_name = ?1, grade_name = ?2, student_name = ?3, total_score = ?4, selected_subject_count = ?5
+            WHERE admission_no = ?6
+            "#,
+            params![
+                class_name,
+                grade_name,
+                student_name,
+                total_score,
+                selected_subject_count,
+                admission_no.clone()
+            ],
+        )?;
+        tx.execute(
+            "DELETE FROM latest_subject_scores WHERE admission_no = ?1",
+            params![admission_no.clone()],
+        )?;
+        for item in normalized {
+            tx.execute(
+                "INSERT INTO latest_subject_scores (admission_no, subject, score, is_selected, is_absent) VALUES (?1, ?2, ?3, ?4, ?5)",
+                params![
+                    admission_no.clone(),
+                    item.subject.as_key(),
+                    item.score,
+                    !matches!(item.state, ScoreCellState::NotSelected),
+                    matches!(item.state, ScoreCellState::Absent)
+                ],
+            )?;
+        }
+        recompute_ranks_tx(&tx)?;
+        tx.commit()?;
+        Ok(SuccessResponse { success: true })
     })();
     result.map_err(|e| e.to_string())
 }

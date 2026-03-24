@@ -19,6 +19,7 @@
     <InfoHint text="可将 Excel 文件拖拽到页面任意位置导入成绩数据" />
 
     <TableCard title="考试成绩列表" :meta="`已同步 ${store.viewState.total} 条`">
+      <div class="table-scroll">
       <table class="table score-table">
         <thead>
           <tr>
@@ -31,22 +32,87 @@
           </tr>
         </thead>
         <tbody>
-          <tr v-for="(row, index) in store.viewState.rows.slice(0, 8)" :key="row.admissionNo" :class="rowClass(index)">
-            <td :class="{ emphasis: index === 2 }">{{ row.studentName }}</td>
+          <tr v-for="(row, index) in store.viewState.rows" :key="row.admissionNo" :class="rowClass(index)">
+            <td class="emphasis">{{ row.studentName }}</td>
             <td>{{ row.admissionNo }}</td>
             <td>{{ row.className }}</td>
             <td>总分</td>
-            <td class="score-cell" :class="{ highlight: index === 2 }">{{ row.totalScore.toFixed(0) }}</td>
-            <td class="link-cell">查看 / 编辑</td>
+            <td class="score-cell">{{ row.totalScore.toFixed(0) }}</td>
+            <td class="link-cell">
+              <button class="link-btn" type="button" @click="openDetail(row.admissionNo, 'view')">查看</button>
+              <span class="sep">/</span>
+              <button class="link-btn" type="button" @click="openDetail(row.admissionNo, 'edit')">编辑</button>
+            </td>
           </tr>
         </tbody>
       </table>
+      </div>
     </TableCard>
+
+    <div v-if="detailState.visible" class="detail-mask" @click.self="closeDetail">
+      <section class="detail-card card-shell">
+        <div class="detail-head">
+          <h3>{{ detailState.mode === 'view' ? "查看成绩" : "编辑成绩" }}</h3>
+          <button class="close-btn" type="button" @click="closeDetail">×</button>
+        </div>
+        <div v-if="detailState.loading" class="detail-loading">加载中...</div>
+        <div v-else-if="detailState.error" class="detail-error">{{ detailState.error }}</div>
+        <template v-else-if="detailState.form">
+          <div class="detail-meta">
+            <label class="meta-field">
+              <span>姓名</span>
+              <input v-model.trim="detailState.form.studentName" class="glass-field" :disabled="detailState.mode === 'view'" />
+            </label>
+            <label class="meta-field">
+              <span>班级</span>
+              <input v-model.trim="detailState.form.className" class="glass-field" :disabled="detailState.mode === 'view'" />
+            </label>
+            <label class="meta-field readonly">
+              <span>准考证号</span>
+              <input :value="detailState.form.admissionNo" class="glass-field" disabled />
+            </label>
+          </div>
+          <div class="subject-list">
+            <div v-for="item in detailState.form.subjects" :key="item.subject" class="subject-row">
+              <strong>{{ SUBJECT_LABELS[item.subject] }}</strong>
+              <select v-model="item.state" class="glass-field small" :disabled="detailState.mode === 'view'">
+                <option value="scored">有成绩</option>
+                <option value="absent">缺考</option>
+                <option value="not_selected">未选考</option>
+              </select>
+              <input
+                v-model.number="item.score"
+                class="glass-field score-input"
+                type="number"
+                min="0"
+                step="0.5"
+                :disabled="detailState.mode === 'view' || item.state !== 'scored'"
+                :placeholder="item.state === 'scored' ? '输入分数' : '--'"
+              />
+            </div>
+          </div>
+          <div class="detail-actions">
+            <button class="secondary-btn" type="button" @click="closeDetail">关闭</button>
+            <button
+              v-if="detailState.mode === 'edit'"
+              class="primary-btn"
+              type="button"
+              :disabled="detailState.saving"
+              @click="saveDetail"
+            >
+              {{ detailState.saving ? "保存中..." : "保存" }}
+            </button>
+          </div>
+        </template>
+      </section>
+    </div>
   </section>
 </template>
 
 <script setup lang="ts">
-import { onMounted, onUnmounted, ref } from "vue";
+import { onMounted, onUnmounted, reactive, ref } from "vue";
+import { SUBJECT_LABELS } from "../../../entities/class-config/model";
+import type { ScoreCellState, ScoreDetail, ScoreUpdatePayload } from "../../../entities/score/model";
 import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 import FilterToolbar from "../../../widgets/common/FilterToolbar.vue";
 import InfoHint from "../../../widgets/common/InfoHint.vue";
@@ -56,16 +122,81 @@ import { useScoreStore } from "../store";
 const store = useScoreStore();
 const isDragging = ref(false);
 let unlistenDragDrop: (() => void) | null = null;
+const detailState = reactive<{
+  visible: boolean;
+  mode: "view" | "edit";
+  loading: boolean;
+  saving: boolean;
+  error: string;
+  form: ScoreDetail | null;
+}>({
+  visible: false,
+  mode: "view",
+  loading: false,
+  saving: false,
+  error: "",
+  form: null,
+});
 
 function rowClass(index: number) {
-  if (index === 2) {
-    return "row-highlight";
-  }
   return index % 2 === 1 ? "row-alt" : "";
 }
 
 function onNameInput(event: Event) {
   void store.setFilters({ nameKeyword: (event.target as HTMLInputElement).value });
+}
+
+async function openDetail(admissionNo: string, mode: "view" | "edit") {
+  detailState.visible = true;
+  detailState.mode = mode;
+  detailState.loading = true;
+  detailState.error = "";
+  detailState.form = null;
+  try {
+    detailState.form = await store.getDetail(admissionNo);
+  } catch (error) {
+    detailState.error = error instanceof Error ? error.message : String(error);
+  } finally {
+    detailState.loading = false;
+  }
+}
+
+function closeDetail() {
+  detailState.visible = false;
+  detailState.loading = false;
+  detailState.saving = false;
+  detailState.error = "";
+  detailState.form = null;
+}
+
+async function saveDetail() {
+  if (!detailState.form) {
+    return;
+  }
+  detailState.saving = true;
+  detailState.error = "";
+  try {
+    const subjects = detailState.form.subjects.map((item) => ({
+      subject: item.subject,
+      state: item.state as ScoreCellState,
+      score:
+        item.state === "scored" && item.score !== null && Number.isFinite(Number(item.score))
+          ? Number(item.score)
+          : null,
+    }));
+    const payload: ScoreUpdatePayload = {
+      admissionNo: detailState.form.admissionNo,
+      className: detailState.form.className,
+      studentName: detailState.form.studentName,
+      subjects,
+    };
+    await store.updateScore(payload);
+    await openDetail(detailState.form.admissionNo, "view");
+  } catch (error) {
+    detailState.error = error instanceof Error ? error.message : String(error);
+  } finally {
+    detailState.saving = false;
+  }
 }
 
 async function handleImport(filePath: string) {
@@ -153,14 +284,31 @@ onUnmounted(() => {
   height: 58px;
 }
 
+.table-scroll {
+  max-height: 320px;
+  overflow: auto;
+}
+
 .score-cell {
   font-size: 18px;
   font-weight: 700;
 }
 
-.score-cell.highlight,
 .link-cell {
   color: var(--color-brand);
+}
+
+.link-btn {
+  border: 0;
+  background: transparent;
+  color: var(--color-brand);
+  cursor: pointer;
+  font-size: 14px;
+}
+
+.sep {
+  margin: 0 6px;
+  color: var(--color-text-muted);
 }
 
 .emphasis {
@@ -171,7 +319,95 @@ onUnmounted(() => {
   background: #f8fbff;
 }
 
-.row-highlight {
-  background: rgba(234, 243, 255, 0.6);
+.detail-mask {
+  position: fixed;
+  inset: 0;
+  background: rgba(17, 21, 26, 0.42);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 40;
 }
+
+.detail-card {
+  width: 780px;
+  max-height: 86vh;
+  overflow: auto;
+  padding: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.detail-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.detail-head h3 {
+  margin: 0;
+}
+
+.close-btn {
+  border: 0;
+  background: transparent;
+  font-size: 24px;
+  line-height: 1;
+  cursor: pointer;
+  color: var(--color-text-muted);
+}
+
+.detail-meta {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.meta-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.meta-field span {
+  font-size: 12px;
+  color: var(--color-text-muted);
+}
+
+.subject-list {
+  border: 1px solid var(--color-border-soft);
+  border-radius: 14px;
+  padding: 12px;
+  display: grid;
+  gap: 8px;
+}
+
+.subject-row {
+  display: grid;
+  grid-template-columns: 88px 140px 1fr;
+  align-items: center;
+  gap: 10px;
+}
+
+.small {
+  min-height: 38px;
+}
+
+.score-input {
+  min-height: 38px;
+}
+
+.detail-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
+.detail-loading,
+.detail-error {
+  color: var(--color-text-muted);
+  font-size: 14px;
+}
+
 </style>

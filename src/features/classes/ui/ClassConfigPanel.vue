@@ -13,10 +13,10 @@
       </label>
     </div>
 
-    <ConfigCard title="所学科目配置" description="点击科目标签可启用或取消，当前班级已选择 6 门课程。">
+    <ConfigCard :title="'所学科目配置'" :description="subjectDescription">
       <div class="subject-row">
         <button
-          v-for="subject in SUBJECT_OPTIONS.slice(0, 6)"
+          v-for="subject in visibleSubjects"
           :key="subject.value"
           type="button"
           class="subject-pill"
@@ -54,6 +54,10 @@ const store = useClassConfigStore();
 
 const visibleRows = computed(() => store.viewState.rows.filter((row) => row.configType === "teaching_class"));
 const currentRow = computed(() => visibleRows.value.find((row) => row.id === store.viewState.selectedId) ?? visibleRows.value[0] ?? null);
+const visibleSubjects = computed(() => SUBJECT_OPTIONS.slice(0, 6));
+const subjectDescription = computed(
+  () => `点击科目标签可启用或取消，当前班级已选择 ${store.viewState.form.subjects.length} 门课程。`,
+);
 
 function onFormInput(field: "building" | "floor", event: Event) {
   const value = (event.target as HTMLInputElement).value;

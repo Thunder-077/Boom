@@ -5,18 +5,30 @@
         <div class="field-stack">
           <label class="field-block">
             <span class="metric-label">考试标题</span>
-            <input v-model.trim="capacityForm.examTitle" class="glass-field" type="text" />
+            <input
+              v-model.trim="capacityForm.examTitle"
+              class="glass-field filled-field"
+              type="text"
+              placeholder="2026 学年春季期末统一考试"
+            />
           </label>
           <label class="field-block">
             <span class="metric-label">考试须知</span>
-            <textarea v-model="capacityForm.examNoticesText" class="glass-area" />
+            <textarea
+              v-model="capacityForm.examNoticesText"
+              class="glass-area filled-area"
+              placeholder="请考生提前 30 分钟入场，核对准考证信息；开考 15 分钟后不得进入考场。严禁携带通讯设备与电子资料。"
+            />
           </label>
         </div>
       </ConfigCard>
 
-      <TableCard title="考试时间" meta="支持新增、双击单元格修改、删除">
+      <TableCard title="考试时间">
+        <template #description>
+          <p class="table-hint">本页新增/修改的科目考试时间配置会在点击“开始分配考场”时统一持久化。</p>
+        </template>
         <template #actions>
-          <button class="secondary-btn" disabled>新增科目</button>
+          <button class="secondary-btn" type="button" @click="addManualSubjectRow">新增科目</button>
         </template>
         <table class="table exam-table">
           <thead>
@@ -31,22 +43,44 @@
           <tbody>
             <tr v-for="item in store.viewState.sessionTimes" :key="item.sessionId">
               <td>{{ SUBJECT_LABELS[item.subject] }}</td>
-              <td>{{ formatDate(item.startAt) }}</td>
+              <td>{{ formatMonthDay(item.startAt) }}</td>
               <td>
                 <input class="time-input" type="time" :value="formatTimeInput(store.viewState.sessionTimeDrafts[item.sessionId]?.startAt)" @input="onTimeInput(item.sessionId, 'startAt', $event)" />
               </td>
               <td>
                 <input class="time-input" type="time" :value="formatTimeInput(store.viewState.sessionTimeDrafts[item.sessionId]?.endAt)" @input="onTimeInput(item.sessionId, 'endAt', $event)" />
               </td>
-              <td><button class="icon-btn" type="button" disabled>🗑</button></td>
+              <td>
+                <button class="icon-btn disabled" type="button" disabled title="已有科目场次不可删除">
+                  <span class="material-symbols-rounded" aria-hidden="true">delete</span>
+                </button>
+              </td>
+            </tr>
+            <tr v-for="item in manualSubjectRows" :key="item.id">
+              <td>
+                <div class="manual-subject-row">
+                  <select v-model="item.subject" class="subject-select">
+                    <option v-for="subject in SUBJECT_OPTIONS" :key="subject" :value="subject">{{ SUBJECT_LABELS[subject] }}</option>
+                  </select>
+                </div>
+              </td>
+              <td>
+                <input v-model.trim="item.examMonthDay" class="month-day-input" type="text" placeholder="03-24" />
+              </td>
+              <td>
+                <input v-model="item.startTime" class="time-input" type="time" />
+              </td>
+              <td>
+                <input v-model="item.endTime" class="time-input" type="time" />
+              </td>
+              <td>
+                <button class="icon-btn" type="button" @click="removeManualSubjectRow(item.id)" title="删除该科目时间配置">
+                  <span class="material-symbols-rounded" aria-hidden="true">delete</span>
+                </button>
+              </td>
             </tr>
           </tbody>
         </table>
-        <div class="table-actions">
-          <button class="secondary-btn" :disabled="store.viewState.savingTimes" @click="saveSessionTimes">
-            {{ store.viewState.savingTimes ? "保存中..." : "保存考试时间" }}
-          </button>
-        </div>
       </TableCard>
     </div>
 
@@ -54,12 +88,12 @@
       <section class="progress-card card-shell">
         <div class="progress-head">
           <h3>开始分配考场</h3>
-          <span class="tag-pill">AUTO</span>
+          <span class="progress-badge">{{ progressBadgeText }}</span>
         </div>
         <p class="progress-desc">系统将先按班级聚合，再根据科目与监考需求进行自动编排。</p>
         <div class="cta-row">
-          <button class="primary-btn" :disabled="store.viewState.generating" @click="generateExamPlan">
-            {{ store.viewState.generating ? "分配中..." : "开始分配考场" }}
+          <button class="primary-btn" :disabled="store.viewState.generating || isApplyingConfig" @click="generateExamPlan">
+            {{ generateActionText }}
           </button>
           <strong class="percent">{{ progressPercent }}%</strong>
         </div>
@@ -68,7 +102,7 @@
         </div>
         <div class="step-card">
           <span class="metric-label">当前步骤</span>
-          <strong class="step-text">{{ store.viewState.generating ? "正在生成考场快照" : "进度已就绪" }}</strong>
+          <strong class="step-text">{{ progressStepText }}</strong>
         </div>
       </section>
 
@@ -83,31 +117,26 @@
             <input v-model.number="capacityForm.maxCapacity" class="metric-input" type="number" min="1" />
           </label>
         </div>
-        <button class="secondary-btn fit" :disabled="store.viewState.saving" @click="saveCapacity">
-          {{ store.viewState.saving ? "保存中..." : "保存配置" }}
-        </button>
       </ConfigCard>
 
-      <ConfigCard title="分配已完成">
-        <p class="complete-desc">完成 {{ store.viewState.overview.examRoomCount }} 个考场、{{ store.viewState.staffOverview.assignedCount }} 位监考老师与 {{ store.viewState.overview.studentAllocationCount }} 名考生自动分配。</p>
-        <div class="complete-stack">
-          <div class="complete-item">
-            <span class="metric-label">生成时间</span>
-            <span>{{ store.viewState.overview.generatedAt ?? "暂无" }}</span>
+      <section class="complete-card card-shell">
+        <div class="complete-head">
+          <h3>{{ completeTitle }}</h3>
+          <span class="complete-badge" :class="{ pending: isCompletePending }">{{ completeBadgeText }}</span>
+        </div>
+        <p class="complete-desc">{{ completeDescription }}</p>
+        <div class="complete-meta">
+          <div class="complete-summary">
+            <span class="metric-label">结果摘要</span>
+            <strong>{{ completeSummary }}</strong>
           </div>
-          <div class="complete-item">
-            <span class="metric-label">场次</span>
-            <span>{{ store.viewState.overview.sessionCount }} 场</span>
-          </div>
-          <div class="complete-item">
-            <span class="metric-label">告警</span>
-            <span>{{ store.viewState.overview.warningCount }} 条</span>
+          <div class="complete-action">
+            <button class="primary-btn export-btn" :disabled="store.viewState.exporting || !store.viewState.overview.generatedAt" @click="exportBundle">
+              {{ store.viewState.exporting ? "导出中..." : "导出分配结果" }}
+            </button>
           </div>
         </div>
-        <button class="primary-btn fit" :disabled="store.viewState.exporting" @click="exportBundle">
-          {{ store.viewState.exporting ? "导出中..." : "导出分配结果" }}
-        </button>
-      </ConfigCard>
+      </section>
     </div>
   </section>
 </template>
@@ -115,6 +144,7 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive } from "vue";
 import { SUBJECT_LABELS } from "../../../entities/class-config/model";
+import { Subject } from "../../../entities/score/model";
 import ConfigCard from "../../../widgets/common/ConfigCard.vue";
 import TableCard from "../../../widgets/common/TableCard.vue";
 import { useExamAllocationStore } from "../store";
@@ -126,6 +156,9 @@ const capacityForm = reactive({
   examTitle: "",
   examNoticesText: "",
 });
+const SUBJECT_OPTIONS: Subject[] = Object.values(Subject);
+const manualSubjectRows = reactive<Array<{ id: number; subject: Subject; examMonthDay: string; startTime: string; endTime: string }>>([]);
+let manualSubjectRowId = 1;
 
 const progressPercent = computed(() => {
   if (store.viewState.generating) {
@@ -137,11 +170,146 @@ const progressPercent = computed(() => {
   return 100;
 });
 
+const progressBadgeText = computed(() => {
+  if (store.viewState.generating) {
+    return "执行中";
+  }
+  if (store.viewState.overview.generatedAt) {
+    return "已完成";
+  }
+  return "待执行";
+});
+
+const progressStepText = computed(() => {
+  if (store.viewState.generating) {
+    return "正在按班级聚合考生，并检查各科目考场容量与监考老师配额。";
+  }
+  if (store.viewState.overview.generatedAt) {
+    return "已生成最新考场快照，可继续导出分配结果。";
+  }
+  return "等待开始分配，系统将按当前配置自动生成考场方案。";
+});
+
+const completeBadgeText = computed(() => {
+  if (store.viewState.exporting) {
+    return "导出中";
+  }
+  if (store.viewState.generating) {
+    return "执行中";
+  }
+  if (store.viewState.overview.generatedAt) {
+    return "已完成";
+  }
+  return "未开始";
+});
+
+const completeTitle = computed(() => {
+  if (store.viewState.generating) {
+    return "分配进行中";
+  }
+  if (store.viewState.overview.generatedAt) {
+    return "分配已完成";
+  }
+  return "等待分配";
+});
+
+const completeDescription = computed(() => {
+  if (!store.viewState.overview.generatedAt) {
+    return "尚未生成考场分配结果，完成配置后点击“开始分配考场”即可执行。";
+  }
+  return `完成 ${store.viewState.overview.examRoomCount} 个考场、${store.viewState.staffOverview.assignedCount} 位监考老师与 ${store.viewState.overview.studentAllocationCount} 名考生自动分配。`;
+});
+
+const completeSummary = computed(() => {
+  if (!store.viewState.overview.generatedAt) {
+    return "等待生成分配结果";
+  }
+  return `生成于 ${store.viewState.overview.generatedAt}，异常记录 ${store.viewState.overview.warningCount} 条`;
+});
+
+const isCompletePending = computed(() => store.viewState.generating || !store.viewState.overview.generatedAt);
+
+function addManualSubjectRow() {
+  const used = new Set<Subject>([
+    ...store.viewState.sessionTimes.map((item) => item.subject),
+    ...manualSubjectRows.map((item) => item.subject),
+  ]);
+  const nextSubject = SUBJECT_OPTIONS.find((subject) => !used.has(subject)) ?? SUBJECT_OPTIONS[0];
+  manualSubjectRows.push({
+    id: manualSubjectRowId++,
+    subject: nextSubject,
+    examMonthDay: formatMonthDay(new Date().toISOString().slice(0, 10)),
+    startTime: "",
+    endTime: "",
+  });
+}
+
+function removeManualSubjectRow(id: number) {
+  const index = manualSubjectRows.findIndex((item) => item.id === id);
+  if (index >= 0) {
+    manualSubjectRows.splice(index, 1);
+  }
+}
+
+function getDraftDate(sessionId: number): string {
+  const draft = store.viewState.sessionTimeDrafts[sessionId];
+  const source = draft?.startAt || draft?.endAt;
+  if (source && source.length >= 10) {
+    return source.slice(0, 10);
+  }
+  return new Date().toISOString().slice(0, 10);
+}
+
+const isApplyingConfig = computed(() => store.viewState.saving || store.viewState.savingTimes);
+
+const generateActionText = computed(() => {
+  if (store.viewState.generating) {
+    return "分配中...";
+  }
+  if (isApplyingConfig.value) {
+    return "保存配置中...";
+  }
+  return "开始分配考场";
+});
+
 function formatDate(value?: string | null) {
   if (!value) {
     return "--";
   }
   return value.replace("T", " ").slice(0, 10);
+}
+
+function formatMonthDay(value?: string | null) {
+  if (!value) {
+    return "--";
+  }
+  const full = value.replace("T", " ").slice(0, 10);
+  if (full.length !== 10) {
+    return "--";
+  }
+  return full.slice(5, 10);
+}
+
+function normalizeMonthDay(value: string): string | null {
+  const matched = value.trim().match(/^(\d{1,2})[-/](\d{1,2})$/);
+  if (!matched) {
+    return null;
+  }
+  const month = Number(matched[1]);
+  const day = Number(matched[2]);
+  if (!Number.isInteger(month) || !Number.isInteger(day) || month < 1 || month > 12 || day < 1 || day > 31) {
+    return null;
+  }
+  return `${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+}
+
+function resolveFullDateFromMonthDay(monthDay: string, fallbackDate: string): string {
+  const normalized = normalizeMonthDay(monthDay);
+  if (!normalized) {
+    throw new Error(`考试日期格式应为 MM-DD（例如 03-24）`);
+  }
+  const year = fallbackDate.slice(0, 4);
+  return `${year}-${normalized}`;
 }
 
 function formatTimeInput(value?: string) {
@@ -158,19 +326,49 @@ function onTimeInput(sessionId: number, field: "startAt" | "endAt", event: Event
   store.setSessionTimeDraft(sessionId, field, `${datePart}T${raw}`);
 }
 
-async function saveSessionTimes() {
-  await store.saveSessionTimes();
-}
-
-async function saveCapacity() {
+async function persistDrafts() {
   const examNotices = capacityForm.examNoticesText
     .split(/\r?\n/)
     .map((line) => line.trim())
     .filter((line) => line.length > 0);
   await store.saveSettings(capacityForm.defaultCapacity, capacityForm.maxCapacity, capacityForm.examTitle, examNotices);
+
+  const sessionIdsBySubject = new Map<Subject, number[]>();
+  for (const row of store.viewState.sessionTimes) {
+    const list = sessionIdsBySubject.get(row.subject) ?? [];
+    list.push(row.sessionId);
+    sessionIdsBySubject.set(row.subject, list);
+  }
+
+  const unresolvedSubjects: Subject[] = [];
+  for (const row of manualSubjectRows) {
+    if (!row.examMonthDay || !row.startTime || !row.endTime) {
+      throw new Error(`请先完整填写 ${SUBJECT_LABELS[row.subject]} 的考试日期（月-日）、开始时间和结束时间`);
+    }
+    const sessionIds = sessionIdsBySubject.get(row.subject) ?? [];
+    if (sessionIds.length === 0) {
+      unresolvedSubjects.push(row.subject);
+      continue;
+    }
+    for (const sessionId of sessionIds) {
+      const fallbackDate = getDraftDate(sessionId);
+      const targetDate = resolveFullDateFromMonthDay(row.examMonthDay, fallbackDate);
+      store.setSessionTimeDraft(sessionId, "startAt", `${targetDate}T${row.startTime}`);
+      store.setSessionTimeDraft(sessionId, "endAt", `${targetDate}T${row.endTime}`);
+    }
+  }
+
+  if (unresolvedSubjects.length > 0) {
+    const labels = Array.from(new Set(unresolvedSubjects)).map((subject) => SUBJECT_LABELS[subject]).join("、");
+    throw new Error(`当前未生成以下科目的可分配场次：${labels}`);
+  }
+
+  await store.saveSessionTimes();
+  manualSubjectRows.splice(0, manualSubjectRows.length);
 }
 
 async function generateExamPlan() {
+  await persistDrafts();
   await store.generate();
 }
 
@@ -223,6 +421,11 @@ onMounted(async () => {
   gap: 8px;
 }
 
+.filled-field::placeholder,
+.filled-area::placeholder {
+  color: rgba(28, 31, 35, 0.72);
+}
+
 .progress-card {
   padding: 18px;
   border-radius: 22px;
@@ -244,6 +447,20 @@ onMounted(async () => {
   margin: 0;
   font-size: 22px;
   font-weight: 600;
+}
+
+.progress-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 28px;
+  padding: 8px 12px;
+  border-radius: 999px;
+  border: 1px solid #cfe0fb;
+  background: rgba(255, 255, 255, 0.6);
+  color: var(--color-brand);
+  font-size: 12px;
+  font-weight: 700;
 }
 
 .progress-desc,
@@ -305,21 +522,74 @@ onMounted(async () => {
   outline: none;
 }
 
-.fit {
-  width: fit-content;
+.table-hint {
+  margin: 0;
+  color: var(--color-text-muted);
+  font-size: 13px;
 }
 
-.complete-stack {
+.complete-card {
+  padding: 12px;
+  border-radius: 20px;
+  background: rgba(255, 255, 255, 0.72);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.complete-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.complete-head h3 {
+  margin: 0;
+  font-size: 20px;
+  font-weight: 700;
+}
+
+.complete-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 28px;
+  padding: 8px 12px;
+  border-radius: 999px;
+  background: var(--color-success-soft);
+  color: var(--color-success);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.complete-badge.pending {
+  background: var(--color-warning-soft);
+  color: var(--color-warning);
+}
+
+.complete-meta {
   display: flex;
   flex-direction: column;
   gap: 8px;
 }
 
-.complete-item {
+.complete-summary {
   display: flex;
-  justify-content: space-between;
-  gap: 12px;
-  font-size: 13px;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.complete-summary strong {
+  font-size: 14px;
+}
+
+.complete-action {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.export-btn {
+  width: 164px;
 }
 
 .exam-table tbody tr {
@@ -332,17 +602,52 @@ onMounted(async () => {
   background: transparent;
 }
 
+.month-day-input {
+  width: 72px;
+  border: 0;
+  background: transparent;
+}
+
 .time-input:focus {
   outline: none;
+}
+
+.month-day-input:focus {
+  outline: none;
+}
+
+.manual-subject-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.subject-select {
+  min-width: 110px;
+  border: 1px solid var(--color-border-soft);
+  border-radius: 10px;
+  padding: 4px 8px;
+  background: rgba(255, 255, 255, 0.9);
 }
 
 .icon-btn {
   border: 0;
   background: transparent;
-  color: #ff8b8b;
+  color: #c26868;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
 }
 
-.table-actions {
-  margin-top: 14px;
+.icon-btn .material-symbols-rounded {
+  font-family: "Material Symbols Rounded";
+  font-size: 18px;
 }
+
+.icon-btn.disabled {
+  color: var(--color-text-muted);
+  cursor: not-allowed;
+}
+
 </style>

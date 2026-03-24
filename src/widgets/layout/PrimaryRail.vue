@@ -8,18 +8,7 @@
       :class="{ active: item.key === activeKey }"
       @click="$emit('select', item.key)"
     >
-      <svg v-if="item.icon === 'school'" viewBox="0 0 24 24" class="icon" aria-hidden="true">
-        <path d="M12 3 2 8l10 5 8-4v6h2V8L12 3Zm-6.6 8.78V15c0 2.76 4.2 5 6.6 5s6.6-2.24 6.6-5v-3.22L12 15l-6.6-3.22Z" />
-      </svg>
-      <svg v-else-if="item.icon === 'co_present'" viewBox="0 0 24 24" class="icon" aria-hidden="true">
-        <path d="M3 4h18v10H3V4Zm2 2v6h14V6H5Zm7 9 4 5h-8l4-5Zm-4-4a2 2 0 1 0 0-4 2 2 0 0 0 0 4Z" />
-      </svg>
-      <svg v-else-if="item.icon === 'domain'" viewBox="0 0 24 24" class="icon" aria-hidden="true">
-        <path d="M3 21h18v-2h-1V9h1V7L12 2 3 7v2h1v10H3v2Zm3-2V9h3v10H6Zm5 0V9h2v10h-2Zm4 0V9h3v10h-3Z" />
-      </svg>
-      <svg v-else viewBox="0 0 24 24" class="icon" aria-hidden="true">
-        <path d="M19 3h-1V1h-2v2H8V1H6v2H5a2 2 0 0 0-2 2v15a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V5a2 2 0 0 0-2-2Zm0 17H5V10h14v10Zm-7-8H7v2h5v-2Zm5 0h-4v2h4v-2Zm-5 4H7v2h5v-2Z" />
-      </svg>
+      <span class="icon material-symbols-rounded" aria-hidden="true">{{ item.icon }}</span>
       <span class="sr-only">{{ item.label }}</span>
     </button>
   </aside>
@@ -51,6 +40,7 @@ defineEmits<{
 }
 
 .rail-btn {
+  position: relative;
   width: 52px;
   height: 52px;
   display: inline-flex;
@@ -61,18 +51,78 @@ defineEmits<{
   background: rgba(255, 255, 255, 0.4);
   color: var(--color-text-muted);
   cursor: pointer;
+  transition:
+    background-color 0.18s ease,
+    border-color 0.18s ease,
+    color 0.18s ease,
+    transform 0.18s ease,
+    box-shadow 0.18s ease;
+}
+
+.rail-btn::after {
+  content: "";
+  position: absolute;
+  inset: 8px;
+  border-radius: 12px;
+  background: radial-gradient(circle, rgba(15, 108, 189, 0.18), rgba(15, 108, 189, 0));
+  opacity: 0;
+  transform: scale(0.88);
+  transition: opacity 0.18s ease, transform 0.18s ease;
+}
+
+.rail-btn:hover {
+  background: rgba(255, 255, 255, 0.58);
+  color: #49566a;
+  transform: translateY(-1px);
+}
+
+.rail-btn:hover::after {
+  opacity: 0.55;
+  transform: scale(1);
+}
+
+.rail-btn:active {
+  transform: scale(0.97);
+}
+
+.rail-btn:focus-visible {
+  outline: none;
+  border-color: #b9d6ff;
+  box-shadow: 0 0 0 4px rgba(185, 214, 255, 0.32);
 }
 
 .icon {
+  position: relative;
+  z-index: 1;
   width: 24px;
   height: 24px;
-  fill: currentColor;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 24px;
+  line-height: 1;
+  font-variation-settings:
+    "FILL" 0,
+    "wght" 500,
+    "GRAD" 0,
+    "opsz" 24;
+}
+
+.material-symbols-rounded {
+  font-family: "Material Symbols Rounded";
 }
 
 .rail-btn.active {
   background: var(--color-brand-soft);
   color: var(--color-brand);
   border-color: #b9d6ff;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.45), 0 10px 22px rgba(15, 108, 189, 0.12);
+  transform: translateY(-1px);
+}
+
+.rail-btn.active::after {
+  opacity: 0.8;
+  transform: scale(1);
 }
 
 .sr-only {
