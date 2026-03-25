@@ -2,6 +2,7 @@ mod app_log;
 mod class_config;
 mod exam_allocation;
 mod exam_plan;
+mod exam_staff;
 mod export_bundle;
 mod invigilation;
 mod score;

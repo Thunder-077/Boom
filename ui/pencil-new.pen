@@ -4835,56 +4835,90 @@
                           "fontWeight": "600"
                         },
                         {
-                          "type": "text",
-                          "id": "3EO6k",
-                          "name": "classPickerValue",
-                          "fill": "$color-text",
-                          "content": "高一3班",
-                          "fontFamily": "Inter",
-                          "fontSize": 22,
-                          "fontWeight": "700"
+                          "type": "frame",
+                          "id": "6QKgd",
+                          "name": "classNameInput",
+                          "width": 280,
+                          "height": 44,
+                          "fill": "#FFFFFF96",
+                          "cornerRadius": 14,
+                          "stroke": {
+                            "align": "inside",
+                            "thickness": 1,
+                            "fill": "#E9F0F8"
+                          },
+                          "padding": [
+                            0,
+                            14
+                          ],
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "AdDtZ",
+                              "name": "inputText",
+                              "fill": "#1C1F23",
+                              "content": "高一3班",
+                              "fontFamily": "Inter",
+                              "fontSize": 18,
+                              "fontWeight": "700"
+                            }
+                          ]
                         }
                       ]
                     },
                     {
                       "type": "frame",
-                      "id": "4Gpw3",
-                      "name": "classPickerRight",
-                      "width": 154,
+                      "id": "JIyiY",
+                      "name": "saveConfigBtn",
+                      "width": 132,
                       "height": 40,
-                      "fill": "#FFFFFFB8",
+                      "fill": {
+                        "type": "gradient",
+                        "gradientType": "linear",
+                        "enabled": true,
+                        "rotation": 135,
+                        "size": {
+                          "height": 1
+                        },
+                        "colors": [
+                          {
+                            "color": "#0F6CBD",
+                            "position": 0
+                          },
+                          {
+                            "color": "#2E86DE",
+                            "position": 1
+                          }
+                        ]
+                      },
                       "cornerRadius": 14,
-                      "stroke": {
-                        "align": "inside",
-                        "thickness": 1,
-                        "fill": "#D8E4F2"
+                      "effect": {
+                        "type": "shadow",
+                        "shadowType": "outer",
+                        "color": "#0F6CBD26",
+                        "offset": {
+                          "x": 0,
+                          "y": 10
+                        },
+                        "blur": 18
                       },
                       "padding": [
                         0,
-                        14
+                        18
                       ],
-                      "justifyContent": "space_between",
+                      "justifyContent": "center",
                       "alignItems": "center",
                       "children": [
                         {
                           "type": "text",
-                          "id": "hBeZ9",
-                          "name": "classPickerText",
-                          "fill": "$color-text-muted",
-                          "content": "切换班级",
+                          "id": "B8cgT",
+                          "name": "saveBtnText",
+                          "fill": "#FFFFFF",
+                          "content": "保存配置",
                           "fontFamily": "Inter",
                           "fontSize": 14,
-                          "fontWeight": "normal"
-                        },
-                        {
-                          "type": "icon_font",
-                          "id": "ZP04Y",
-                          "name": "classPickerIcon",
-                          "width": 18,
-                          "height": 18,
-                          "iconFontName": "keyboard_arrow_down",
-                          "iconFontFamily": "Material Symbols Rounded",
-                          "fill": "$color-text-muted"
+                          "fontWeight": "700"
                         }
                       ]
                     }
@@ -5738,7 +5772,7 @@
               "name": "configShell",
               "width": "fill_container",
               "layout": "vertical",
-              "gap": 14,
+              "gap": 20,
               "children": [
                 {
                   "type": "frame",
@@ -5770,7 +5804,7 @@
                   ],
                   "layout": "vertical",
                   "gap": 12,
-                  "padding": 18,
+                  "padding": 24,
                   "children": [
                     {
                       "type": "text",
@@ -5797,7 +5831,6 @@
                       "id": "1HMuW",
                       "name": "ruleRow",
                       "width": "fill_container",
-                      "gap": 16,
                       "children": [
                         {
                           "type": "frame",
@@ -5839,40 +5872,6 @@
                               "fontWeight": "600"
                             }
                           ]
-                        },
-                        {
-                          "type": "frame",
-                          "id": "H4Xt9",
-                          "name": "ruleMeta",
-                          "width": "fill_container",
-                          "fill": "#F7FBFF",
-                          "cornerRadius": 16,
-                          "stroke": {
-                            "align": "inside",
-                            "thickness": 1,
-                            "fill": "#DCE8F8"
-                          },
-                          "layout": "vertical",
-                          "gap": 8,
-                          "padding": [
-                            12,
-                            14
-                          ],
-                          "children": [
-                            {
-                              "type": "text",
-                              "id": "U3vAf",
-                              "name": "ruleMetaText",
-                              "fill": "#1C1F23",
-                              "textGrowth": "fixed-width",
-                              "width": "fill_container",
-                              "content": "当前规则将应用到考场分配、监考抽签与津贴结算。",
-                              "lineHeight": 1.4,
-                              "fontFamily": "Inter",
-                              "fontSize": 14,
-                              "fontWeight": "normal"
-                            }
-                          ]
                         }
                       ]
                     }
@@ -5908,7 +5907,7 @@
                   ],
                   "layout": "vertical",
                   "gap": 12,
-                  "padding": 18,
+                  "padding": 24,
                   "children": [
                     {
                       "type": "text",
@@ -6180,7 +6179,7 @@
                       ],
                       "layout": "vertical",
                       "gap": 10,
-                      "padding": 18,
+                      "padding": 24,
                       "children": [
                         {
                           "type": "text",
@@ -6275,7 +6274,7 @@
                       ],
                       "layout": "vertical",
                       "gap": 10,
-                      "padding": 18,
+                      "padding": 24,
                       "children": [
                         {
                           "type": "text",
@@ -6421,7 +6420,7 @@
                     }
                   ],
                   "gap": 18,
-                  "padding": 18,
+                  "padding": 24,
                   "justifyContent": "space_between",
                   "alignItems": "center",
                   "children": [
