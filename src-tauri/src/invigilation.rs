@@ -5,9 +5,10 @@ use crate::score::ListResult;
 
 pub use crate::exam_allocation::SuccessResponse;
 pub use crate::exam_staff::{
-    ExamSessionTime, ExamSessionTimeUpsert, ExamStaffPlanOverview, ExamStaffTask,
-    GenerateLatestExamStaffPlanResult, ListExamStaffTasksParams, ListTeacherDutyStatsParams,
-    SpaceStaffRequirement, SpaceStaffRequirementUpsert, TeacherDutyStat,
+    CreateExamStaffExclusionPayload, ExamSessionTime, ExamSessionTimeUpsert, ExamStaffExclusion,
+    ExamStaffPlanOverview, ExamStaffTask, GenerateLatestExamStaffPlanResult, InvigilationConfig,
+    ListExamStaffTasksParams, ListTeacherDutyStatsParams, SpaceStaffRequirement,
+    SpaceStaffRequirementUpsert, TeacherDutyStat, UpdateInvigilationConfigPayload,
 };
 
 #[tauri::command]
@@ -76,4 +77,38 @@ pub fn list_latest_teacher_duty_stats(
     params: ListTeacherDutyStatsParams,
 ) -> Result<ListResult<TeacherDutyStat>, String> {
     exam_staff::list_latest_teacher_duty_stats(app, params)
+}
+
+#[tauri::command]
+pub fn get_invigilation_config(app: AppHandle) -> Result<InvigilationConfig, String> {
+    exam_staff::get_invigilation_config(app)
+}
+
+#[tauri::command]
+pub fn update_invigilation_config(
+    app: AppHandle,
+    payload: UpdateInvigilationConfigPayload,
+) -> Result<SuccessResponse, String> {
+    exam_staff::update_invigilation_config(app, payload)
+}
+
+#[tauri::command]
+pub fn list_exam_staff_exclusions(app: AppHandle) -> Result<Vec<ExamStaffExclusion>, String> {
+    exam_staff::list_exam_staff_exclusions(app)
+}
+
+#[tauri::command]
+pub fn create_exam_staff_exclusion(
+    app: AppHandle,
+    payload: CreateExamStaffExclusionPayload,
+) -> Result<SuccessResponse, String> {
+    exam_staff::create_exam_staff_exclusion(app, payload)
+}
+
+#[tauri::command]
+pub fn delete_exam_staff_exclusion(
+    app: AppHandle,
+    id: i64,
+) -> Result<SuccessResponse, String> {
+    exam_staff::delete_exam_staff_exclusion(app, id)
 }

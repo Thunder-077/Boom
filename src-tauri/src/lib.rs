@@ -44,6 +44,11 @@ pub fn run() {
             invigilation::get_latest_exam_staff_plan_overview,
             invigilation::list_latest_exam_staff_tasks,
             invigilation::list_latest_teacher_duty_stats,
+            invigilation::get_invigilation_config,
+            invigilation::update_invigilation_config,
+            invigilation::list_exam_staff_exclusions,
+            invigilation::create_exam_staff_exclusion,
+            invigilation::delete_exam_staff_exclusion,
             teacher::import_teachers_from_excel,
             teacher::list_latest_teachers,
             teacher::get_latest_teacher_summary

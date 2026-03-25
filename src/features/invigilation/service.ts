@@ -9,8 +9,12 @@ import type {
   ExamStaffTask,
   ExamStaffTaskQuery,
   TeacherDutyStat,
+  InvigilationConfig,
+  ExamStaffExclusion,
+  ExamStaffExclusionCreatePayload,
 } from "../../entities/exam-plan/model";
 import type { ListResult } from "../../shared/types/api";
+import type { TeacherRow } from "../../entities/teacher/model";
 
 export interface InvigilationService {
   listSessionTimes(): Promise<ExamSessionTime[]>;
@@ -21,6 +25,16 @@ export interface InvigilationService {
   getStaffPlanOverview(): Promise<ExamStaffPlanOverview>;
   listStaffTasks(params: ExamStaffTaskQuery): Promise<ListResult<ExamStaffTask>>;
   listTeacherDutyStats(params?: { keyword?: string; page?: number; pageSize?: number }): Promise<ListResult<TeacherDutyStat>>;
+  getInvigilationConfig(): Promise<InvigilationConfig>;
+  updateInvigilationConfig(payload: {
+    defaultExamRoomRequiredCount: number;
+    indoorAllowancePerMinute: number;
+    outdoorAllowancePerMinute: number;
+  }): Promise<{ success: boolean }>;
+  listExamStaffExclusions(): Promise<ExamStaffExclusion[]>;
+  createExamStaffExclusion(payload: ExamStaffExclusionCreatePayload): Promise<{ success: boolean }>;
+  deleteExamStaffExclusion(id: number): Promise<{ success: boolean }>;
+  listTeachers(params?: { nameKeyword?: string; page?: number; pageSize?: number }): Promise<ListResult<TeacherRow>>;
 }
 
 export const invigilationService: InvigilationService = {
@@ -47,5 +61,23 @@ export const invigilationService: InvigilationService = {
   },
   listTeacherDutyStats(params = {}) {
     return invoke<ListResult<TeacherDutyStat>>("list_latest_teacher_duty_stats", { params });
+  },
+  getInvigilationConfig() {
+    return invoke<InvigilationConfig>("get_invigilation_config");
+  },
+  updateInvigilationConfig(payload) {
+    return invoke<{ success: boolean }>("update_invigilation_config", { payload });
+  },
+  listExamStaffExclusions() {
+    return invoke<ExamStaffExclusion[]>("list_exam_staff_exclusions");
+  },
+  createExamStaffExclusion(payload) {
+    return invoke<{ success: boolean }>("create_exam_staff_exclusion", { payload });
+  },
+  deleteExamStaffExclusion(id) {
+    return invoke<{ success: boolean }>("delete_exam_staff_exclusion", { id });
+  },
+  listTeachers(params = {}) {
+    return invoke<ListResult<TeacherRow>>("list_latest_teachers", { params });
   },
 };

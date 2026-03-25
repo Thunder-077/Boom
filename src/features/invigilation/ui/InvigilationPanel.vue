@@ -4,7 +4,14 @@
       <div class="rule-row">
         <label class="metric-field narrow">
           <span class="metric-label">每个考场监考老师个数</span>
-          <input class="metric-input" v-model.number="examRoomRequiredCount" type="number" min="1" @blur="saveRequirements" />
+          <input
+            class="metric-input"
+            v-model.number="defaultExamRoomRequiredCount"
+            type="number"
+            min="1"
+            @blur="saveConfig"
+            @keyup.enter="saveConfig"
+          />
         </label>
         <div class="rule-meta">当前规则将应用到考场分配、监考抽签与津贴结算。</div>
       </div>
@@ -13,20 +20,38 @@
     <ConfigCard title="考试禁排设置" description="选择老师不参与某场考试的监考，系统在分配时自动跳过。">
       <div class="exclude-toolbar">
         <label>
-          <select class="glass-field" disabled>
-            <option>选择教师</option>
-          </select>
+          <input
+            class="glass-field auto-field"
+            list="teacher-options"
+            v-model="teacherKeyword"
+            placeholder="选择教师"
+          />
+          <datalist id="teacher-options">
+            <option v-for="item in teacherOptions" :key="item.id" :value="item.teacherName" />
+          </datalist>
         </label>
         <label>
-          <select class="glass-field" disabled>
-            <option>选择考试场次</option>
-          </select>
+          <input
+            class="glass-field auto-field"
+            list="session-options"
+            v-model="sessionKeyword"
+            placeholder="选择考试场次"
+          />
+          <datalist id="session-options">
+            <option v-for="item in sessionOptions" :key="item.sessionId" :value="item.label" />
+          </datalist>
         </label>
+        <button class="secondary-btn add-btn" type="button" @click="addExclusion">添加禁排</button>
       </div>
       <div class="exclude-list">
-        <div v-for="task in previewItems" :key="task.id" class="exclude-item">
-          <span>{{ formatPreview(task) }}</span>
-          <span class="danger-pill">已禁排</span>
+        <div v-for="item in store.viewState.staffExclusions" :key="item.id" class="exclude-item">
+          <span>{{ item.teacherName }} - 不监考{{ item.sessionLabel }}</span>
+          <div class="exclude-right">
+            <span class="danger-pill">已禁排</span>
+            <button class="icon-btn" type="button" @click="removeExclusion(item.id)">
+              <span class="material-symbols-rounded" aria-hidden="true">delete</span>
+            </button>
+          </div>
         </div>
       </div>
     </ConfigCard>
@@ -50,14 +75,32 @@
 
       <ConfigCard title="监考津贴" description="分别设置场内与场外监考津贴单价，系统按分钟自动结算。">
         <div class="subsidy-row">
-          <div class="metric-field">
+          <label class="metric-field">
             <span class="metric-label">场内监考津贴</span>
-            <span class="metric-value">0.5 元 / 分钟</span>
-          </div>
-          <div class="metric-field">
+            <input
+              class="metric-input"
+              type="number"
+              min="0"
+              step="0.1"
+              v-model.number="indoorAllowancePerMinute"
+              @blur="saveConfig"
+              @keyup.enter="saveConfig"
+            />
+            <span class="metric-value">元 / 分钟</span>
+          </label>
+          <label class="metric-field">
             <span class="metric-label">场外监考津贴</span>
-            <span class="metric-value">0.3 元 / 分钟</span>
-          </div>
+            <input
+              class="metric-input"
+              type="number"
+              min="0"
+              step="0.1"
+              v-model.number="outdoorAllowancePerMinute"
+              @blur="saveConfig"
+              @keyup.enter="saveConfig"
+            />
+            <span class="metric-value">元 / 分钟</span>
+          </label>
         </div>
       </ConfigCard>
     </div>
@@ -84,15 +127,40 @@ import ConfigCard from "../../../widgets/common/ConfigCard.vue";
 import { useExamAllocationStore } from "../../dashboard/store";
 
 const store = useExamAllocationStore();
-const examRoomRequiredCount = ref(1);
 const selfStudySubject = ref<Subject | "">("");
+const defaultExamRoomRequiredCount = ref(1);
+const indoorAllowancePerMinute = ref(0.5);
+const outdoorAllowancePerMinute = ref(0.3);
+const teacherKeyword = ref("");
+const sessionKeyword = ref("");
 
-const previewItems = computed(() => {
-  const unassigned = store.viewState.staffTasks.filter((task) => task.status === "unassigned").slice(0, 2);
-  if (unassigned.length > 0) {
-    return unassigned;
+const teacherOptions = computed(() =>
+  store.viewState.teachers.filter((item) => {
+    const keyword = teacherKeyword.value.trim();
+    if (!keyword) {
+      return true;
+    }
+    return item.teacherName.includes(keyword);
+  }),
+);
+
+const sessionOptions = computed(() => {
+  const rows = store.viewState.sessionTimes.map((item) => {
+    const start = item.startAt ?? "";
+    const end = item.endAt ?? "";
+    const date = start.length >= 10 ? start.slice(5, 10) : "--";
+    const startTime = start.length >= 16 ? start.slice(11, 16) : "--:--";
+    const endTime = end.length >= 16 ? end.slice(11, 16) : "--:--";
+    return {
+      sessionId: item.sessionId,
+      label: `${item.gradeName} ${SUBJECT_LABELS[item.subject]} ${date} ${startTime}-${endTime}`,
+    };
+  });
+  const keyword = sessionKeyword.value.trim();
+  if (!keyword) {
+    return rows;
   }
-  return store.viewState.staffTasks.slice(0, 2);
+  return rows.filter((item) => item.label.includes(keyword));
 });
 
 const selfStudySubjectOptions = computed(() => {
@@ -119,12 +187,11 @@ const selfStudyTimeRange = computed(() => {
 });
 
 watch(
-  () => store.viewState.requirements,
-  (requirements) => {
-    const firstExamRoom = requirements.find((item) => item.role === "exam_room_invigilator");
-    if (firstExamRoom) {
-      examRoomRequiredCount.value = firstExamRoom.requiredCount;
-    }
+  () => store.viewState.invigilationConfig,
+  (config) => {
+    defaultExamRoomRequiredCount.value = config.defaultExamRoomRequiredCount;
+    indoorAllowancePerMinute.value = Number(config.indoorAllowancePerMinute || 0);
+    outdoorAllowancePerMinute.value = Number(config.outdoorAllowancePerMinute || 0);
   },
   { immediate: true },
 );
@@ -143,19 +210,27 @@ watch(
   { immediate: true },
 );
 
-function formatPreview(task: (typeof store.viewState.staffTasks)[number]) {
-  const subject = SUBJECT_LABELS[task.subject];
-  const suffix = task.reason ?? `${task.startAt.slice(5, 10)} ${task.startAt.slice(11, 16)}`;
-  return `${task.teacherName ?? task.spaceName}  -  不监考${subject}（${suffix}）`;
+async function saveConfig() {
+  await store.saveInvigilationConfig({
+    defaultExamRoomRequiredCount: Math.max(1, Math.floor(defaultExamRoomRequiredCount.value || 1)),
+    indoorAllowancePerMinute: Math.max(0, Number(indoorAllowancePerMinute.value || 0)),
+    outdoorAllowancePerMinute: Math.max(0, Number(outdoorAllowancePerMinute.value || 0)),
+  });
 }
 
-async function saveRequirements() {
-  for (const item of store.viewState.requirements) {
-    if (item.role === "exam_room_invigilator" && item.spaceId) {
-      store.setRequirementCount(item.spaceId, "exam_room_invigilator", examRoomRequiredCount.value);
-    }
+async function addExclusion() {
+  const teacher = store.viewState.teachers.find((item) => item.teacherName === teacherKeyword.value.trim());
+  const session = sessionOptions.value.find((item) => item.label === sessionKeyword.value.trim());
+  if (!teacher || !session) {
+    return;
   }
-  await store.saveRequirements();
+  await store.addStaffExclusion(teacher.id, session.sessionId);
+  teacherKeyword.value = "";
+  sessionKeyword.value = "";
+}
+
+async function removeExclusion(id: number) {
+  await store.removeStaffExclusion(id);
 }
 
 async function assignTeachers() {
@@ -210,10 +285,17 @@ onMounted(async () => {
 .exclude-toolbar {
   display: flex;
   gap: 12px;
+  align-items: center;
 }
 
-.exclude-toolbar select {
+.auto-field {
   width: 220px;
+  min-height: 42px;
+  border-radius: 14px;
+}
+
+.add-btn {
+  height: 42px;
 }
 
 .exclude-list {
@@ -233,6 +315,27 @@ onMounted(async () => {
   justify-content: space-between;
   gap: 12px;
   font-size: 14px;
+}
+
+.exclude-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.icon-btn {
+  border: 0;
+  background: transparent;
+  color: #c26868;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.icon-btn .material-symbols-rounded {
+  font-family: "Material Symbols Rounded";
+  font-size: 18px;
 }
 
 .time-row {
@@ -259,7 +362,8 @@ onMounted(async () => {
   gap: 14px;
 }
 
-.subsidy-row > div {
+.subsidy-row > div,
+.subsidy-row > label {
   flex: 1;
 }
 
