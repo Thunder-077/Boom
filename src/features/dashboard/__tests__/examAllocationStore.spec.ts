@@ -96,13 +96,7 @@ const fakeService: ExamAllocationService = {
   async deleteSessionTime() {
     return { success: true };
   },
-  async listSpaceStaffRequirements() {
-    return [];
-  },
-  async upsertSpaceStaffRequirements() {
-    return { success: true };
-  },
-  async generateStaffPlan() {
+  async generateStaffPlan(_payload) {
     return {
       generatedAt: "2026-03-24T10:00:00Z",
       taskCount: 10,
@@ -135,25 +129,8 @@ const fakeService: ExamAllocationService = {
       items: [],
     };
   },
-  async getInvigilationConfig() {
-    return {
-      defaultExamRoomRequiredCount: 1,
-      indoorAllowancePerMinute: 0.5,
-      outdoorAllowancePerMinute: 0.3,
-      updatedAt: "2026-03-24T10:00:00Z",
-    };
-  },
-  async updateInvigilationConfig() {
-    return { success: true };
-  },
-  async listExamStaffExclusions() {
+  async listInvigilationExclusionSessionOptions() {
     return [];
-  },
-  async createExamStaffExclusion() {
-    return { success: true };
-  },
-  async deleteExamStaffExclusion() {
-    return { success: true };
   },
   async listTeachers() {
     return {

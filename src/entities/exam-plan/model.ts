@@ -122,21 +122,6 @@ export interface ExamSessionTimeUpsert {
   endAt: string;
 }
 
-export interface SpaceStaffRequirement {
-  sessionId: number;
-  spaceId: number | null;
-  spaceName: string;
-  role: StaffRole;
-  requiredCount: number;
-  floor: string | null;
-}
-
-export interface SpaceStaffRequirementUpsert {
-  spaceId: number;
-  role: StaffRole;
-  requiredCount: number;
-}
-
 export interface GenerateLatestExamStaffPlanResult {
   generatedAt: string;
   taskCount: number;
@@ -205,21 +190,32 @@ export interface InvigilationConfig {
   defaultExamRoomRequiredCount: number;
   indoorAllowancePerMinute: number;
   outdoorAllowancePerMinute: number;
-  updatedAt: string;
+  selfStudySubject: Subject;
+  selfStudyStartTime: string;
+  selfStudyEndTime: string;
 }
 
 export interface ExamStaffExclusion {
-  id: number;
   teacherId: number;
   teacherName: string;
   sessionId: number;
   sessionLabel: string;
-  createdAt: string;
 }
 
-export interface ExamStaffExclusionCreatePayload {
-  teacherId: number;
+export interface GenerateExamStaffPlanPayload {
+  defaultExamRoomRequiredCount: number;
+  indoorAllowancePerMinute: number;
+  outdoorAllowancePerMinute: number;
+  staffExclusions: Array<{ teacherId: number; sessionId: number }>;
+}
+
+export interface InvigilationExclusionSessionOption {
   sessionId: number;
+  gradeName: string;
+  subject: Subject;
+  startAt: string;
+  endAt: string;
+  label: string;
 }
 
 export interface ExportLatestExamAllocationBundleResult {

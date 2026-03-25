@@ -9,6 +9,8 @@ import type {
 import type { Subject } from "../../entities/score/model";
 import { classConfigService, type ClassConfigService } from "./service";
 
+export type ClassNameIntent = "idle" | "switch" | "create" | "rename";
+
 const defaultFilters: ClassConfigFilters = {
   configType: "teaching_class",
   gradeName: "",
@@ -26,6 +28,30 @@ const defaultForm: ClassConfigUpsertPayload = {
 };
 
 export function createClassConfigStore(service: ClassConfigService = classConfigService) {
+  function cloneForm(form: ClassConfigUpsertPayload): ClassConfigUpsertPayload {
+    return {
+      configType: form.configType,
+      gradeName: form.gradeName,
+      className: form.className,
+      building: form.building,
+      floor: form.floor,
+      roomLabel: form.roomLabel,
+      subjects: [...form.subjects],
+    };
+  }
+
+  function normalizedForm(form: ClassConfigUpsertPayload, includeClassName = true) {
+    return {
+      configType: form.configType,
+      gradeName: form.gradeName.trim(),
+      className: includeClassName ? form.className.trim() : "",
+      building: form.building.trim(),
+      floor: form.floor.trim(),
+      roomLabel: (form.roomLabel ?? "").trim(),
+      subjects: [...form.subjects].sort(),
+    };
+  }
+
   const state = reactive({
     loading: false,
     saving: false,
@@ -38,17 +64,63 @@ export function createClassConfigStore(service: ClassConfigService = classConfig
     detail: null as ClassConfigDetail | null,
     editingId: null as number | null,
     form: { ...defaultForm } as ClassConfigUpsertPayload,
+    baselineForm: { ...defaultForm } as ClassConfigUpsertPayload,
+    classNameIntent: "idle" as ClassNameIntent,
+    targetMatchId: null as number | null,
+    originalClassName: "",
+    isDirty: false,
+    isDirtyExceptClassName: false,
     errorMessage: "",
   });
+
+  function recalculateIntentAndDirty() {
+    const name = state.form.className.trim();
+    const normalizedName = name.replace(/\s+/g, "");
+    const candidates = state.rows.filter((row) => row.configType === state.form.configType);
+    const exactMatch = candidates.find((row) => row.className.trim().replace(/\s+/g, "") === normalizedName);
+    const fuzzyMatches = candidates.filter((row) => {
+      const rowName = row.className.trim().replace(/\s+/g, "");
+      return normalizedName.length >= 2 && (rowName.includes(normalizedName) || normalizedName.includes(rowName));
+    });
+    const match = exactMatch ?? (fuzzyMatches.length === 1 ? fuzzyMatches[0] : undefined);
+    const originalNormalized = state.originalClassName.replace(/\s+/g, "");
+    const isEditingCurrentName = !!state.editingId && !!originalNormalized && normalizedName !== originalNormalized;
+    const looksLikeRename =
+      isEditingCurrentName &&
+      (normalizedName.startsWith(originalNormalized) || originalNormalized.startsWith(normalizedName));
+
+    if (match && state.editingId && match.id === state.editingId && isEditingCurrentName && looksLikeRename) {
+      state.classNameIntent = "rename";
+      state.targetMatchId = null;
+    } else if (match && match.id !== state.editingId) {
+      state.classNameIntent = "switch";
+      state.targetMatchId = match.id;
+    } else if (!normalizedName) {
+      state.classNameIntent = "idle";
+      state.targetMatchId = null;
+    } else if (looksLikeRename) {
+      state.classNameIntent = "rename";
+      state.targetMatchId = null;
+    } else {
+      state.classNameIntent = "create";
+      state.targetMatchId = null;
+    }
+    state.isDirty = JSON.stringify(normalizedForm(state.form)) !== JSON.stringify(normalizedForm(state.baselineForm));
+    state.isDirtyExceptClassName =
+      JSON.stringify(normalizedForm(state.form, false)) !== JSON.stringify(normalizedForm(state.baselineForm, false));
+  }
 
   function resetForm(type: ClassConfigType = state.filters.configType) {
     state.form = {
       ...defaultForm,
       configType: type,
     };
+    state.baselineForm = cloneForm(state.form);
     state.selectedId = null;
     state.detail = null;
     state.editingId = null;
+    state.originalClassName = "";
+    recalculateIntentAndDirty();
   }
 
   function setFormType(configType: ClassConfigType) {
@@ -56,6 +128,7 @@ export function createClassConfigStore(service: ClassConfigService = classConfig
     if (configType === "exam_room") {
       state.form.subjects = [];
     }
+    recalculateIntentAndDirty();
   }
 
   function setFormField(
@@ -64,9 +137,11 @@ export function createClassConfigStore(service: ClassConfigService = classConfig
   ) {
     if (field === "roomLabel") {
       state.form.roomLabel = value;
+      recalculateIntentAndDirty();
       return;
     }
     state.form[field] = value ?? "";
+    recalculateIntentAndDirty();
   }
 
   function toggleSubject(subject: Subject, checked: boolean) {
@@ -74,9 +149,35 @@ export function createClassConfigStore(service: ClassConfigService = classConfig
       if (!state.form.subjects.includes(subject)) {
         state.form.subjects = [...state.form.subjects, subject];
       }
+      recalculateIntentAndDirty();
       return;
     }
     state.form.subjects = state.form.subjects.filter((item) => item !== subject);
+    recalculateIntentAndDirty();
+  }
+
+  function startCreateFromClassName(className: string) {
+    const nextName = className.trim();
+    const configType = state.form.configType;
+    const gradeName = state.form.gradeName;
+    state.selectedId = null;
+    state.detail = null;
+    state.editingId = null;
+    state.originalClassName = "";
+    state.targetMatchId = null;
+    state.form = {
+      ...defaultForm,
+      configType,
+      gradeName,
+      className: nextName,
+    };
+    state.baselineForm = cloneForm({
+      ...defaultForm,
+      configType,
+      gradeName,
+      className: nextName,
+    });
+    recalculateIntentAndDirty();
   }
 
   async function loadList() {
@@ -110,6 +211,9 @@ export function createClassConfigStore(service: ClassConfigService = classConfig
         roomLabel: detail.roomLabel,
         subjects: [...detail.subjects],
       };
+      state.baselineForm = cloneForm(state.form);
+      state.originalClassName = detail.className.trim();
+      recalculateIntentAndDirty();
     } catch (error) {
       state.errorMessage = error instanceof Error ? error.message : String(error);
     }
@@ -159,6 +263,9 @@ export function createClassConfigStore(service: ClassConfigService = classConfig
         resetForm(state.filters.configType);
       }
       await loadList();
+      if (state.rows.length > 0) {
+        await loadDetail(state.rows[0].id);
+      }
     } catch (error) {
       state.errorMessage = error instanceof Error ? error.message : String(error);
       throw error;
@@ -177,6 +284,11 @@ export function createClassConfigStore(service: ClassConfigService = classConfig
     }
     resetForm(state.filters.configType);
     await loadList();
+    if (state.rows.length > 0) {
+      await loadDetail(state.rows[0].id);
+    } else {
+      recalculateIntentAndDirty();
+    }
   }
 
   const viewState = readonly(
@@ -192,6 +304,11 @@ export function createClassConfigStore(service: ClassConfigService = classConfig
       detail: state.detail,
       editingId: state.editingId,
       form: state.form,
+      classNameIntent: state.classNameIntent,
+      targetMatchId: state.targetMatchId,
+      originalClassName: state.originalClassName,
+      isDirty: state.isDirty,
+      isDirtyExceptClassName: state.isDirtyExceptClassName,
       errorMessage: state.errorMessage,
     })),
   );
@@ -207,6 +324,7 @@ export function createClassConfigStore(service: ClassConfigService = classConfig
     setFormType,
     setFormField,
     toggleSubject,
+    startCreateFromClassName,
     get viewState() {
       return viewState.value;
     },

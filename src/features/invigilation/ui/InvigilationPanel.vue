@@ -5,7 +5,7 @@
         <label class="metric-field narrow">
           <span class="metric-label">每个考场监考老师个数</span>
           <input
-            class="metric-input"
+            class="fluent-input"
             v-model.number="defaultExamRoomRequiredCount"
             type="number"
             min="1"
@@ -19,36 +19,51 @@
 
     <ConfigCard title="考试禁排设置" description="选择老师不参与某场考试的监考，系统在分配时自动跳过。">
       <div class="exclude-toolbar">
-        <label>
-          <input
-            class="glass-field auto-field"
-            list="teacher-options"
-            v-model="teacherKeyword"
-            placeholder="选择教师"
-          />
-          <datalist id="teacher-options">
-            <option v-for="item in teacherOptions" :key="item.id" :value="item.teacherName" />
-          </datalist>
-        </label>
-        <label>
-          <input
-            class="glass-field auto-field"
-            list="session-options"
-            v-model="sessionKeyword"
-            placeholder="选择考试场次"
-          />
-          <datalist id="session-options">
-            <option v-for="item in sessionOptions" :key="item.sessionId" :value="item.label" />
-          </datalist>
-        </label>
+        <div class="fluent-combo" @focusin="showTeacherMenu = true" @focusout="hideTeacherMenu">
+          <input class="fluent-input select-field" v-model="teacherKeyword" placeholder="选择教师" />
+          <span class="material-symbols-rounded combo-icon">keyboard_arrow_down</span>
+          <div v-if="showTeacherMenu" class="fluent-menu">
+            <button
+              v-for="teacher in teacherOptions"
+              :key="teacher.id"
+              type="button"
+              class="fluent-option"
+              @mousedown.prevent="pickTeacher(teacher.id, teacher.teacherName)"
+            >
+              {{ teacher.teacherName }}
+            </button>
+          </div>
+        </div>
+
+        <div class="fluent-combo" @focusin="showSessionMenu = true" @focusout="hideSessionMenu">
+          <input class="fluent-input select-field" v-model="sessionKeyword" placeholder="选择考试场次" />
+          <span class="material-symbols-rounded combo-icon">keyboard_arrow_down</span>
+          <div v-if="showSessionMenu" class="fluent-menu">
+            <button
+              v-for="session in sessionOptions"
+              :key="session.sessionId"
+              type="button"
+              class="fluent-option"
+              @mousedown.prevent="pickSession(session.sessionId, session.label)"
+            >
+              {{ session.label }}
+            </button>
+          </div>
+        </div>
+      </div>
+      <div class="exclude-toolbar">
         <button class="secondary-btn add-btn" type="button" @click="addExclusion">添加禁排</button>
       </div>
       <div class="exclude-list">
-        <div v-for="item in store.viewState.staffExclusions" :key="item.id" class="exclude-item">
-          <span>{{ item.teacherName }} - 不监考{{ item.sessionLabel }}</span>
+        <div
+          v-for="item in store.viewState.staffExclusions"
+          :key="`${item.teacherId}-${item.sessionId}`"
+          class="exclude-item"
+        >
+          <span>{{ item.teacherName }}  -  不监考{{ item.sessionLabel }}</span>
           <div class="exclude-right">
             <span class="danger-pill">已禁排</span>
-            <button class="icon-btn" type="button" @click="removeExclusion(item.id)">
+            <button class="icon-btn" type="button" @click="removeExclusion(item.teacherId, item.sessionId)">
               <span class="material-symbols-rounded" aria-hidden="true">delete</span>
             </button>
           </div>
@@ -57,19 +72,24 @@
     </ConfigCard>
 
     <div class="time-row">
-      <ConfigCard title="全员自习时间" description="设置无需监考时段，系统默认全体教师可安排为自习值守。">
+      <ConfigCard title="全员自习时间" description="独立配置全员自习时段，不与考试场次关联。">
         <div class="self-study-grid">
           <label class="metric-field short">
             <span class="metric-label">科目</span>
-            <select v-model="selfStudySubject" class="glass-field slim-field">
-              <option value="" disabled>请选择科目</option>
-              <option v-for="item in selfStudySubjectOptions" :key="item.value" :value="item.value">{{ item.label }}</option>
+            <select class="fluent-input slim-field" v-model="selfStudySubject" @change="saveConfig">
+              <option v-for="item in selfStudySubjectOptions" :key="item.value" :value="item.value">
+                {{ item.label }}
+              </option>
             </select>
           </label>
-          <div class="metric-field short">
-            <span class="metric-label">时间范围</span>
-            <span class="metric-value">{{ selfStudyTimeRange }}</span>
-          </div>
+          <label class="metric-field short">
+            <span class="metric-label">开始时间</span>
+            <input class="fluent-input slim-field" type="time" v-model="selfStudyStartTime" @blur="saveConfig" />
+          </label>
+          <label class="metric-field short">
+            <span class="metric-label">结束时间</span>
+            <input class="fluent-input slim-field" type="time" v-model="selfStudyEndTime" @blur="saveConfig" />
+          </label>
         </div>
       </ConfigCard>
 
@@ -77,29 +97,33 @@
         <div class="subsidy-row">
           <label class="metric-field">
             <span class="metric-label">场内监考津贴</span>
-            <input
-              class="metric-input"
-              type="number"
-              min="0"
-              step="0.1"
-              v-model.number="indoorAllowancePerMinute"
-              @blur="saveConfig"
-              @keyup.enter="saveConfig"
-            />
-            <span class="metric-value">元 / 分钟</span>
+            <div class="inline-unit">
+              <input
+                class="fluent-input unit-input"
+                type="number"
+                min="0"
+                step="0.1"
+                v-model.number="indoorAllowancePerMinute"
+                @blur="saveConfig"
+                @keyup.enter="saveConfig"
+              />
+              <span class="metric-value">元 / 分钟</span>
+            </div>
           </label>
           <label class="metric-field">
             <span class="metric-label">场外监考津贴</span>
-            <input
-              class="metric-input"
-              type="number"
-              min="0"
-              step="0.1"
-              v-model.number="outdoorAllowancePerMinute"
-              @blur="saveConfig"
-              @keyup.enter="saveConfig"
-            />
-            <span class="metric-value">元 / 分钟</span>
+            <div class="inline-unit">
+              <input
+                class="fluent-input unit-input"
+                type="number"
+                min="0"
+                step="0.1"
+                v-model.number="outdoorAllowancePerMinute"
+                @blur="saveConfig"
+                @keyup.enter="saveConfig"
+              />
+              <span class="metric-value">元 / 分钟</span>
+            </div>
           </label>
         </div>
       </ConfigCard>
@@ -122,68 +146,50 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from "vue";
 import { SUBJECT_LABELS } from "../../../entities/class-config/model";
-import type { Subject } from "../../../entities/score/model";
+import { Subject } from "../../../entities/score/model";
 import ConfigCard from "../../../widgets/common/ConfigCard.vue";
 import { useExamAllocationStore } from "../../dashboard/store";
 
 const store = useExamAllocationStore();
-const selfStudySubject = ref<Subject | "">("");
+
 const defaultExamRoomRequiredCount = ref(1);
 const indoorAllowancePerMinute = ref(0.5);
 const outdoorAllowancePerMinute = ref(0.3);
+const selfStudySubject = ref<Subject>(Subject.Chinese);
+const selfStudyStartTime = ref("12:10");
+const selfStudyEndTime = ref("13:40");
+
 const teacherKeyword = ref("");
 const sessionKeyword = ref("");
+const selectedTeacherId = ref<number | null>(null);
+const selectedSessionId = ref<number | null>(null);
+const showTeacherMenu = ref(false);
+const showSessionMenu = ref(false);
 
-const teacherOptions = computed(() =>
-  store.viewState.teachers.filter((item) => {
-    const keyword = teacherKeyword.value.trim();
-    if (!keyword) {
-      return true;
-    }
-    return item.teacherName.includes(keyword);
-  }),
-);
+const selfStudySubjectOptions = [
+  Subject.Chinese,
+  Subject.Math,
+  Subject.English,
+  Subject.Physics,
+  Subject.Chemistry,
+  Subject.Biology,
+  Subject.Politics,
+  Subject.History,
+  Subject.Geography,
+].map((value) => ({ value, label: SUBJECT_LABELS[value] }));
+
+const teacherOptions = computed(() => {
+  const keyword = teacherKeyword.value.trim();
+  return store.viewState.teachers.filter((item) =>
+    keyword ? item.teacherName.includes(keyword) : true,
+  );
+});
 
 const sessionOptions = computed(() => {
-  const rows = store.viewState.sessionTimes.map((item) => {
-    const start = item.startAt ?? "";
-    const end = item.endAt ?? "";
-    const date = start.length >= 10 ? start.slice(5, 10) : "--";
-    const startTime = start.length >= 16 ? start.slice(11, 16) : "--:--";
-    const endTime = end.length >= 16 ? end.slice(11, 16) : "--:--";
-    return {
-      sessionId: item.sessionId,
-      label: `${item.gradeName} ${SUBJECT_LABELS[item.subject]} ${date} ${startTime}-${endTime}`,
-    };
-  });
   const keyword = sessionKeyword.value.trim();
-  if (!keyword) {
-    return rows;
-  }
-  return rows.filter((item) => item.label.includes(keyword));
-});
-
-const selfStudySubjectOptions = computed(() => {
-  const keys = Array.from(new Set(store.viewState.sessionTimes.map((item) => item.subject)));
-  return keys.map((value) => ({ value, label: SUBJECT_LABELS[value] }));
-});
-
-const selfStudyTimeRange = computed(() => {
-  if (!selfStudySubject.value) {
-    return "--";
-  }
-  const rows = store.viewState.sessionTimes.filter((item) => item.subject === selfStudySubject.value);
-  if (rows.length === 0) {
-    return "--";
-  }
-  const starts = rows.map((item) => store.viewState.sessionTimeDrafts[item.sessionId]?.startAt ?? item.startAt ?? "").filter(Boolean);
-  const ends = rows.map((item) => store.viewState.sessionTimeDrafts[item.sessionId]?.endAt ?? item.endAt ?? "").filter(Boolean);
-  if (starts.length === 0 || ends.length === 0) {
-    return "--";
-  }
-  const start = starts.sort()[0];
-  const end = ends.sort()[ends.length - 1];
-  return `${start.slice(5, 10)} ${start.slice(11, 16)} - ${end.slice(11, 16)}`;
+  return store.viewState.exclusionSessionOptions.filter((item) =>
+    keyword ? item.label.includes(keyword) : true,
+  );
 });
 
 watch(
@@ -192,45 +198,61 @@ watch(
     defaultExamRoomRequiredCount.value = config.defaultExamRoomRequiredCount;
     indoorAllowancePerMinute.value = Number(config.indoorAllowancePerMinute || 0);
     outdoorAllowancePerMinute.value = Number(config.outdoorAllowancePerMinute || 0);
+    selfStudySubject.value = config.selfStudySubject;
+    selfStudyStartTime.value = config.selfStudyStartTime;
+    selfStudyEndTime.value = config.selfStudyEndTime;
   },
   { immediate: true },
 );
 
-watch(
-  selfStudySubjectOptions,
-  (options) => {
-    if (options.length === 0) {
-      selfStudySubject.value = "";
-      return;
-    }
-    if (!options.some((item) => item.value === selfStudySubject.value)) {
-      selfStudySubject.value = options[0].value;
-    }
-  },
-  { immediate: true },
-);
+function pickTeacher(id: number, name: string) {
+  selectedTeacherId.value = id;
+  teacherKeyword.value = name;
+  showTeacherMenu.value = false;
+}
+
+function pickSession(sessionId: number, label: string) {
+  selectedSessionId.value = sessionId;
+  sessionKeyword.value = label;
+  showSessionMenu.value = false;
+}
+
+function hideTeacherMenu() {
+  setTimeout(() => {
+    showTeacherMenu.value = false;
+  }, 80);
+}
+
+function hideSessionMenu() {
+  setTimeout(() => {
+    showSessionMenu.value = false;
+  }, 80);
+}
 
 async function saveConfig() {
   await store.saveInvigilationConfig({
     defaultExamRoomRequiredCount: Math.max(1, Math.floor(defaultExamRoomRequiredCount.value || 1)),
     indoorAllowancePerMinute: Math.max(0, Number(indoorAllowancePerMinute.value || 0)),
     outdoorAllowancePerMinute: Math.max(0, Number(outdoorAllowancePerMinute.value || 0)),
+    selfStudySubject: selfStudySubject.value,
+    selfStudyStartTime: selfStudyStartTime.value,
+    selfStudyEndTime: selfStudyEndTime.value,
   });
 }
 
 async function addExclusion() {
-  const teacher = store.viewState.teachers.find((item) => item.teacherName === teacherKeyword.value.trim());
-  const session = sessionOptions.value.find((item) => item.label === sessionKeyword.value.trim());
-  if (!teacher || !session) {
+  if (!selectedTeacherId.value || !selectedSessionId.value) {
     return;
   }
-  await store.addStaffExclusion(teacher.id, session.sessionId);
+  await store.addStaffExclusion(selectedTeacherId.value, selectedSessionId.value);
   teacherKeyword.value = "";
   sessionKeyword.value = "";
+  selectedTeacherId.value = null;
+  selectedSessionId.value = null;
 }
 
-async function removeExclusion(id: number) {
-  await store.removeStaffExclusion(id);
+async function removeExclusion(teacherId: number, sessionId: number) {
+  await store.removeStaffExclusion(teacherId, sessionId);
 }
 
 async function assignTeachers() {
@@ -258,17 +280,20 @@ onMounted(async () => {
   width: 320px;
 }
 
-.metric-input {
-  border: 0;
-  padding: 0;
-  background: transparent;
-  color: var(--color-text);
-  font-size: 18px;
-  font-weight: 600;
+.fluent-input {
+  width: 100%;
+  min-height: 42px;
+  border: 1px solid #d3dceb;
+  border-radius: 14px;
+  background: #ffffff;
+  padding: 0 12px;
+  font-size: 14px;
 }
 
-.metric-input:focus {
+.fluent-input:focus {
   outline: none;
+  border-color: #0f6cbd;
+  box-shadow: 0 0 0 2px rgba(15, 108, 189, 0.18);
 }
 
 .rule-meta {
@@ -288,10 +313,50 @@ onMounted(async () => {
   align-items: center;
 }
 
-.auto-field {
+.fluent-combo {
   width: 220px;
-  min-height: 42px;
-  border-radius: 14px;
+  position: relative;
+}
+
+.select-field {
+  padding-right: 32px;
+}
+
+.combo-icon {
+  position: absolute;
+  right: 10px;
+  top: 11px;
+  font-size: 18px;
+  color: #667085;
+  pointer-events: none;
+}
+
+.fluent-menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  right: 0;
+  max-height: 240px;
+  overflow-y: auto;
+  border: 1px solid #d3dceb;
+  border-radius: 10px;
+  background: #ffffff;
+  box-shadow: 0 10px 24px rgba(35, 52, 78, 0.18);
+  z-index: 10;
+}
+
+.fluent-option {
+  width: 100%;
+  text-align: left;
+  border: 0;
+  background: transparent;
+  padding: 8px 12px;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.fluent-option:hover {
+  background: #f2f7fd;
 }
 
 .add-btn {
@@ -345,7 +410,7 @@ onMounted(async () => {
 }
 
 .short {
-  width: 220px;
+  width: 180px;
 }
 
 .self-study-grid {
@@ -362,9 +427,19 @@ onMounted(async () => {
   gap: 14px;
 }
 
-.subsidy-row > div,
 .subsidy-row > label {
   flex: 1;
+}
+
+.inline-unit {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.unit-input {
+  width: 120px;
+  min-height: 34px;
 }
 
 .action-row {

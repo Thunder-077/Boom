@@ -10,8 +10,8 @@ import type {
   ExamStaffPlanOverview,
   ExamStaffTask,
   ExamStaffExclusion,
+  InvigilationExclusionSessionOption,
   InvigilationConfig,
-  SpaceStaffRequirement,
   TeacherDutyStat,
 } from "../../entities/exam-plan/model";
 import type { TeacherRow } from "../../entities/teacher/model";
@@ -63,12 +63,21 @@ const defaultInvigilationConfig: InvigilationConfig = {
   defaultExamRoomRequiredCount: 1,
   indoorAllowancePerMinute: 0.5,
   outdoorAllowancePerMinute: 0.3,
-  updatedAt: "",
+  selfStudySubject: Subject.Chinese,
+  selfStudyStartTime: "12:10",
+  selfStudyEndTime: "13:40",
 };
+
+const INVIGILATION_SESSION_STORAGE_KEY = "invigilation_config_session_v1";
 
 interface SessionTimeDraft {
   startAt: string;
   endAt: string;
+}
+
+interface InvigilationSessionState {
+  config: InvigilationConfig;
+  exclusions: ExamStaffExclusion[];
 }
 
 export function createExamAllocationStore(service: ExamAllocationService = examAllocationService) {
@@ -79,7 +88,6 @@ export function createExamAllocationStore(service: ExamAllocationService = examA
     exporting: false,
     assigning: false,
     savingTimes: false,
-    savingRequirements: false,
     errorMessage: "",
     settings: { ...emptySettings } as ExamAllocationSettings,
     overview: { ...emptyOverview } as ExamPlanOverview,
@@ -95,12 +103,12 @@ export function createExamAllocationStore(service: ExamAllocationService = examA
     },
     sessionTimes: [] as ExamSessionTime[],
     sessionTimeDrafts: {} as Record<number, SessionTimeDraft>,
-    requirements: [] as SpaceStaffRequirement[],
     staffOverview: { ...emptyStaffOverview } as ExamStaffPlanOverview,
     staffTasks: [] as ExamStaffTask[],
     teacherDutyStats: [] as TeacherDutyStat[],
     invigilationConfig: { ...defaultInvigilationConfig } as InvigilationConfig,
     staffExclusions: [] as ExamStaffExclusion[],
+    exclusionSessionOptions: [] as InvigilationExclusionSessionOption[],
     teachers: [] as TeacherRow[],
     lastExportZipPath: "",
     generationProgress: { ...emptyGenerationProgress } as ExamGenerationProgress,
@@ -115,6 +123,42 @@ export function createExamAllocationStore(service: ExamAllocationService = examA
       return value.slice(0, 16);
     }
     return value;
+  }
+
+  function loadInvigilationSessionState() {
+    try {
+      const raw = sessionStorage.getItem(INVIGILATION_SESSION_STORAGE_KEY);
+      if (!raw) {
+        return;
+      }
+      const parsed = JSON.parse(raw) as Partial<InvigilationSessionState>;
+      if (parsed.config) {
+        state.invigilationConfig = {
+          ...defaultInvigilationConfig,
+          ...parsed.config,
+        };
+      }
+      if (Array.isArray(parsed.exclusions)) {
+        state.staffExclusions = parsed.exclusions
+          .map((item) => ({
+            teacherId: Number(item.teacherId),
+            teacherName: String(item.teacherName || ""),
+            sessionId: Number(item.sessionId),
+            sessionLabel: String(item.sessionLabel || ""),
+          }))
+          .filter((item) => item.teacherId > 0 && item.sessionId > 0 && item.teacherName);
+      }
+    } catch {
+      sessionStorage.removeItem(INVIGILATION_SESSION_STORAGE_KEY);
+    }
+  }
+
+  function saveInvigilationSessionState() {
+    const payload: InvigilationSessionState = {
+      config: state.invigilationConfig,
+      exclusions: state.staffExclusions,
+    };
+    sessionStorage.setItem(INVIGILATION_SESSION_STORAGE_KEY, JSON.stringify(payload));
   }
 
   async function loadSessions() {
@@ -156,21 +200,14 @@ export function createExamAllocationStore(service: ExamAllocationService = examA
     state.sessionTimeDrafts = nextDrafts;
   }
 
-  async function loadRequirements(sessionId: number) {
-    state.requirements = await service.listSpaceStaffRequirements(sessionId);
-  }
-
-  async function loadInvigilationConfig() {
-    state.invigilationConfig = await service.getInvigilationConfig();
-  }
-
-  async function loadStaffExclusions() {
-    state.staffExclusions = await service.listExamStaffExclusions();
-  }
-
   async function loadTeachers() {
     const result = await service.listTeachers({ page: 1, pageSize: 2000 });
     state.teachers = result.items;
+  }
+
+  async function loadExclusionSessionOptions() {
+    state.exclusionSessionOptions =
+      await service.listInvigilationExclusionSessionOptions();
   }
 
   async function loadAll() {
@@ -185,13 +222,9 @@ export function createExamAllocationStore(service: ExamAllocationService = examA
       state.settings = settings;
       state.overview = overview;
       state.generationProgress = generationProgress;
-      await Promise.all([
-        loadSessions(),
-        loadSessionTimes(),
-        loadInvigilationConfig(),
-        loadStaffExclusions(),
-        loadTeachers(),
-      ]);
+      await Promise.all([loadSessions(), loadSessionTimes()]);
+      await Promise.allSettled([loadTeachers(), loadExclusionSessionOptions()]);
+      loadInvigilationSessionState();
 
       if (state.selectedSessionId) {
         await loadDetail(state.selectedSessionId);
@@ -288,7 +321,7 @@ export function createExamAllocationStore(service: ExamAllocationService = examA
     state.errorMessage = "";
     try {
       state.detail = await service.getSessionDetail(sessionId);
-      await Promise.all([loadRequirements(sessionId), loadStaffOutputs()]);
+      await loadStaffOutputs();
     } catch (error) {
       state.errorMessage = error instanceof Error ? error.message : String(error);
       throw error;
@@ -307,7 +340,6 @@ export function createExamAllocationStore(service: ExamAllocationService = examA
     } else {
       state.selectedSessionId = null;
       state.detail = null;
-      state.requirements = [];
       state.staffTasks = [];
     }
   }
@@ -362,43 +394,31 @@ export function createExamAllocationStore(service: ExamAllocationService = examA
     }
   }
 
-  function setRequirementCount(spaceId: number, role: "exam_room_invigilator", requiredCount: number) {
-    const target = state.requirements.find((item) => item.spaceId === spaceId && item.role === role);
-    if (!target) {
-      return;
-    }
-    target.requiredCount = Math.max(1, Math.floor(requiredCount || 1));
-  }
-
-  async function saveRequirements() {
-    if (!state.selectedSessionId) {
-      return;
-    }
-    state.savingRequirements = true;
-    state.errorMessage = "";
-    try {
-      const examRoomItems = state.requirements
-        .filter((item) => item.role === "exam_room_invigilator" && item.spaceId)
-        .map((item) => ({
-          spaceId: item.spaceId as number,
-          role: item.role,
-          requiredCount: Math.max(1, Math.floor(item.requiredCount || 1)),
-        }));
-      await service.upsertSpaceStaffRequirements(state.selectedSessionId, examRoomItems);
-      await loadRequirements(state.selectedSessionId);
-    } catch (error) {
-      state.errorMessage = error instanceof Error ? error.message : String(error);
-      throw error;
-    } finally {
-      state.savingRequirements = false;
-    }
-  }
-
   async function assignTeachers() {
     state.assigning = true;
     state.errorMessage = "";
     try {
-      await service.generateStaffPlan();
+      const normalizedExclusions = state.staffExclusions
+        .map((item) => ({
+          teacherId: Number(item.teacherId),
+          sessionId: Number(item.sessionId),
+        }))
+        .filter((item) => item.teacherId > 0 && item.sessionId > 0);
+      await service.generateStaffPlan({
+        defaultExamRoomRequiredCount: Math.max(
+          1,
+          Math.floor(state.invigilationConfig.defaultExamRoomRequiredCount || 1),
+        ),
+        indoorAllowancePerMinute: Math.max(
+          0,
+          Number(state.invigilationConfig.indoorAllowancePerMinute || 0),
+        ),
+        outdoorAllowancePerMinute: Math.max(
+          0,
+          Number(state.invigilationConfig.outdoorAllowancePerMinute || 0),
+        ),
+        staffExclusions: normalizedExclusions,
+      });
       await loadStaffOutputs();
     } catch (error) {
       state.errorMessage = error instanceof Error ? error.message : String(error);
@@ -410,7 +430,7 @@ export function createExamAllocationStore(service: ExamAllocationService = examA
 
   async function saveInvigilationConfig(payload?: Partial<InvigilationConfig>) {
     const next = { ...state.invigilationConfig, ...payload };
-    await service.updateInvigilationConfig({
+    state.invigilationConfig = {
       defaultExamRoomRequiredCount: Math.max(
         1,
         Math.floor(next.defaultExamRoomRequiredCount || 1),
@@ -423,18 +443,41 @@ export function createExamAllocationStore(service: ExamAllocationService = examA
         0,
         Number(next.outdoorAllowancePerMinute ?? 0),
       ),
-    });
-    await loadInvigilationConfig();
+      selfStudySubject: next.selfStudySubject ?? Subject.Chinese,
+      selfStudyStartTime: (next.selfStudyStartTime || "12:10").trim(),
+      selfStudyEndTime: (next.selfStudyEndTime || "13:40").trim(),
+    };
+    saveInvigilationSessionState();
   }
 
   async function addStaffExclusion(teacherId: number, sessionId: number) {
-    await service.createExamStaffExclusion({ teacherId, sessionId });
-    await loadStaffExclusions();
+    const teacher = state.teachers.find((item) => item.id === teacherId);
+    const session = state.exclusionSessionOptions.find(
+      (item) => item.sessionId === sessionId,
+    );
+    if (!teacher || !session || sessionId <= 0) {
+      return;
+    }
+    const exists = state.staffExclusions.some(
+      (item) => item.teacherId === teacherId && item.sessionId === sessionId,
+    );
+    if (exists) {
+      return;
+    }
+    state.staffExclusions.unshift({
+      teacherId,
+      teacherName: teacher.teacherName,
+      sessionId,
+      sessionLabel: session.label,
+    });
+    saveInvigilationSessionState();
   }
 
-  async function removeStaffExclusion(id: number) {
-    await service.deleteExamStaffExclusion(id);
-    await loadStaffExclusions();
+  async function removeStaffExclusion(teacherId: number, sessionId: number) {
+    state.staffExclusions = state.staffExclusions.filter(
+      (item) => !(item.teacherId === teacherId && item.sessionId === sessionId),
+    );
+    saveInvigilationSessionState();
   }
 
   const viewState = readonly(
@@ -445,7 +488,6 @@ export function createExamAllocationStore(service: ExamAllocationService = examA
       exporting: state.exporting,
       assigning: state.assigning,
       savingTimes: state.savingTimes,
-      savingRequirements: state.savingRequirements,
       errorMessage: state.errorMessage,
       settings: state.settings,
       overview: state.overview,
@@ -456,12 +498,15 @@ export function createExamAllocationStore(service: ExamAllocationService = examA
       filters: state.filters,
       sessionTimes: state.sessionTimes,
       sessionTimeDrafts: state.sessionTimeDrafts,
-      requirements: state.requirements,
       staffOverview: state.staffOverview,
       staffTasks: state.staffTasks,
       teacherDutyStats: state.teacherDutyStats,
       invigilationConfig: state.invigilationConfig,
       staffExclusions: state.staffExclusions,
+      exclusionSessionOptions: state.exclusionSessionOptions.map((item) => ({
+        sessionId: item.sessionId,
+        label: item.label,
+      })),
       teachers: state.teachers,
       lastExportZipPath: state.lastExportZipPath,
       generationProgress: state.generationProgress,
@@ -478,8 +523,6 @@ export function createExamAllocationStore(service: ExamAllocationService = examA
     setSessionTimeDraft,
     saveSessionTimes,
     deleteSessionTime,
-    setRequirementCount,
-    saveRequirements,
     assignTeachers,
     saveInvigilationConfig,
     addStaffExclusion,
