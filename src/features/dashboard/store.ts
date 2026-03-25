@@ -9,9 +9,12 @@ import type {
   ExamSessionTime,
   ExamStaffPlanOverview,
   ExamStaffTask,
+  ExamStaffExclusion,
+  InvigilationConfig,
   SpaceStaffRequirement,
   TeacherDutyStat,
 } from "../../entities/exam-plan/model";
+import type { TeacherRow } from "../../entities/teacher/model";
 import { examAllocationService, type ExamAllocationService } from "./service";
 
 const emptyOverview: ExamPlanOverview = {
@@ -56,6 +59,13 @@ const emptyGenerationProgress: ExamGenerationProgress = {
   updatedAt: "",
 };
 
+const defaultInvigilationConfig: InvigilationConfig = {
+  defaultExamRoomRequiredCount: 1,
+  indoorAllowancePerMinute: 0.5,
+  outdoorAllowancePerMinute: 0.3,
+  updatedAt: "",
+};
+
 interface SessionTimeDraft {
   startAt: string;
   endAt: string;
@@ -89,6 +99,9 @@ export function createExamAllocationStore(service: ExamAllocationService = examA
     staffOverview: { ...emptyStaffOverview } as ExamStaffPlanOverview,
     staffTasks: [] as ExamStaffTask[],
     teacherDutyStats: [] as TeacherDutyStat[],
+    invigilationConfig: { ...defaultInvigilationConfig } as InvigilationConfig,
+    staffExclusions: [] as ExamStaffExclusion[],
+    teachers: [] as TeacherRow[],
     lastExportZipPath: "",
     generationProgress: { ...emptyGenerationProgress } as ExamGenerationProgress,
   });
@@ -147,6 +160,19 @@ export function createExamAllocationStore(service: ExamAllocationService = examA
     state.requirements = await service.listSpaceStaffRequirements(sessionId);
   }
 
+  async function loadInvigilationConfig() {
+    state.invigilationConfig = await service.getInvigilationConfig();
+  }
+
+  async function loadStaffExclusions() {
+    state.staffExclusions = await service.listExamStaffExclusions();
+  }
+
+  async function loadTeachers() {
+    const result = await service.listTeachers({ page: 1, pageSize: 2000 });
+    state.teachers = result.items;
+  }
+
   async function loadAll() {
     state.loading = true;
     state.errorMessage = "";
@@ -159,7 +185,13 @@ export function createExamAllocationStore(service: ExamAllocationService = examA
       state.settings = settings;
       state.overview = overview;
       state.generationProgress = generationProgress;
-      await Promise.all([loadSessions(), loadSessionTimes()]);
+      await Promise.all([
+        loadSessions(),
+        loadSessionTimes(),
+        loadInvigilationConfig(),
+        loadStaffExclusions(),
+        loadTeachers(),
+      ]);
 
       if (state.selectedSessionId) {
         await loadDetail(state.selectedSessionId);
@@ -376,6 +408,35 @@ export function createExamAllocationStore(service: ExamAllocationService = examA
     }
   }
 
+  async function saveInvigilationConfig(payload?: Partial<InvigilationConfig>) {
+    const next = { ...state.invigilationConfig, ...payload };
+    await service.updateInvigilationConfig({
+      defaultExamRoomRequiredCount: Math.max(
+        1,
+        Math.floor(next.defaultExamRoomRequiredCount || 1),
+      ),
+      indoorAllowancePerMinute: Math.max(
+        0,
+        Number(next.indoorAllowancePerMinute ?? 0),
+      ),
+      outdoorAllowancePerMinute: Math.max(
+        0,
+        Number(next.outdoorAllowancePerMinute ?? 0),
+      ),
+    });
+    await loadInvigilationConfig();
+  }
+
+  async function addStaffExclusion(teacherId: number, sessionId: number) {
+    await service.createExamStaffExclusion({ teacherId, sessionId });
+    await loadStaffExclusions();
+  }
+
+  async function removeStaffExclusion(id: number) {
+    await service.deleteExamStaffExclusion(id);
+    await loadStaffExclusions();
+  }
+
   const viewState = readonly(
     computed(() => ({
       loading: state.loading,
@@ -399,6 +460,9 @@ export function createExamAllocationStore(service: ExamAllocationService = examA
       staffOverview: state.staffOverview,
       staffTasks: state.staffTasks,
       teacherDutyStats: state.teacherDutyStats,
+      invigilationConfig: state.invigilationConfig,
+      staffExclusions: state.staffExclusions,
+      teachers: state.teachers,
       lastExportZipPath: state.lastExportZipPath,
       generationProgress: state.generationProgress,
     })),
@@ -417,6 +481,9 @@ export function createExamAllocationStore(service: ExamAllocationService = examA
     setRequirementCount,
     saveRequirements,
     assignTeachers,
+    saveInvigilationConfig,
+    addStaffExclusion,
+    removeStaffExclusion,
     refreshGenerationProgress,
     get viewState() {
       return viewState.value;

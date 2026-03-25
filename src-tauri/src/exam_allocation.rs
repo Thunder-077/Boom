@@ -498,6 +498,26 @@ pub(crate) fn ensure_schema(conn: &Connection) -> Result<(), AppError> {
             FOREIGN KEY(space_id) REFERENCES latest_exam_plan_spaces(id) ON DELETE CASCADE
         );
 
+        CREATE TABLE IF NOT EXISTS invigilation_config (
+            id INTEGER PRIMARY KEY,
+            default_exam_room_required_count INTEGER NOT NULL,
+            indoor_allowance_per_minute REAL NOT NULL,
+            outdoor_allowance_per_minute REAL NOT NULL,
+            updated_at TEXT NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS exam_staff_exclusions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            teacher_id INTEGER NOT NULL,
+            teacher_name TEXT NOT NULL,
+            session_id INTEGER NOT NULL,
+            session_label TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            UNIQUE(teacher_id, session_id),
+            FOREIGN KEY(teacher_id) REFERENCES latest_teachers_v2(id) ON DELETE CASCADE,
+            FOREIGN KEY(session_id) REFERENCES latest_exam_plan_sessions(id) ON DELETE CASCADE
+        );
+
         CREATE TABLE IF NOT EXISTS latest_exam_staff_plan_meta (
             id INTEGER PRIMARY KEY,
             generated_at TEXT NOT NULL,
@@ -554,6 +574,8 @@ pub(crate) fn ensure_schema(conn: &Connection) -> Result<(), AppError> {
         CREATE INDEX IF NOT EXISTS idx_exam_session_times_subject ON exam_session_times(subject);
         CREATE INDEX IF NOT EXISTS idx_exam_subject_time_templates_subject ON exam_subject_time_templates(subject);
         CREATE INDEX IF NOT EXISTS idx_exam_space_staff_req_session ON exam_space_staff_requirements(session_id);
+        CREATE INDEX IF NOT EXISTS idx_exam_staff_exclusions_teacher ON exam_staff_exclusions(teacher_id);
+        CREATE INDEX IF NOT EXISTS idx_exam_staff_exclusions_session ON exam_staff_exclusions(session_id);
         CREATE INDEX IF NOT EXISTS idx_latest_exam_staff_tasks_session ON latest_exam_staff_tasks(session_id);
         CREATE INDEX IF NOT EXISTS idx_latest_exam_staff_tasks_role_status ON latest_exam_staff_tasks(role, status);
         CREATE INDEX IF NOT EXISTS idx_latest_exam_staff_assignments_task ON latest_exam_staff_assignments(task_id);
@@ -589,6 +611,39 @@ pub(crate) fn ensure_schema(conn: &Connection) -> Result<(), AppError> {
         "latest_teacher_duty_stats",
         "floor_rover_task_count INTEGER NOT NULL DEFAULT 0",
         "floor_rover_task_count",
+    )?;
+    ensure_column(
+        conn,
+        "latest_exam_staff_tasks",
+        "allowance_amount REAL NOT NULL DEFAULT 0",
+        "allowance_amount",
+    )?;
+    ensure_column(
+        conn,
+        "latest_teacher_duty_stats",
+        "allowance_total REAL NOT NULL DEFAULT 0",
+        "allowance_total",
+    )?;
+    ensure_column(
+        conn,
+        "latest_teacher_duty_stats",
+        "indoor_allowance_total REAL NOT NULL DEFAULT 0",
+        "indoor_allowance_total",
+    )?;
+    ensure_column(
+        conn,
+        "latest_teacher_duty_stats",
+        "outdoor_allowance_total REAL NOT NULL DEFAULT 0",
+        "outdoor_allowance_total",
+    )?;
+    let now = Utc::now().to_rfc3339();
+    conn.execute(
+        r#"
+        INSERT INTO invigilation_config (id, default_exam_room_required_count, indoor_allowance_per_minute, outdoor_allowance_per_minute, updated_at)
+        VALUES (1, 1, 0.5, 0.3, ?1)
+        ON CONFLICT(id) DO NOTHING
+        "#,
+        params![now],
     )?;
     ensure_column(
         conn,

@@ -135,6 +135,32 @@ const fakeService: ExamAllocationService = {
       items: [],
     };
   },
+  async getInvigilationConfig() {
+    return {
+      defaultExamRoomRequiredCount: 1,
+      indoorAllowancePerMinute: 0.5,
+      outdoorAllowancePerMinute: 0.3,
+      updatedAt: "2026-03-24T10:00:00Z",
+    };
+  },
+  async updateInvigilationConfig() {
+    return { success: true };
+  },
+  async listExamStaffExclusions() {
+    return [];
+  },
+  async createExamStaffExclusion() {
+    return { success: true };
+  },
+  async deleteExamStaffExclusion() {
+    return { success: true };
+  },
+  async listTeachers() {
+    return {
+      total: 0,
+      items: [],
+    };
+  },
   async exportLatestExamAllocationBundle() {
     return {
       zipPath: "D:/exports/考场安排.zip",

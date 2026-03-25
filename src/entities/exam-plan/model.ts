@@ -172,6 +172,7 @@ export interface ExamStaffTask {
   prioritySubjectChain: Subject[];
   status: TaskStatus;
   reason: string | null;
+  allowanceAmount: number;
   teacherId: number | null;
   teacherName: string | null;
 }
@@ -194,7 +195,31 @@ export interface TeacherDutyStat {
   examRoomTaskCount: number;
   selfStudyTaskCount: number;
   floorRoverTaskCount: number;
+  allowanceTotal: number;
+  indoorAllowanceTotal: number;
+  outdoorAllowanceTotal: number;
   isMiddleManager: boolean;
+}
+
+export interface InvigilationConfig {
+  defaultExamRoomRequiredCount: number;
+  indoorAllowancePerMinute: number;
+  outdoorAllowancePerMinute: number;
+  updatedAt: string;
+}
+
+export interface ExamStaffExclusion {
+  id: number;
+  teacherId: number;
+  teacherName: string;
+  sessionId: number;
+  sessionLabel: string;
+  createdAt: string;
+}
+
+export interface ExamStaffExclusionCreatePayload {
+  teacherId: number;
+  sessionId: number;
 }
 
 export interface ExportLatestExamAllocationBundleResult {
