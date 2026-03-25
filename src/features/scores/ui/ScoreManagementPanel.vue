@@ -8,16 +8,18 @@
     </div>
     <FilterToolbar :items="[]">
       <div class="toolbar-fields">
-        <label>
-          <select class="glass-field title-select">
-            <option>考试标题</option>
+        <label class="filter-select">
+          <select :value="store.viewState.filters.gradeName" @change="onGradeChange">
+            <option value="">全部年级</option>
+            <option value="高一">高一</option>
+            <option value="高二">高二</option>
+            <option value="高三">高三</option>
           </select>
+          <span class="material-symbols-rounded filter-arrow" aria-hidden="true">keyboard_arrow_down</span>
         </label>
-        <label class="search-field">
-          <svg viewBox="0 0 24 24" aria-hidden="true">
-            <path d="M15.5 14h-.79l-.28-.27A6.47 6.47 0 0 0 16 9.5 6.5 6.5 0 1 0 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79L19 20.5 20.5 19 15.5 14ZM9.5 14A4.5 4.5 0 1 1 14 9.5 4.5 4.5 0 0 1 9.5 14Z" />
-          </svg>
-          <input class="glass-field" :value="store.viewState.filters.nameKeyword" placeholder="按姓名筛选" @input="onNameInput" />
+        <label class="filter-search">
+          <span class="material-symbols-rounded filter-search-icon" aria-hidden="true">search</span>
+          <input :value="store.viewState.filters.nameKeyword" placeholder="按姓名筛选" @input="onNameInput" />
         </label>
       </div>
     </FilterToolbar>
@@ -35,7 +37,7 @@
             <th>姓名</th>
             <th>准考证号</th>
             <th>班级</th>
-            <th>科目</th>
+            <th>选科</th>
             <th>分数</th>
             <th>操作</th>
           </tr>
@@ -45,7 +47,7 @@
             <td class="emphasis">{{ row.studentName }}</td>
             <td>{{ row.admissionNo }}</td>
             <td>{{ row.className }}</td>
-            <td>总分</td>
+            <td>{{ formatSubjectSelection(row) }}</td>
             <td class="score-cell">{{ row.totalScore.toFixed(0) }}</td>
             <td class="link-cell">
               <button class="link-btn" type="button" @click="openDetail(row.admissionNo, 'view')">查看</button>
@@ -55,6 +57,28 @@
           </tr>
         </tbody>
       </table>
+      </div>
+      <div v-if="store.viewState.totalPages > 1" class="pagination">
+        <button class="page-btn" :disabled="store.viewState.page <= 1" @click="goPage(1)">
+          <span class="material-symbols-rounded">first_page</span>
+        </button>
+        <button class="page-btn" :disabled="store.viewState.page <= 1" @click="goPage(store.viewState.page - 1)">
+          <span class="material-symbols-rounded">chevron_left</span>
+        </button>
+        <button
+          v-for="p in visiblePages"
+          :key="p"
+          class="page-btn"
+          :class="{ active: p === store.viewState.page }"
+          @click="goPage(p)"
+        >{{ p }}</button>
+        <button class="page-btn" :disabled="store.viewState.page >= store.viewState.totalPages" @click="goPage(store.viewState.page + 1)">
+          <span class="material-symbols-rounded">chevron_right</span>
+        </button>
+        <button class="page-btn" :disabled="store.viewState.page >= store.viewState.totalPages" @click="goPage(store.viewState.totalPages)">
+          <span class="material-symbols-rounded">last_page</span>
+        </button>
+        <span class="page-info">共 {{ store.viewState.total }} 条</span>
       </div>
     </TableCard>
 
@@ -121,7 +145,7 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, reactive, ref } from "vue";
 import { SUBJECT_LABELS } from "../../../entities/class-config/model";
-import type { ScoreCellState, ScoreDetail, ScoreUpdatePayload } from "../../../entities/score/model";
+import type { ScoreCellState, ScoreDetail, ScoreRow, ScoreUpdatePayload } from "../../../entities/score/model";
 import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 import FilterToolbar from "../../../widgets/common/FilterToolbar.vue";
 import InfoHint from "../../../widgets/common/InfoHint.vue";
@@ -154,6 +178,14 @@ const importHintText = computed(() => {
   return "可将 Excel 文件拖拽到页面任意位置导入成绩数据";
 });
 
+const LANGUAGE_SHORT: Record<string, string> = { "英语": "英", "俄语": "俄", "日语": "日" };
+
+function formatSubjectSelection(row: ScoreRow): string {
+  if (row.subjectCombination === "全科") return "全科";
+  const langShort = LANGUAGE_SHORT[row.language] ?? row.language;
+  return "语数" + langShort + row.subjectCombination;
+}
+
 function rowClass(index: number) {
   return index % 2 === 1 ? "row-alt" : "";
 }
@@ -161,6 +193,31 @@ function rowClass(index: number) {
 function onNameInput(event: Event) {
   void store.setFilters({ nameKeyword: (event.target as HTMLInputElement).value });
 }
+
+function onGradeChange(event: Event) {
+  void store.setFilters({ gradeName: (event.target as HTMLSelectElement).value });
+}
+
+function goPage(page: number) {
+  void store.setPage(page);
+}
+
+const visiblePages = computed(() => {
+  const total = store.viewState.totalPages;
+  const current = store.viewState.page;
+  const maxVisible = 7;
+  if (total <= maxVisible) {
+    return Array.from({ length: total }, (_, i) => i + 1);
+  }
+  const half = Math.floor(maxVisible / 2);
+  let start = Math.max(1, current - half);
+  let end = start + maxVisible - 1;
+  if (end > total) {
+    end = total;
+    start = end - maxVisible + 1;
+  }
+  return Array.from({ length: end - start + 1 }, (_, i) => start + i);
+});
 
 async function openDetail(admissionNo: string, mode: "view" | "edit") {
   detailState.visible = true;
@@ -306,6 +363,7 @@ onUnmounted(() => {
 
 .panel :deep(.table-card .content) {
   display: flex;
+  flex-direction: column;
   min-height: 0;
 }
 
@@ -351,29 +409,91 @@ onUnmounted(() => {
 
 .toolbar-fields {
   display: flex;
+  align-items: center;
   gap: 12px;
 }
 
-.title-select {
-  width: 220px;
-}
-
-.search-field {
+/* Filter fields – matches .pen scoreFilter spec */
+.filter-select,
+.filter-search {
   position: relative;
-}
-
-.search-field svg {
-  position: absolute;
-  left: 14px;
-  top: 12px;
-  width: 18px;
-  height: 18px;
-  fill: var(--color-text-muted);
-}
-
-.search-field input {
+  display: inline-flex;
+  align-items: center;
   width: 220px;
-  padding-left: 42px;
+  height: 42px;
+  padding: 0 14px;
+  border: 1px solid var(--color-border-soft);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.59);
+}
+
+/* Dropdown */
+.filter-select {
+  justify-content: space-between;
+}
+
+.filter-select select {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  padding: 0 36px 0 14px;
+  border: none;
+  border-radius: 14px;
+  background: transparent;
+  color: var(--color-text);
+  font-size: 14px;
+  appearance: none;
+  cursor: pointer;
+}
+
+.filter-select select:focus {
+  outline: none;
+}
+
+.filter-select:focus-within {
+  border-color: #b9d6ff;
+  box-shadow: 0 0 0 3px rgba(185, 214, 255, 0.35);
+}
+
+.filter-arrow {
+  position: absolute;
+  right: 14px;
+  color: var(--color-text-muted);
+  font-size: 18px;
+  pointer-events: none;
+  font-family: "Material Symbols Rounded";
+}
+
+/* Search */
+.filter-search {
+  gap: 10px;
+}
+
+.filter-search-icon {
+  color: var(--color-text-muted);
+  font-size: 18px;
+  font-family: "Material Symbols Rounded";
+  flex-shrink: 0;
+}
+
+.filter-search input {
+  flex: 1;
+  border: none;
+  background: transparent;
+  color: var(--color-text);
+  font-size: 14px;
+  outline: none;
+  min-width: 0;
+}
+
+.filter-search input::placeholder {
+  color: var(--color-text-muted);
+}
+
+.filter-search:focus-within {
+  border-color: #b9d6ff;
+  box-shadow: 0 0 0 3px rgba(185, 214, 255, 0.35);
 }
 
 .score-table tbody tr {
@@ -414,6 +534,58 @@ onUnmounted(() => {
 
 .row-alt {
   background: #f8fbff;
+}
+
+/* Pagination */
+.pagination {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  padding: 12px 16px 8px;
+  border-top: 1px solid var(--color-border-soft);
+}
+
+.page-btn {
+  min-width: 32px;
+  height: 32px;
+  padding: 0 6px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--color-text);
+  font-size: 13px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.12s, border-color 0.12s;
+}
+
+.page-btn .material-symbols-rounded {
+  font-size: 18px;
+}
+
+.page-btn:hover:not(:disabled) {
+  background: rgba(0, 0, 0, 0.04);
+}
+
+.page-btn:disabled {
+  color: var(--color-text-muted);
+  opacity: 0.4;
+  cursor: default;
+}
+
+.page-btn.active {
+  background: var(--color-brand);
+  color: #fff;
+  font-weight: 600;
+}
+
+.page-info {
+  margin-left: 12px;
+  font-size: 13px;
+  color: var(--color-text-muted);
 }
 
 .detail-mask {

@@ -1454,16 +1454,36 @@ pub fn list_invigilation_exclusion_session_options(
     let result = (|| -> Result<Vec<InvigilationExclusionSessionOption>, AppError> {
         let conn = score::open_connection(&app)?;
         exam_allocation::ensure_schema(&conn)?;
-        let rows = load_session_times_runtime(&conn)?;
+        let rows = load_session_time_template_rows(&conn)?;
         let mut items = Vec::new();
         for row in rows {
+            let start_at = row.start_at.clone().unwrap_or_default();
+            let end_at = row.end_at.clone().unwrap_or_default();
             items.push(InvigilationExclusionSessionOption {
                 session_id: row.session_id,
                 grade_name: row.grade_name.clone(),
                 subject: row.subject,
-                start_at: row.start_at.clone(),
-                end_at: row.end_at.clone(),
-                label: build_session_label(&row.grade_name, row.subject, &row.start_at, &row.end_at),
+                start_at: start_at.clone(),
+                end_at: end_at.clone(),
+                label: format!(
+                    "{} {} {}-{}",
+                    subject_label(row.subject),
+                    if start_at.len() >= 10 {
+                        &start_at[5..10]
+                    } else {
+                        "--"
+                    },
+                    if start_at.len() >= 16 {
+                        &start_at[11..16]
+                    } else {
+                        "--:--"
+                    },
+                    if end_at.len() >= 16 {
+                        &end_at[11..16]
+                    } else {
+                        "--:--"
+                    },
+                ),
             });
         }
         Ok(items)

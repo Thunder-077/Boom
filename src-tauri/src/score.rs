@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fmt::{Display, Formatter};
 use std::fs::create_dir_all;
 use std::path::PathBuf;
@@ -13,10 +13,12 @@ use tauri::{AppHandle, Manager};
 
 use crate::app_log;
 
-const FIXED_HEADERS: [&str; 14] = [
+const FIXED_HEADERS: [&str; 16] = [
     "准考证号",
     "班级",
     "姓名",
+    "选科组合",
+    "语种",
     "语文",
     "数学",
     "英语",
@@ -31,17 +33,17 @@ const FIXED_HEADERS: [&str; 14] = [
 ];
 
 const SUBJECT_COLUMNS: [(usize, Subject, &str); 11] = [
-    (3, Subject::Chinese, "语文"),
-    (4, Subject::Math, "数学"),
-    (5, Subject::English, "英语"),
-    (6, Subject::Physics, "物理"),
-    (7, Subject::Chemistry, "化学"),
-    (8, Subject::Biology, "生物"),
-    (9, Subject::Politics, "政治"),
-    (10, Subject::History, "历史"),
-    (11, Subject::Geography, "地理"),
-    (12, Subject::Russian, "俄语"),
-    (13, Subject::Japanese, "日语"),
+    (5, Subject::Chinese, "语文"),
+    (6, Subject::Math, "数学"),
+    (7, Subject::English, "英语"),
+    (8, Subject::Physics, "物理"),
+    (9, Subject::Chemistry, "化学"),
+    (10, Subject::Biology, "生物"),
+    (11, Subject::Politics, "政治"),
+    (12, Subject::History, "历史"),
+    (13, Subject::Geography, "地理"),
+    (14, Subject::Russian, "俄语"),
+    (15, Subject::Japanese, "日语"),
 ];
 
 #[derive(Debug)]
@@ -147,6 +149,8 @@ struct ParsedStudent {
     class_name: String,
     grade_name: String,
     student_name: String,
+    subject_combination: String,
+    language: String,
     total_score: f64,
     selected_subject_count: i64,
     class_rank: i64,
@@ -170,6 +174,8 @@ pub struct ScoreRow {
     class_name: String,
     grade_name: String,
     student_name: String,
+    subject_combination: String,
+    language: String,
     total_score: f64,
     class_rank: i64,
     grade_rank: i64,
@@ -217,6 +223,8 @@ pub struct ScoreDetail {
     class_name: String,
     grade_name: String,
     student_name: String,
+    subject_combination: String,
+    language: String,
     total_score: f64,
     class_rank: i64,
     grade_rank: i64,
@@ -267,6 +275,8 @@ pub fn init_schema(conn: &Connection) -> Result<(), AppError> {
             class_name TEXT NOT NULL,
             grade_name TEXT NOT NULL,
             student_name TEXT NOT NULL,
+            subject_combination TEXT NOT NULL DEFAULT '',
+            language TEXT NOT NULL DEFAULT '',
             total_score REAL NOT NULL,
             class_rank INTEGER NOT NULL,
             grade_rank INTEGER NOT NULL,
@@ -310,30 +320,110 @@ fn cell_to_trimmed_string(cell: Option<&Data>) -> String {
     }
 }
 
-fn parse_score_cell(cell: Option<&Data>, row_index: usize, subject_header: &str) -> Result<ParsedSubjectScoreState, AppError> {
+fn parse_subject_combination(text: &str, row_index: usize) -> Result<HashSet<Subject>, AppError> {
+    let trimmed = text.trim();
+    if trimmed.is_empty() {
+        return Err(AppError::new(format!("第 {} 行选科组合为空", row_index + 1)));
+    }
+    let mut subjects: HashSet<Subject> = HashSet::new();
+    // 所有学生默认选语文和数学
+    subjects.insert(Subject::Chinese);
+    subjects.insert(Subject::Math);
+
+    if trimmed == "全科" {
+        subjects.insert(Subject::Physics);
+        subjects.insert(Subject::Chemistry);
+        subjects.insert(Subject::Biology);
+        subjects.insert(Subject::Politics);
+        subjects.insert(Subject::History);
+        subjects.insert(Subject::Geography);
+        return Ok(subjects);
+    }
+
+    for ch in trimmed.chars() {
+        let subject = match ch {
+            '物' => Subject::Physics,
+            '化' => Subject::Chemistry,
+            '生' => Subject::Biology,
+            '政' => Subject::Politics,
+            '史' => Subject::History,
+            '地' => Subject::Geography,
+            _ => {
+                return Err(AppError::new(format!(
+                    "第 {} 行选科组合包含无法识别的字符: '{}'",
+                    row_index + 1,
+                    ch
+                )));
+            }
+        };
+        subjects.insert(subject);
+    }
+    Ok(subjects)
+}
+
+fn parse_language(text: &str, row_index: usize) -> Result<Subject, AppError> {
+    let trimmed = text.trim();
+    match trimmed {
+        "英语" => Ok(Subject::English),
+        "俄语" => Ok(Subject::Russian),
+        "日语" => Ok(Subject::Japanese),
+        _ => Err(AppError::new(format!(
+            "第 {} 行语种无法识别: '{}'",
+            row_index + 1,
+            trimmed
+        ))),
+    }
+}
+
+fn parse_score_cell(cell: Option<&Data>, row_index: usize, subject_header: &str, is_selected: bool) -> Result<ParsedSubjectScoreState, AppError> {
     let text = cell_to_trimmed_string(cell);
-    if text.is_empty() {
-        return Ok(ParsedSubjectScoreState {
-            score: None,
-            state: ScoreCellState::NotSelected,
-            selected: false,
-        });
-    }
-    if text == "-" {
-        return Ok(ParsedSubjectScoreState {
-            score: Some(0.0),
-            state: ScoreCellState::Absent,
+
+    if is_selected {
+        // 已选科目
+        if text.is_empty() {
+            return Err(AppError::new(format!(
+                "第 {} 行选了{}但成绩为空",
+                row_index + 1,
+                subject_header
+            )));
+        }
+        if text == "-" {
+            return Ok(ParsedSubjectScoreState {
+                score: Some(0.0),
+                state: ScoreCellState::Absent,
+                selected: true,
+            });
+        }
+        let parsed = text.parse::<f64>().map_err(|_| {
+            AppError::new(format!(
+                "第 {} 行科目 {} 成绩格式错误: {}",
+                row_index + 1,
+                subject_header,
+                text
+            ))
+        })?;
+        Ok(ParsedSubjectScoreState {
+            score: Some(parsed),
+            state: ScoreCellState::Scored,
             selected: true,
-        });
+        })
+    } else {
+        // 未选科目
+        if text.is_empty() || text == "-" {
+            return Ok(ParsedSubjectScoreState {
+                score: None,
+                state: ScoreCellState::NotSelected,
+                selected: false,
+            });
+        }
+        // 未选但有成绩 → 报错
+        Err(AppError::new(format!(
+            "第 {} 行未选{}但有成绩: {}",
+            row_index + 1,
+            subject_header,
+            text
+        )))
     }
-    let parsed = text.parse::<f64>().map_err(|_| {
-        AppError::new(format!("第 {} 行科目 {} 成绩格式错误: {}", row_index + 1, subject_header, text))
-    })?;
-    Ok(ParsedSubjectScoreState {
-        score: Some(parsed),
-        state: ScoreCellState::Scored,
-        selected: true,
-    })
 }
 
 struct ParsedSubjectScoreState {
@@ -398,11 +488,19 @@ fn parse_excel_rows(file_path: &str) -> Result<Vec<ParsedStudent>, AppError> {
             )));
         }
 
+        let combination_text = cell_to_trimmed_string(row.get(3));
+        let language_text = cell_to_trimmed_string(row.get(4));
+
+        let mut selected_subjects = parse_subject_combination(&combination_text, excel_row_index)?;
+        let lang_subject = parse_language(&language_text, excel_row_index)?;
+        selected_subjects.insert(lang_subject);
+
         let mut subjects = Vec::new();
         let mut total_score = 0.0;
         let mut selected_subject_count = 0_i64;
         for (column_index, subject, header_name) in SUBJECT_COLUMNS {
-            let parsed = parse_score_cell(row.get(column_index), excel_row_index, header_name)?;
+            let is_selected = selected_subjects.contains(&subject);
+            let parsed = parse_score_cell(row.get(column_index), excel_row_index, header_name, is_selected)?;
             if parsed.selected {
                 selected_subject_count += 1;
                 total_score += parsed.score.unwrap_or(0.0);
@@ -419,6 +517,8 @@ fn parse_excel_rows(file_path: &str) -> Result<Vec<ParsedStudent>, AppError> {
             class_name: class_name.clone(),
             grade_name: extract_grade_name(&class_name),
             student_name,
+            subject_combination: combination_text,
+            language: language_text,
             total_score,
             selected_subject_count,
             class_rank: 0,
@@ -575,14 +675,17 @@ fn persist_latest_snapshot(conn: &mut Connection, source_file: &str, imported_at
             r#"
             INSERT INTO latest_student_scores (
               admission_no, class_name, grade_name, student_name,
+              subject_combination, language,
               total_score, class_rank, grade_rank, selected_subject_count
-            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
             "#,
             params![
                 student.admission_no,
                 student.class_name,
                 student.grade_name,
                 student.student_name,
+                student.subject_combination,
+                student.language,
                 student.total_score,
                 student.class_rank,
                 student.grade_rank,
@@ -670,7 +773,7 @@ pub fn list_latest_score_rows(app: AppHandle, params: ScoreListParams) -> Result
 
         let list_sql = format!(
             r#"
-            SELECT admission_no, class_name, grade_name, student_name, total_score, class_rank, grade_rank, selected_subject_count
+            SELECT admission_no, class_name, grade_name, student_name, subject_combination, language, total_score, class_rank, grade_rank, selected_subject_count
             FROM latest_student_scores
             {where_sql}
             ORDER BY grade_name ASC, class_name ASC, class_rank ASC, admission_no ASC
@@ -685,10 +788,12 @@ pub fn list_latest_score_rows(app: AppHandle, params: ScoreListParams) -> Result
                 class_name: row.get(1)?,
                 grade_name: row.get(2)?,
                 student_name: row.get(3)?,
-                total_score: row.get(4)?,
-                class_rank: row.get(5)?,
-                grade_rank: row.get(6)?,
-                selected_subject_count: row.get(7)?,
+                subject_combination: row.get(4)?,
+                language: row.get(5)?,
+                total_score: row.get(6)?,
+                class_rank: row.get(7)?,
+                grade_rank: row.get(8)?,
+                selected_subject_count: row.get(9)?,
             })
         })?;
 
@@ -709,7 +814,7 @@ pub fn get_score_detail(app: AppHandle, admission_no: String) -> Result<ScoreDet
         let student = conn
             .query_row(
                 r#"
-                SELECT admission_no, class_name, grade_name, student_name, total_score, class_rank, grade_rank, selected_subject_count
+                SELECT admission_no, class_name, grade_name, student_name, subject_combination, language, total_score, class_rank, grade_rank, selected_subject_count
                 FROM latest_student_scores
                 WHERE admission_no = ?1
                 "#,
@@ -720,10 +825,12 @@ pub fn get_score_detail(app: AppHandle, admission_no: String) -> Result<ScoreDet
                         class_name: row.get(1)?,
                         grade_name: row.get(2)?,
                         student_name: row.get(3)?,
-                        total_score: row.get(4)?,
-                        class_rank: row.get(5)?,
-                        grade_rank: row.get(6)?,
-                        selected_subject_count: row.get(7)?,
+                        subject_combination: row.get(4)?,
+                        language: row.get(5)?,
+                        total_score: row.get(6)?,
+                        class_rank: row.get(7)?,
+                        grade_rank: row.get(8)?,
+                        selected_subject_count: row.get(9)?,
                         subjects: Vec::new(),
                     })
                 },
@@ -904,12 +1011,64 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_parse_score_cell_rules() {
-        let scored = parse_score_cell(Some(&Data::Float(88.5)), 1, "数学").unwrap();
+    fn test_parse_score_cell_selected() {
+        let scored = parse_score_cell(Some(&Data::Float(88.5)), 1, "数学", true).unwrap();
         assert!(matches!(scored.state, ScoreCellState::Scored));
         assert_eq!(scored.score, Some(88.5));
-        let absent = parse_score_cell(Some(&Data::String("-".to_string())), 1, "物理").unwrap();
+
+        let absent = parse_score_cell(Some(&Data::String("-".to_string())), 1, "物理", true).unwrap();
         assert!(matches!(absent.state, ScoreCellState::Absent));
         assert_eq!(absent.score, Some(0.0));
+
+        // 已选但为空 → 报错
+        let err = parse_score_cell(Some(&Data::Empty), 1, "语文", true);
+        assert!(err.is_err());
+    }
+
+    #[test]
+    fn test_parse_score_cell_not_selected() {
+        let empty = parse_score_cell(Some(&Data::Empty), 1, "化学", false).unwrap();
+        assert!(matches!(empty.state, ScoreCellState::NotSelected));
+        assert_eq!(empty.score, None);
+
+        let dash = parse_score_cell(Some(&Data::String("-".to_string())), 1, "化学", false).unwrap();
+        assert!(matches!(dash.state, ScoreCellState::NotSelected));
+        assert_eq!(dash.score, None);
+
+        // 未选但有成绩 → 报错
+        let err = parse_score_cell(Some(&Data::Float(90.0)), 1, "化学", false);
+        assert!(err.is_err());
+    }
+
+    #[test]
+    fn test_parse_subject_combination() {
+        let full = parse_subject_combination("全科", 0).unwrap();
+        assert!(full.contains(&Subject::Physics));
+        assert!(full.contains(&Subject::Chemistry));
+        assert!(full.contains(&Subject::Biology));
+        assert!(full.contains(&Subject::Politics));
+        assert!(full.contains(&Subject::History));
+        assert!(full.contains(&Subject::Geography));
+        assert!(full.contains(&Subject::Chinese));
+        assert!(full.contains(&Subject::Math));
+
+        let partial = parse_subject_combination("物化生", 0).unwrap();
+        assert!(partial.contains(&Subject::Physics));
+        assert!(partial.contains(&Subject::Chemistry));
+        assert!(partial.contains(&Subject::Biology));
+        assert!(!partial.contains(&Subject::History));
+        assert!(partial.contains(&Subject::Chinese));
+        assert!(partial.contains(&Subject::Math));
+
+        let err = parse_subject_combination("物X化", 0);
+        assert!(err.is_err());
+    }
+
+    #[test]
+    fn test_parse_language() {
+        assert!(matches!(parse_language("英语", 0).unwrap(), Subject::English));
+        assert!(matches!(parse_language("俄语", 0).unwrap(), Subject::Russian));
+        assert!(matches!(parse_language("日语", 0).unwrap(), Subject::Japanese));
+        assert!(parse_language("法语", 0).is_err());
     }
 }

@@ -398,12 +398,34 @@ export function createExamAllocationStore(service: ExamAllocationService = examA
     state.assigning = true;
     state.errorMessage = "";
     try {
-      const normalizedExclusions = state.staffExclusions
-        .map((item) => ({
-          teacherId: Number(item.teacherId),
-          sessionId: Number(item.sessionId),
-        }))
-        .filter((item) => item.teacherId > 0 && item.sessionId > 0);
+      const exclusionPairs = new Map<string, { teacherId: number; sessionId: number }>();
+      for (const item of state.staffExclusions) {
+        const teacherId = Number(item.teacherId);
+        const sessionId = Number(item.sessionId);
+        if (teacherId <= 0) {
+          continue;
+        }
+        if (sessionId > 0) {
+          exclusionPairs.set(`${teacherId}-${sessionId}`, { teacherId, sessionId });
+          continue;
+        }
+        const templateOption = state.exclusionSessionOptions.find(
+          (option) => option.sessionId === sessionId,
+        );
+        if (!templateOption) {
+          continue;
+        }
+        for (const session of state.sessions) {
+          if (session.subject !== templateOption.subject) {
+            continue;
+          }
+          exclusionPairs.set(`${teacherId}-${session.id}`, {
+            teacherId,
+            sessionId: session.id,
+          });
+        }
+      }
+      const normalizedExclusions = Array.from(exclusionPairs.values());
       await service.generateStaffPlan({
         defaultExamRoomRequiredCount: Math.max(
           1,
@@ -455,14 +477,14 @@ export function createExamAllocationStore(service: ExamAllocationService = examA
     const session = state.exclusionSessionOptions.find(
       (item) => item.sessionId === sessionId,
     );
-    if (!teacher || !session || sessionId <= 0) {
-      return;
+    if (!teacher || !session) {
+      return false;
     }
     const exists = state.staffExclusions.some(
       (item) => item.teacherId === teacherId && item.sessionId === sessionId,
     );
     if (exists) {
-      return;
+      return false;
     }
     state.staffExclusions.unshift({
       teacherId,
@@ -471,6 +493,7 @@ export function createExamAllocationStore(service: ExamAllocationService = examA
       sessionLabel: session.label,
     });
     saveInvigilationSessionState();
+    return true;
   }
 
   async function removeStaffExclusion(teacherId: number, sessionId: number) {

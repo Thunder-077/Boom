@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { vi } from "vitest";
 import { Subject } from "../../../entities/score/model";
 import { createExamAllocationStore } from "../store";
 import type { ExamAllocationService } from "../service";
@@ -130,12 +131,31 @@ const fakeService: ExamAllocationService = {
     };
   },
   async listInvigilationExclusionSessionOptions() {
-    return [];
+    return [
+      {
+        sessionId: -3,
+        gradeName: "全局",
+        subject: Subject.English,
+        startAt: "2026-03-24T08:00",
+        endAt: "2026-03-24T10:00",
+        label: "英语 03-24 08:00-10:00",
+      },
+    ];
   },
   async listTeachers() {
     return {
-      total: 0,
-      items: [],
+      total: 1,
+      items: [
+        {
+          id: 101,
+          teacherName: "张老师",
+          subjects: [Subject.English],
+          classNames: ["高一1班"],
+          remark: "",
+          isMiddleManager: false,
+          updatedAt: "2026-03-24T10:00:00Z",
+        },
+      ],
     };
   },
   async exportLatestExamAllocationBundle() {
@@ -156,5 +176,25 @@ describe("exam allocation store", () => {
     expect(store.viewState.overview.gradeCount).toBe(1);
     expect(store.viewState.sessions.length).toBe(1);
     expect(store.viewState.detail?.session.subject).toBe(Subject.English);
+  });
+
+  it("expands template exclusions to actual session ids when assigning teachers", async () => {
+    const generateStaffPlan = vi.fn(fakeService.generateStaffPlan);
+    const store = createExamAllocationStore({
+      ...fakeService,
+      generateStaffPlan,
+    });
+    await store.loadAll();
+
+    const added = await store.addStaffExclusion(101, -3);
+    expect(added).toBe(true);
+
+    await store.assignTeachers();
+
+    expect(generateStaffPlan).toHaveBeenCalledWith(
+      expect.objectContaining({
+        staffExclusions: [{ teacherId: 101, sessionId: 1 }],
+      }),
+    );
   });
 });

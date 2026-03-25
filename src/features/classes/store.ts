@@ -9,7 +9,7 @@ import type {
 import type { Subject } from "../../entities/score/model";
 import { classConfigService, type ClassConfigService } from "./service";
 
-export type ClassNameIntent = "idle" | "switch" | "create" | "rename";
+export type ClassConfigMode = "existing" | "new";
 
 const defaultFilters: ClassConfigFilters = {
   configType: "teaching_class",
@@ -40,11 +40,11 @@ export function createClassConfigStore(service: ClassConfigService = classConfig
     };
   }
 
-  function normalizedForm(form: ClassConfigUpsertPayload, includeClassName = true) {
+  function normalizedForm(form: ClassConfigUpsertPayload) {
     return {
       configType: form.configType,
       gradeName: form.gradeName.trim(),
-      className: includeClassName ? form.className.trim() : "",
+      className: form.className.trim(),
       building: form.building.trim(),
       floor: form.floor.trim(),
       roomLabel: (form.roomLabel ?? "").trim(),
@@ -63,51 +63,16 @@ export function createClassConfigStore(service: ClassConfigService = classConfig
     selectedId: null as number | null,
     detail: null as ClassConfigDetail | null,
     editingId: null as number | null,
+    mode: "new" as ClassConfigMode,
     form: { ...defaultForm } as ClassConfigUpsertPayload,
     baselineForm: { ...defaultForm } as ClassConfigUpsertPayload,
-    classNameIntent: "idle" as ClassNameIntent,
-    targetMatchId: null as number | null,
-    originalClassName: "",
+    loadedClassName: "",
     isDirty: false,
-    isDirtyExceptClassName: false,
     errorMessage: "",
   });
 
-  function recalculateIntentAndDirty() {
-    const name = state.form.className.trim();
-    const normalizedName = name.replace(/\s+/g, "");
-    const candidates = state.rows.filter((row) => row.configType === state.form.configType);
-    const exactMatch = candidates.find((row) => row.className.trim().replace(/\s+/g, "") === normalizedName);
-    const fuzzyMatches = candidates.filter((row) => {
-      const rowName = row.className.trim().replace(/\s+/g, "");
-      return normalizedName.length >= 2 && (rowName.includes(normalizedName) || normalizedName.includes(rowName));
-    });
-    const match = exactMatch ?? (fuzzyMatches.length === 1 ? fuzzyMatches[0] : undefined);
-    const originalNormalized = state.originalClassName.replace(/\s+/g, "");
-    const isEditingCurrentName = !!state.editingId && !!originalNormalized && normalizedName !== originalNormalized;
-    const looksLikeRename =
-      isEditingCurrentName &&
-      (normalizedName.startsWith(originalNormalized) || originalNormalized.startsWith(normalizedName));
-
-    if (match && state.editingId && match.id === state.editingId && isEditingCurrentName && looksLikeRename) {
-      state.classNameIntent = "rename";
-      state.targetMatchId = null;
-    } else if (match && match.id !== state.editingId) {
-      state.classNameIntent = "switch";
-      state.targetMatchId = match.id;
-    } else if (!normalizedName) {
-      state.classNameIntent = "idle";
-      state.targetMatchId = null;
-    } else if (looksLikeRename) {
-      state.classNameIntent = "rename";
-      state.targetMatchId = null;
-    } else {
-      state.classNameIntent = "create";
-      state.targetMatchId = null;
-    }
+  function recalculateDirty() {
     state.isDirty = JSON.stringify(normalizedForm(state.form)) !== JSON.stringify(normalizedForm(state.baselineForm));
-    state.isDirtyExceptClassName =
-      JSON.stringify(normalizedForm(state.form, false)) !== JSON.stringify(normalizedForm(state.baselineForm, false));
   }
 
   function resetForm(type: ClassConfigType = state.filters.configType) {
@@ -119,8 +84,9 @@ export function createClassConfigStore(service: ClassConfigService = classConfig
     state.selectedId = null;
     state.detail = null;
     state.editingId = null;
-    state.originalClassName = "";
-    recalculateIntentAndDirty();
+    state.mode = "new";
+    state.loadedClassName = "";
+    recalculateDirty();
   }
 
   function setFormType(configType: ClassConfigType) {
@@ -128,7 +94,7 @@ export function createClassConfigStore(service: ClassConfigService = classConfig
     if (configType === "exam_room") {
       state.form.subjects = [];
     }
-    recalculateIntentAndDirty();
+    recalculateDirty();
   }
 
   function setFormField(
@@ -137,11 +103,11 @@ export function createClassConfigStore(service: ClassConfigService = classConfig
   ) {
     if (field === "roomLabel") {
       state.form.roomLabel = value;
-      recalculateIntentAndDirty();
+      recalculateDirty();
       return;
     }
     state.form[field] = value ?? "";
-    recalculateIntentAndDirty();
+    recalculateDirty();
   }
 
   function toggleSubject(subject: Subject, checked: boolean) {
@@ -149,35 +115,28 @@ export function createClassConfigStore(service: ClassConfigService = classConfig
       if (!state.form.subjects.includes(subject)) {
         state.form.subjects = [...state.form.subjects, subject];
       }
-      recalculateIntentAndDirty();
+      recalculateDirty();
       return;
     }
     state.form.subjects = state.form.subjects.filter((item) => item !== subject);
-    recalculateIntentAndDirty();
+    recalculateDirty();
   }
 
-  function startCreateFromClassName(className: string) {
+  function startCreate(className: string) {
     const nextName = className.trim();
     const configType = state.form.configType;
-    const gradeName = state.form.gradeName;
     state.selectedId = null;
     state.detail = null;
     state.editingId = null;
-    state.originalClassName = "";
-    state.targetMatchId = null;
+    state.mode = "new";
+    state.loadedClassName = "";
     state.form = {
       ...defaultForm,
       configType,
-      gradeName,
       className: nextName,
     };
-    state.baselineForm = cloneForm({
-      ...defaultForm,
-      configType,
-      gradeName,
-      className: nextName,
-    });
-    recalculateIntentAndDirty();
+    state.baselineForm = cloneForm(state.form);
+    recalculateDirty();
   }
 
   async function loadList() {
@@ -202,6 +161,7 @@ export function createClassConfigStore(service: ClassConfigService = classConfig
       const detail = await service.getById(id);
       state.detail = detail;
       state.editingId = id;
+      state.mode = "existing";
       state.form = {
         configType: detail.configType,
         gradeName: detail.gradeName,
@@ -212,10 +172,20 @@ export function createClassConfigStore(service: ClassConfigService = classConfig
         subjects: [...detail.subjects],
       };
       state.baselineForm = cloneForm(state.form);
-      state.originalClassName = detail.className.trim();
-      recalculateIntentAndDirty();
+      state.loadedClassName = detail.className.trim();
+      recalculateDirty();
     } catch (error) {
       state.errorMessage = error instanceof Error ? error.message : String(error);
+    }
+  }
+
+  async function loadInitial() {
+    resetForm(state.filters.configType);
+    await loadList();
+    if (state.rows.length > 0) {
+      await loadDetail(state.rows[0].id);
+    } else {
+      recalculateDirty();
     }
   }
 
@@ -257,14 +227,11 @@ export function createClassConfigStore(service: ClassConfigService = classConfig
     state.errorMessage = "";
     try {
       await service.remove(id);
-      if (state.selectedId === id) {
-        state.selectedId = null;
-        state.detail = null;
-        resetForm(state.filters.configType);
-      }
       await loadList();
       if (state.rows.length > 0) {
         await loadDetail(state.rows[0].id);
+      } else {
+        resetForm(state.filters.configType);
       }
     } catch (error) {
       state.errorMessage = error instanceof Error ? error.message : String(error);
@@ -282,13 +249,7 @@ export function createClassConfigStore(service: ClassConfigService = classConfig
     if (state.filters.configType === "exam_room") {
       state.filters.gradeName = "";
     }
-    resetForm(state.filters.configType);
-    await loadList();
-    if (state.rows.length > 0) {
-      await loadDetail(state.rows[0].id);
-    } else {
-      recalculateIntentAndDirty();
-    }
+    await loadInitial();
   }
 
   const viewState = readonly(
@@ -303,17 +264,16 @@ export function createClassConfigStore(service: ClassConfigService = classConfig
       selectedId: state.selectedId,
       detail: state.detail,
       editingId: state.editingId,
+      mode: state.mode,
       form: state.form,
-      classNameIntent: state.classNameIntent,
-      targetMatchId: state.targetMatchId,
-      originalClassName: state.originalClassName,
+      loadedClassName: state.loadedClassName,
       isDirty: state.isDirty,
-      isDirtyExceptClassName: state.isDirtyExceptClassName,
       errorMessage: state.errorMessage,
     })),
   );
 
   return {
+    loadInitial,
     loadList,
     loadDetail,
     create,
@@ -324,7 +284,7 @@ export function createClassConfigStore(service: ClassConfigService = classConfig
     setFormType,
     setFormField,
     toggleSubject,
-    startCreateFromClassName,
+    startCreate,
     get viewState() {
       return viewState.value;
     },

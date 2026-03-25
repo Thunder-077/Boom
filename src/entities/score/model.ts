@@ -19,6 +19,8 @@ export interface ScoreRow {
   className: string;
   gradeName: string;
   studentName: string;
+  subjectCombination: string;
+  language: string;
   totalScore: number;
   classRank: number;
   gradeRank: number;

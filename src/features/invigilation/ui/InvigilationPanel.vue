@@ -1,25 +1,26 @@
 <template>
   <section class="panel">
     <ConfigCard title="监考人数配置" description="统一设置每个考场所需监考老师个数，分配时自动按此规则执行。">
-      <div class="rule-row">
-        <label class="metric-field narrow">
-          <span class="metric-label">每个考场监考老师个数</span>
+      <label class="display-field count-field" for="exam-room-required-count">
+        <span class="field-label">每个考场监考老师个数</span>
+        <div class="field-value-row">
           <input
-            class="fluent-input"
+            id="exam-room-required-count"
+            class="value-input count-input"
             v-model.number="defaultExamRoomRequiredCount"
             type="number"
             min="1"
             @blur="saveConfig"
             @keyup.enter="saveConfig"
           />
-        </label>
-        <div class="rule-meta">当前规则将应用到考场分配、监考抽签与津贴结算。</div>
-      </div>
+          <strong class="field-value-text">人</strong>
+        </div>
+      </label>
     </ConfigCard>
 
-    <ConfigCard title="考试禁排设置" description="选择老师不参与某场考试的监考，系统在分配时自动跳过。">
+    <ConfigCard class="exclude-card-shell" title="考试禁排设置" description="选择老师不参与某场考试的监考，系统在分配时自动跳过。">
       <div class="exclude-toolbar">
-        <div class="fluent-combo" @focusin="showTeacherMenu = true" @focusout="hideTeacherMenu">
+        <div class="fluent-combo" :class="{ open: showTeacherMenu }" @focusin="showTeacherMenu = true" @focusout="hideTeacherMenu">
           <input class="fluent-input select-field" v-model="teacherKeyword" placeholder="选择教师" />
           <span class="material-symbols-rounded combo-icon">keyboard_arrow_down</span>
           <div v-if="showTeacherMenu" class="fluent-menu">
@@ -28,14 +29,16 @@
               :key="teacher.id"
               type="button"
               class="fluent-option"
+              :class="{ selected: teacher.id === selectedTeacherId }"
               @mousedown.prevent="pickTeacher(teacher.id, teacher.teacherName)"
             >
               {{ teacher.teacherName }}
             </button>
+            <div v-if="teacherOptions.length === 0" class="menu-empty">未找到匹配教师</div>
           </div>
         </div>
 
-        <div class="fluent-combo" @focusin="showSessionMenu = true" @focusout="hideSessionMenu">
+        <div class="fluent-combo" :class="{ open: showSessionMenu }" @focusin="showSessionMenu = true" @focusout="hideSessionMenu">
           <input class="fluent-input select-field" v-model="sessionKeyword" placeholder="选择考试场次" />
           <span class="material-symbols-rounded combo-icon">keyboard_arrow_down</span>
           <div v-if="showSessionMenu" class="fluent-menu">
@@ -44,26 +47,30 @@
               :key="session.sessionId"
               type="button"
               class="fluent-option"
+              :class="{ selected: session.sessionId === selectedSessionId }"
               @mousedown.prevent="pickSession(session.sessionId, session.label)"
             >
               {{ session.label }}
             </button>
+            <div v-if="sessionOptions.length === 0" class="menu-empty">未找到匹配场次</div>
           </div>
         </div>
       </div>
-      <div class="exclude-toolbar">
-        <button class="secondary-btn add-btn" type="button" @click="addExclusion">添加禁排</button>
+
+      <div v-if="store.viewState.staffExclusions.length === 0" class="exclude-empty">
+        <span>选择教师与考试场次后会自动加入禁排列表。</span>
       </div>
-      <div class="exclude-list">
+
+      <div v-else class="exclude-list">
         <div
           v-for="item in store.viewState.staffExclusions"
           :key="`${item.teacherId}-${item.sessionId}`"
           class="exclude-item"
         >
-          <span>{{ item.teacherName }}  -  不监考{{ item.sessionLabel }}</span>
+          <span class="exclude-text">{{ item.teacherName }}  -  不监考 {{ item.sessionLabel }}</span>
           <div class="exclude-right">
             <span class="danger-pill">已禁排</span>
-            <button class="icon-btn" type="button" @click="removeExclusion(item.teacherId, item.sessionId)">
+            <button class="icon-btn" type="button" title="删除禁排" @click="removeExclusion(item.teacherId, item.sessionId)">
               <span class="material-symbols-rounded" aria-hidden="true">delete</span>
             </button>
           </div>
@@ -71,35 +78,42 @@
       </div>
     </ConfigCard>
 
-    <div class="time-row">
-      <ConfigCard title="全员自习时间" description="独立配置全员自习时段，不与考试场次关联。">
-        <div class="self-study-grid">
-          <label class="metric-field short">
-            <span class="metric-label">科目</span>
-            <select class="fluent-input slim-field" v-model="selfStudySubject" @change="saveConfig">
-              <option v-for="item in selfStudySubjectOptions" :key="item.value" :value="item.value">
-                {{ item.label }}
-              </option>
-            </select>
-          </label>
-          <label class="metric-field short">
-            <span class="metric-label">开始时间</span>
-            <input class="fluent-input slim-field" type="time" v-model="selfStudyStartTime" @blur="saveConfig" />
-          </label>
-          <label class="metric-field short">
-            <span class="metric-label">结束时间</span>
-            <input class="fluent-input slim-field" type="time" v-model="selfStudyEndTime" @blur="saveConfig" />
-          </label>
-        </div>
+    <div class="split-row">
+      <ConfigCard title="全员自习时间" description="设置无需监考时段，系统默认全体教师可安排为自习值守。">
+        <label class="display-field self-study-field" for="self-study-start-time">
+          <span class="field-label">时间范围</span>
+          <div class="field-value-row">
+            <input
+              id="self-study-start-time"
+              class="value-input time-input"
+              type="text"
+              inputmode="numeric"
+              placeholder="12:10"
+              v-model="selfStudyStartTime"
+              @blur="saveConfig"
+              @keyup.enter="saveConfig"
+            />
+            <span class="field-value-text">-</span>
+            <input
+              class="value-input time-input"
+              type="text"
+              inputmode="numeric"
+              placeholder="13:40"
+              v-model="selfStudyEndTime"
+              @blur="saveConfig"
+              @keyup.enter="saveConfig"
+            />
+          </div>
+        </label>
       </ConfigCard>
 
       <ConfigCard title="监考津贴" description="分别设置场内与场外监考津贴单价，系统按分钟自动结算。">
         <div class="subsidy-row">
-          <label class="metric-field">
-            <span class="metric-label">场内监考津贴</span>
-            <div class="inline-unit">
+          <label class="display-field subsidy-field">
+            <span class="field-label">场内监考津贴</span>
+            <div class="field-value-row">
               <input
-                class="fluent-input unit-input"
+                class="value-input subsidy-input"
                 type="number"
                 min="0"
                 step="0.1"
@@ -107,14 +121,15 @@
                 @blur="saveConfig"
                 @keyup.enter="saveConfig"
               />
-              <span class="metric-value">元 / 分钟</span>
+              <strong class="field-value-text">元 / 分钟</strong>
             </div>
           </label>
-          <label class="metric-field">
-            <span class="metric-label">场外监考津贴</span>
-            <div class="inline-unit">
+
+          <label class="display-field subsidy-field">
+            <span class="field-label">场外监考津贴</span>
+            <div class="field-value-row">
               <input
-                class="fluent-input unit-input"
+                class="value-input subsidy-input"
                 type="number"
                 min="0"
                 step="0.1"
@@ -122,7 +137,7 @@
                 @blur="saveConfig"
                 @keyup.enter="saveConfig"
               />
-              <span class="metric-value">元 / 分钟</span>
+              <strong class="field-value-text">元 / 分钟</strong>
             </div>
           </label>
         </div>
@@ -131,12 +146,12 @@
 
     <ConfigCard>
       <div class="action-row">
-        <p>确认规则后即可分配监考老师，并在完成后导出监考表。</p>
+        <p class="action-text">确认规则后即可分配监考老师，并在完成后导出监考表。</p>
         <div class="action-buttons">
-          <button class="primary-btn" :disabled="store.viewState.assigning" @click="assignTeachers">
+          <button class="primary-btn action-btn" :disabled="store.viewState.assigning" @click="assignTeachers">
             {{ store.viewState.assigning ? "分配中..." : "分配监考老师" }}
           </button>
-          <button class="secondary-btn" :disabled="!store.viewState.staffOverview.generatedAt">导出监考表</button>
+          <button class="secondary-btn action-btn" :disabled="!store.viewState.staffOverview.generatedAt">导出监考表</button>
         </div>
       </div>
     </ConfigCard>
@@ -145,7 +160,6 @@
 
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from "vue";
-import { SUBJECT_LABELS } from "../../../entities/class-config/model";
 import { Subject } from "../../../entities/score/model";
 import ConfigCard from "../../../widgets/common/ConfigCard.vue";
 import { useExamAllocationStore } from "../../dashboard/store";
@@ -165,18 +179,6 @@ const selectedTeacherId = ref<number | null>(null);
 const selectedSessionId = ref<number | null>(null);
 const showTeacherMenu = ref(false);
 const showSessionMenu = ref(false);
-
-const selfStudySubjectOptions = [
-  Subject.Chinese,
-  Subject.Math,
-  Subject.English,
-  Subject.Physics,
-  Subject.Chemistry,
-  Subject.Biology,
-  Subject.Politics,
-  Subject.History,
-  Subject.Geography,
-].map((value) => ({ value, label: SUBJECT_LABELS[value] }));
 
 const teacherOptions = computed(() => {
   const keyword = teacherKeyword.value.trim();
@@ -209,12 +211,28 @@ function pickTeacher(id: number, name: string) {
   selectedTeacherId.value = id;
   teacherKeyword.value = name;
   showTeacherMenu.value = false;
+  void maybeAddExclusion();
 }
 
 function pickSession(sessionId: number, label: string) {
   selectedSessionId.value = sessionId;
   sessionKeyword.value = label;
   showSessionMenu.value = false;
+  void maybeAddExclusion();
+}
+
+async function maybeAddExclusion() {
+  if (!selectedTeacherId.value || !selectedSessionId.value) {
+    return;
+  }
+  const added = await store.addStaffExclusion(selectedTeacherId.value, selectedSessionId.value);
+  if (!added) {
+    return;
+  }
+  teacherKeyword.value = "";
+  sessionKeyword.value = "";
+  selectedTeacherId.value = null;
+  selectedSessionId.value = null;
 }
 
 function hideTeacherMenu() {
@@ -240,17 +258,6 @@ async function saveConfig() {
   });
 }
 
-async function addExclusion() {
-  if (!selectedTeacherId.value || !selectedSessionId.value) {
-    return;
-  }
-  await store.addStaffExclusion(selectedTeacherId.value, selectedSessionId.value);
-  teacherKeyword.value = "";
-  sessionKeyword.value = "";
-  selectedTeacherId.value = null;
-  selectedSessionId.value = null;
-}
-
 async function removeExclusion(teacherId: number, sessionId: number) {
   await store.removeStaffExclusion(teacherId, sessionId);
 }
@@ -266,51 +273,99 @@ onMounted(async () => {
 
 <style scoped>
 .panel {
+  position: relative;
+  isolation: isolate;
   display: flex;
   flex-direction: column;
-  gap: 14px;
+  gap: 20px;
 }
 
-.rule-row {
+.display-field {
+  min-height: 74px;
   display: flex;
-  gap: 16px;
+  flex-direction: column;
+  gap: 8px;
+  border: 1px solid var(--color-border-soft);
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.6);
+  padding: 12px 14px;
 }
 
-.narrow {
+.count-field {
   width: 320px;
 }
 
-.fluent-input {
-  width: 100%;
-  min-height: 42px;
-  border: 1px solid #d3dceb;
-  border-radius: 14px;
-  background: #ffffff;
-  padding: 0 12px;
-  font-size: 14px;
+.self-study-field {
+  width: 220px;
 }
 
-.fluent-input:focus {
+.field-label {
+  color: var(--color-text-muted);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.field-value-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.field-value-text {
+  color: var(--color-text);
+  font-size: 18px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.value-input {
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--color-text);
+  font-size: 18px;
+  font-weight: 600;
+  line-height: 1.2;
+}
+
+.value-input::-webkit-outer-spin-button,
+.value-input::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
+.value-input[type="number"] {
+  -moz-appearance: textfield;
+  appearance: textfield;
+}
+
+.value-input:focus {
   outline: none;
-  border-color: #0f6cbd;
-  box-shadow: 0 0 0 2px rgba(15, 108, 189, 0.18);
 }
 
-.rule-meta {
-  flex: 1;
-  min-height: 74px;
-  border: 1px solid #dce8f8;
-  border-radius: 16px;
-  background: #f7fbff;
-  padding: 12px 14px;
-  font-size: 14px;
-  line-height: 1.4;
+.count-input {
+  width: 18px;
+}
+
+.time-input {
+  width: 56px;
+}
+
+.subsidy-input {
+  width: 32px;
+}
+
+.exclude-card-shell {
+  position: relative;
+  z-index: 6;
 }
 
 .exclude-toolbar {
   display: flex;
   gap: 12px;
-  align-items: center;
+  flex-wrap: wrap;
 }
 
 .fluent-combo {
@@ -318,8 +373,38 @@ onMounted(async () => {
   position: relative;
 }
 
+.fluent-combo.open {
+  z-index: 20;
+}
+
+.fluent-input {
+  width: 100%;
+  min-height: 42px;
+  border: 1px solid #d8e4f2;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.92);
+  padding: 0 12px;
+  font-size: 14px;
+  color: var(--color-text);
+  transition:
+    border-color 0.18s ease,
+    box-shadow 0.18s ease,
+    background-color 0.18s ease;
+}
+
+.fluent-combo.open .fluent-input,
+.fluent-input:focus {
+  outline: none;
+  border-color: #b9d6ff;
+  box-shadow: 0 0 0 3px rgba(185, 214, 255, 0.32);
+  background: #ffffff;
+}
+
 .select-field {
   padding-right: 32px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .combo-icon {
@@ -338,11 +423,13 @@ onMounted(async () => {
   right: 0;
   max-height: 240px;
   overflow-y: auto;
-  border: 1px solid #d3dceb;
-  border-radius: 10px;
-  background: #ffffff;
-  box-shadow: 0 10px 24px rgba(35, 52, 78, 0.18);
-  z-index: 10;
+  padding: 6px;
+  border: 1px solid #d8e4f2;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.98);
+  box-shadow: 0 18px 40px rgba(35, 52, 78, 0.16);
+  backdrop-filter: blur(18px);
+  z-index: 24;
 }
 
 .fluent-option {
@@ -350,17 +437,45 @@ onMounted(async () => {
   text-align: left;
   border: 0;
   background: transparent;
+  min-height: 38px;
   padding: 8px 12px;
+  border-radius: 10px;
   font-size: 13px;
+  color: #334155;
+  font-weight: 500;
   cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  transition: background-color 0.18s ease, color 0.18s ease;
 }
 
 .fluent-option:hover {
-  background: #f2f7fd;
+  background: #eef5ff;
+  color: #0f6cbd;
 }
 
-.add-btn {
-  height: 42px;
+.fluent-option.selected {
+  background: #eaf3ff;
+  color: #0f6cbd;
+}
+
+.menu-empty {
+  padding: 10px 12px;
+  color: var(--color-text-muted);
+  font-size: 13px;
+}
+
+.exclude-empty {
+  min-height: 42px;
+  display: flex;
+  align-items: center;
+  border: 1px dashed #dce8f8;
+  border-radius: 14px;
+  background: rgba(247, 251, 255, 0.7);
+  padding: 10px 12px;
+  color: var(--color-text-muted);
+  font-size: 13px;
 }
 
 .exclude-list {
@@ -371,14 +486,19 @@ onMounted(async () => {
 
 .exclude-item {
   min-height: 44px;
-  border: 1px solid #dce8f8;
-  border-radius: 14px;
-  background: #f7fbff;
-  padding: 10px 12px;
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 12px;
+  border: 1px solid #dce8f8;
+  border-radius: 14px;
+  background: #f7fbff;
+  padding: 10px 12px;
+}
+
+.exclude-text {
+  min-width: 0;
+  color: var(--color-text);
   font-size: 14px;
 }
 
@@ -403,43 +523,16 @@ onMounted(async () => {
   font-size: 18px;
 }
 
-.time-row {
+.split-row {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 14px;
-}
-
-.short {
-  width: 180px;
-}
-
-.self-study-grid {
-  display: flex;
-  gap: 12px;
-}
-
-.slim-field {
-  min-height: 34px;
 }
 
 .subsidy-row {
-  display: flex;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 14px;
-}
-
-.subsidy-row > label {
-  flex: 1;
-}
-
-.inline-unit {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.unit-input {
-  width: 120px;
-  min-height: 34px;
 }
 
 .action-row {
@@ -449,9 +542,10 @@ onMounted(async () => {
   gap: 18px;
 }
 
-.action-row p {
+.action-text {
   width: 460px;
   margin: 0;
+  color: var(--color-text);
   font-size: 14px;
   line-height: 1.4;
 }
@@ -459,5 +553,48 @@ onMounted(async () => {
 .action-buttons {
   display: flex;
   gap: 12px;
+  flex-wrap: wrap;
+}
+
+.action-btn {
+  min-width: 148px;
+}
+
+.material-symbols-rounded {
+  font-family: "Material Symbols Rounded";
+}
+
+@media (max-width: 1100px) {
+  .split-row,
+  .subsidy-row {
+    grid-template-columns: 1fr;
+  }
+
+  .action-row {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .action-text {
+    width: auto;
+  }
+}
+
+@media (max-width: 720px) {
+  .count-field,
+  .self-study-field,
+  .fluent-combo {
+    width: 100%;
+  }
+
+  .exclude-item {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .exclude-right {
+    width: 100%;
+    justify-content: space-between;
+  }
 }
 </style>
