@@ -44,11 +44,26 @@
             <tbody>
               <tr v-for="item in store.viewState.sessionTimes" :key="item.sessionId">
                 <td>{{ SUBJECT_LABELS[item.subject] }}</td>
-                <td>{{ formatMonthDay(item.startAt) }}</td>
-                <td>
+                <td class="date-cell" :class="{ editing: dateEditState.sessionId === item.sessionId }" @dblclick="beginDateEdit(item.sessionId)">
+                  <input
+                    v-if="dateEditState.sessionId === item.sessionId"
+                    v-model.trim="dateEditState.value"
+                    class="month-day-input inline-edit"
+                    type="text"
+                    placeholder="03-24"
+                    autofocus
+                    @blur="commitDateEdit(item.sessionId)"
+                    @keydown.enter.prevent="commitDateEdit(item.sessionId)"
+                    @keydown.esc.prevent="cancelDateEdit"
+                  />
+                  <button v-else class="date-display-btn" type="button" @dblclick.stop="beginDateEdit(item.sessionId)">
+                    {{ formatMonthDay(store.viewState.sessionTimeDrafts[item.sessionId]?.startAt || item.startAt) }}
+                  </button>
+                </td>
+                <td class="time-cell">
                   <input class="time-input" type="time" :value="formatTimeInput(store.viewState.sessionTimeDrafts[item.sessionId]?.startAt)" @input="onTimeInput(item.sessionId, 'startAt', $event)" />
                 </td>
-                <td>
+                <td class="time-cell">
                   <input class="time-input" type="time" :value="formatTimeInput(store.viewState.sessionTimeDrafts[item.sessionId]?.endAt)" @input="onTimeInput(item.sessionId, 'endAt', $event)" />
                 </td>
                 <td>
@@ -135,7 +150,7 @@
           </div>
           <div class="complete-action">
             <button class="primary-btn export-btn" :disabled="store.viewState.exporting || !store.viewState.overview.generatedAt" @click="exportBundle">
-              {{ store.viewState.exporting ? "打包中..." : "打包导出 ZIP" }}
+              {{ store.viewState.exporting ? "打包中..." : "导出分配结果" }}
             </button>
           </div>
         </div>
@@ -171,6 +186,10 @@ const capacityForm = reactive({
 });
 const SUBJECT_OPTIONS: Subject[] = Object.values(Subject);
 const manualSubjectRows = reactive<Array<{ id: number; subject: Subject; examMonthDay: string; startTime: string; endTime: string }>>([]);
+const dateEditState = reactive<{ sessionId: number | null; value: string }>({
+  sessionId: null,
+  value: "",
+});
 let manualSubjectRowId = 1;
 
 const progressPercent = computed(() => {
@@ -376,6 +395,50 @@ function onTimeInput(sessionId: number, field: "startAt" | "endAt", event: Event
   store.setSessionTimeDraft(sessionId, field, `${datePart}T${raw}`);
 }
 
+function beginDateEdit(sessionId: number) {
+  const current = store.viewState.sessionTimeDrafts[sessionId];
+  const fromStart = formatMonthDay(current?.startAt);
+  const fromEnd = formatMonthDay(current?.endAt);
+  const monthDay = fromStart !== "--" ? fromStart : fromEnd;
+  dateEditState.sessionId = sessionId;
+  dateEditState.value = monthDay === "--" ? "" : monthDay;
+}
+
+function cancelDateEdit() {
+  dateEditState.sessionId = null;
+  dateEditState.value = "";
+}
+
+function commitDateEdit(sessionId: number) {
+  if (dateEditState.sessionId !== sessionId) {
+    return;
+  }
+  const normalized = normalizeMonthDay(dateEditState.value);
+  if (!normalized) {
+    cancelDateEdit();
+    return;
+  }
+  const fallbackDate = getDraftDate(sessionId);
+  const targetDate = resolveFullDateFromMonthDay(normalized, fallbackDate);
+  const draft = store.viewState.sessionTimeDrafts[sessionId];
+  const startTime = formatTimeInput(draft?.startAt) || "08:00";
+  const endTime = formatTimeInput(draft?.endAt) || "10:00";
+  store.setSessionTimeDraft(sessionId, "startAt", `${targetDate}T${startTime}`);
+  store.setSessionTimeDraft(sessionId, "endAt", `${targetDate}T${endTime}`);
+  cancelDateEdit();
+}
+
+function onGlobalPointerDown(event: PointerEvent) {
+  if (dateEditState.sessionId === null) {
+    return;
+  }
+  const target = event.target as HTMLElement | null;
+  if (target?.closest(".date-cell.editing")) {
+    return;
+  }
+  commitDateEdit(dateEditState.sessionId);
+}
+
 async function persistDrafts() {
   const examNotices = capacityForm.examNoticesText
     .split(/\r?\n/)
@@ -451,10 +514,12 @@ onMounted(async () => {
   capacityForm.examTitle = store.viewState.settings.examTitle ?? "";
   capacityForm.examNoticesText = (store.viewState.settings.examNotices ?? []).join("\n");
   window.addEventListener("keydown", onGlobalKeydown);
+  window.addEventListener("pointerdown", onGlobalPointerDown, true);
 });
 
 onUnmounted(() => {
   window.removeEventListener("keydown", onGlobalKeydown);
+  window.removeEventListener("pointerdown", onGlobalPointerDown, true);
 });
 </script>
 
@@ -708,6 +773,8 @@ onUnmounted(() => {
   width: 88px;
   border: 0;
   background: transparent;
+  border-radius: 8px;
+  padding: 4px 8px;
 }
 
 .month-day-input {
@@ -716,13 +783,54 @@ onUnmounted(() => {
   background: transparent;
 }
 
+.month-day-input.inline-edit {
+  width: 84px;
+  border: 1px solid #b9d6ff;
+  border-radius: 8px;
+  background: #f4f9ff;
+  padding: 4px 8px;
+  box-shadow: 0 0 0 2px rgba(185, 214, 255, 0.35);
+}
+
 .time-input:focus {
   outline: none;
+  border: 1px solid #b9d6ff;
+  background: #f4f9ff;
+  box-shadow: 0 0 0 2px rgba(185, 214, 255, 0.35);
 }
 
 .month-day-input:focus {
   outline: none;
 }
+
+.date-cell {
+  width: 110px;
+  border-radius: 10px;
+  transition: background-color 0.15s ease;
+}
+
+.date-cell.editing {
+  background: #eef5ff;
+}
+
+.date-display-btn {
+  border: 0;
+  background: transparent;
+  color: var(--color-text);
+  font: inherit;
+  cursor: text;
+  padding: 0;
+}
+
+.time-cell {
+  border-radius: 10px;
+  transition: background-color 0.15s ease;
+}
+
+.time-cell:focus-within {
+  background: #eef5ff;
+}
+
 
 .manual-subject-row {
   display: flex;

@@ -80,25 +80,6 @@ pub struct ExamSessionTimeUpsert {
     pub end_at: String,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct SpaceStaffRequirement {
-    session_id: i64,
-    space_id: Option<i64>,
-    space_name: String,
-    role: StaffRole,
-    required_count: i64,
-    floor: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct SpaceStaffRequirementUpsert {
-    pub space_id: i64,
-    pub role: StaffRole,
-    pub required_count: i64,
-}
-
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct GenerateLatestExamStaffPlanResult {
@@ -173,37 +154,25 @@ pub struct TeacherDutyStat {
     is_middle_manager: bool,
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
-#[serde(rename_all = "camelCase")]
-pub struct InvigilationConfig {
+#[derive(Debug, Clone)]
+struct RuntimeInvigilationConfig {
     default_exam_room_required_count: i64,
     indoor_allowance_per_minute: f64,
     outdoor_allowance_per_minute: f64,
-    updated_at: String,
 }
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct UpdateInvigilationConfigPayload {
+pub struct GenerateExamStaffPlanPayload {
     pub default_exam_room_required_count: i64,
     pub indoor_allowance_per_minute: f64,
     pub outdoor_allowance_per_minute: f64,
-}
-
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ExamStaffExclusion {
-    id: i64,
-    teacher_id: i64,
-    teacher_name: String,
-    session_id: i64,
-    session_label: String,
-    created_at: String,
+    pub staff_exclusions: Vec<GenerateExamStaffPlanExclusion>,
 }
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct CreateExamStaffExclusionPayload {
+pub struct GenerateExamStaffPlanExclusion {
     pub teacher_id: i64,
     pub session_id: i64,
 }
@@ -434,33 +403,8 @@ fn subject_chain_from_text(value: &str) -> Vec<Subject> {
         .collect()
 }
 
-fn default_requirement_for_role(_role: StaffRole) -> i64 {
-    1
-}
-
 fn round_to_two(value: f64) -> f64 {
     (value * 100.0).round() / 100.0
-}
-
-fn load_invigilation_config(conn: &Connection) -> Result<InvigilationConfig, AppError> {
-    let config = conn.query_row(
-        "SELECT default_exam_room_required_count, indoor_allowance_per_minute, outdoor_allowance_per_minute, updated_at FROM invigilation_config WHERE id = 1",
-        [],
-        |row| {
-            Ok(InvigilationConfig {
-                default_exam_room_required_count: row.get(0)?,
-                indoor_allowance_per_minute: row.get(1)?,
-                outdoor_allowance_per_minute: row.get(2)?,
-                updated_at: row.get(3)?,
-            })
-        },
-    )?;
-    Ok(InvigilationConfig {
-        default_exam_room_required_count: config.default_exam_room_required_count.max(1),
-        indoor_allowance_per_minute: config.indoor_allowance_per_minute.max(0.0),
-        outdoor_allowance_per_minute: config.outdoor_allowance_per_minute.max(0.0),
-        updated_at: config.updated_at,
-    })
 }
 
 fn build_session_label(
@@ -490,22 +434,31 @@ fn build_session_label(
     )
 }
 
-fn load_exclusion_pairs(conn: &Connection) -> Result<HashSet<(i64, i64)>, AppError> {
-    let mut stmt = conn.prepare("SELECT teacher_id, session_id FROM exam_staff_exclusions")?;
-    let rows = stmt.query_map([], |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?)))?;
-    let mut pairs = HashSet::new();
-    for row in rows {
-        pairs.insert(row?);
-    }
-    Ok(pairs)
-}
-
-fn allowance_rate_for_role(config: &InvigilationConfig, role: StaffRole) -> f64 {
+fn allowance_rate_for_role(config: &RuntimeInvigilationConfig, role: StaffRole) -> f64 {
     match role {
         StaffRole::ExamRoomInvigilator | StaffRole::SelfStudySupervisor => {
             config.indoor_allowance_per_minute
         }
         StaffRole::FloorRover => config.outdoor_allowance_per_minute,
+    }
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct InvigilationExclusionSessionOption {
+    session_id: i64,
+    grade_name: String,
+    subject: Subject,
+    start_at: String,
+    end_at: String,
+    label: String,
+}
+
+fn build_config_from_payload(payload: &GenerateExamStaffPlanPayload) -> RuntimeInvigilationConfig {
+    RuntimeInvigilationConfig {
+        default_exam_room_required_count: payload.default_exam_room_required_count.max(1),
+        indoor_allowance_per_minute: payload.indoor_allowance_per_minute.max(0.0),
+        outdoor_allowance_per_minute: payload.outdoor_allowance_per_minute.max(0.0),
     }
 }
 
@@ -735,35 +688,9 @@ fn load_class_subject_map(
 }
 
 fn load_exam_room_requirement(
-    conn: &Connection,
-    session_id: i64,
-    space_id: i64,
     default_count: i64,
 ) -> Result<i64, AppError> {
-    let value: Option<i64> = conn
-        .query_row(
-            "SELECT required_count FROM exam_space_staff_requirements WHERE session_id = ?1 AND space_id = ?2 AND role = ?3",
-            params![session_id, space_id, StaffRole::ExamRoomInvigilator.as_key()],
-            |row| row.get(0),
-        )
-        .ok();
-    Ok(value.unwrap_or(default_count).max(1))
-}
-
-fn load_space_requirement(
-    conn: &Connection,
-    session_id: i64,
-    space_id: i64,
-    role: StaffRole,
-) -> Result<i64, AppError> {
-    let value: Option<i64> = conn
-        .query_row(
-            "SELECT required_count FROM exam_space_staff_requirements WHERE session_id = ?1 AND space_id = ?2 AND role = ?3",
-            params![session_id, space_id, role.as_key()],
-            |row| row.get(0),
-        )
-        .ok();
-    Ok(value.unwrap_or(default_requirement_for_role(role)).max(1))
+    Ok(default_count.max(1))
 }
 
 fn overlap(a_start: i64, a_end: i64, b_start: i64, b_end: i64) -> bool {
@@ -1119,12 +1046,12 @@ fn apply_assignment_to_runtime(state: &mut TeacherRuntimeState, task: &TaskBuild
 
 fn generate_latest_exam_staff_plan_internal(
     conn: &mut Connection,
+    invigilation_config: RuntimeInvigilationConfig,
+    exclusion_pairs: HashSet<(i64, i64)>,
 ) -> Result<GenerateLatestExamStaffPlanResult, AppError> {
     let session_times = load_session_times_runtime(conn)?;
     let teachers = load_teacher_pool(conn)?;
     let class_subject_map = load_class_subject_map(conn)?;
-    let invigilation_config = load_invigilation_config(conn)?;
-    let exclusion_pairs = load_exclusion_pairs(conn)?;
 
     let mut sessions_by_grade: HashMap<String, Vec<SessionTimeRuntime>> = HashMap::new();
     for session in &session_times {
@@ -1164,9 +1091,6 @@ fn generate_latest_exam_staff_plan_internal(
             match space_type {
                 SpaceType::ExamRoom => {
                     let required = load_exam_room_requirement(
-                        conn,
-                        session.session_id,
-                        *space_id,
                         invigilation_config.default_exam_room_required_count,
                     )?;
                     for _ in 0..required {
@@ -1505,243 +1429,44 @@ pub fn delete_exam_session_time(
     result.map_err(|error| error.to_string())
 }
 
-pub fn get_invigilation_config(app: AppHandle) -> Result<InvigilationConfig, String> {
-    let result = (|| -> Result<InvigilationConfig, AppError> {
-        let conn = score::open_connection(&app)?;
-        exam_allocation::ensure_schema(&conn)?;
-        load_invigilation_config(&conn)
-    })();
-    result.map_err(|error| error.to_string())
-}
-
-pub fn update_invigilation_config(
-    app: AppHandle,
-    payload: UpdateInvigilationConfigPayload,
-) -> Result<SuccessResponse, String> {
-    let result = (|| -> Result<SuccessResponse, AppError> {
-        if payload.default_exam_room_required_count <= 0 {
-            return Err(AppError::new("每场监考老师数必须大于 0"));
-        }
-        if payload.indoor_allowance_per_minute < 0.0 || payload.outdoor_allowance_per_minute < 0.0
-        {
-            return Err(AppError::new("津贴单价不能小于 0"));
-        }
-        let conn = score::open_connection(&app)?;
-        exam_allocation::ensure_schema(&conn)?;
-        let now = Utc::now().to_rfc3339();
-        conn.execute(
-            "UPDATE invigilation_config SET default_exam_room_required_count = ?1, indoor_allowance_per_minute = ?2, outdoor_allowance_per_minute = ?3, updated_at = ?4 WHERE id = 1",
-            params![
-                payload.default_exam_room_required_count,
-                payload.indoor_allowance_per_minute,
-                payload.outdoor_allowance_per_minute,
-                now
-            ],
-        )?;
-        Ok(SuccessResponse::ok())
-    })();
-    result.map_err(|error| error.to_string())
-}
-
-pub fn list_exam_staff_exclusions(app: AppHandle) -> Result<Vec<ExamStaffExclusion>, String> {
-    let result = (|| -> Result<Vec<ExamStaffExclusion>, AppError> {
-        let conn = score::open_connection(&app)?;
-        exam_allocation::ensure_schema(&conn)?;
-        let mut stmt = conn.prepare(
-            "SELECT id, teacher_id, teacher_name, session_id, session_label, created_at FROM exam_staff_exclusions ORDER BY id DESC",
-        )?;
-        let rows = stmt.query_map([], |row| {
-            Ok(ExamStaffExclusion {
-                id: row.get(0)?,
-                teacher_id: row.get(1)?,
-                teacher_name: row.get(2)?,
-                session_id: row.get(3)?,
-                session_label: row.get(4)?,
-                created_at: row.get(5)?,
-            })
-        })?;
-        let mut items = Vec::new();
-        for row in rows {
-            items.push(row?);
-        }
-        Ok(items)
-    })();
-    result.map_err(|error| error.to_string())
-}
-
-pub fn create_exam_staff_exclusion(
-    app: AppHandle,
-    payload: CreateExamStaffExclusionPayload,
-) -> Result<SuccessResponse, String> {
-    let result = (|| -> Result<SuccessResponse, AppError> {
-        let conn = score::open_connection(&app)?;
-        exam_allocation::ensure_schema(&conn)?;
-        let teacher_name: String = conn.query_row(
-            "SELECT teacher_name FROM latest_teachers_v2 WHERE id = ?1",
-            params![payload.teacher_id],
-            |row| row.get(0),
-        )?;
-        let (grade_name, subject_key, start_at, end_at): (String, String, String, String) =
-            conn.query_row(
-                r#"
-                SELECT s.grade_name, s.subject, COALESCE(t.start_at, tpl.start_at), COALESCE(t.end_at, tpl.end_at)
-                FROM latest_exam_plan_sessions s
-                LEFT JOIN exam_session_times t ON t.session_id = s.id
-                LEFT JOIN exam_subject_time_templates tpl ON tpl.subject = s.subject
-                WHERE s.id = ?1
-                "#,
-                params![payload.session_id],
-                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
-            )?;
-        let subject = Subject::from_key(&subject_key)
-            .ok_or_else(|| AppError::new(format!("未知科目: {subject_key}")))?;
-        let session_label = build_session_label(&grade_name, subject, &start_at, &end_at);
-        let now = Utc::now().to_rfc3339();
-        conn.execute(
-            r#"
-            INSERT INTO exam_staff_exclusions (teacher_id, teacher_name, session_id, session_label, created_at)
-            VALUES (?1, ?2, ?3, ?4, ?5)
-            ON CONFLICT(teacher_id, session_id) DO UPDATE SET
-                teacher_name = excluded.teacher_name,
-                session_label = excluded.session_label,
-                created_at = excluded.created_at
-            "#,
-            params![
-                payload.teacher_id,
-                teacher_name,
-                payload.session_id,
-                session_label,
-                now
-            ],
-        )?;
-        Ok(SuccessResponse::ok())
-    })();
-    result.map_err(|error| error.to_string())
-}
-
-pub fn delete_exam_staff_exclusion(app: AppHandle, id: i64) -> Result<SuccessResponse, String> {
-    let result = (|| -> Result<SuccessResponse, AppError> {
-        let conn = score::open_connection(&app)?;
-        exam_allocation::ensure_schema(&conn)?;
-        conn.execute("DELETE FROM exam_staff_exclusions WHERE id = ?1", params![id])?;
-        Ok(SuccessResponse::ok())
-    })();
-    result.map_err(|error| error.to_string())
-}
-
-pub fn list_exam_space_staff_requirements(
-    app: AppHandle,
-    session_id: i64,
-) -> Result<Vec<SpaceStaffRequirement>, String> {
-    let result = (|| -> Result<Vec<SpaceStaffRequirement>, AppError> {
-        let conn = score::open_connection(&app)?;
-        exam_allocation::ensure_schema(&conn)?;
-        let spaces = load_spaces_for_session(&conn, session_id)?;
-        let mut items = Vec::new();
-        let mut floors = HashSet::new();
-        for (space_id, space_type, space_name, _, floor) in spaces {
-            floors.insert(floor.clone());
-            match space_type {
-                SpaceType::ExamRoom => {
-                    items.push(SpaceStaffRequirement {
-                        session_id,
-                        space_id: Some(space_id),
-                        space_name,
-                        role: StaffRole::ExamRoomInvigilator,
-                        required_count: load_space_requirement(
-                            &conn,
-                            session_id,
-                            space_id,
-                            StaffRole::ExamRoomInvigilator,
-                        )?,
-                        floor: Some(floor),
-                    });
-                }
-                SpaceType::SelfStudyRoom => {
-                    items.push(SpaceStaffRequirement {
-                        session_id,
-                        space_id: Some(space_id),
-                        space_name,
-                        role: StaffRole::SelfStudySupervisor,
-                        required_count: load_space_requirement(
-                            &conn,
-                            session_id,
-                            space_id,
-                            StaffRole::SelfStudySupervisor,
-                        )?,
-                        floor: Some(floor),
-                    });
-                }
-            }
-        }
-        let mut sorted_floors: Vec<String> = floors.into_iter().collect();
-        sorted_floors.sort();
-        for floor in sorted_floors {
-            items.push(SpaceStaffRequirement {
-                session_id,
-                space_id: None,
-                space_name: format!("{} 楼层流动", floor),
-                role: StaffRole::FloorRover,
-                required_count: 1,
-                floor: Some(floor),
-            });
-        }
-        Ok(items)
-    })();
-    result.map_err(|error| error.to_string())
-}
-
-pub fn upsert_exam_space_staff_requirements(
-    app: AppHandle,
-    session_id: i64,
-    items: Vec<SpaceStaffRequirementUpsert>,
-) -> Result<SuccessResponse, String> {
-    let result = (|| -> Result<SuccessResponse, AppError> {
-        let mut conn = score::open_connection(&app)?;
-        exam_allocation::ensure_schema(&conn)?;
-        let tx = conn.transaction()?;
-        let now = Utc::now().to_rfc3339();
-        for item in items {
-            if item.required_count <= 0 {
-                return Err(AppError::new("岗位人数必须大于 0"));
-            }
-            let exists: i64 = tx
-                .query_row(
-                    "SELECT COUNT(*) FROM latest_exam_plan_spaces WHERE id = ?1 AND session_id = ?2",
-                    params![item.space_id, session_id],
-                    |row| row.get(0),
-                )
-                .unwrap_or(0);
-            if exists == 0 {
-                return Err(AppError::new(format!(
-                    "space {} 不属于 session {}",
-                    item.space_id, session_id
-                )));
-            }
-            tx.execute(
-                r#"
-                INSERT INTO exam_space_staff_requirements (session_id, space_id, role, required_count, updated_at)
-                VALUES (?1, ?2, ?3, ?4, ?5)
-                ON CONFLICT(session_id, space_id, role) DO UPDATE SET
-                    required_count = excluded.required_count,
-                    updated_at = excluded.updated_at
-                "#,
-                params![session_id, item.space_id, item.role.as_key(), item.required_count, now],
-            )?;
-        }
-        tx.commit()?;
-        Ok(SuccessResponse::ok())
-    })();
-    result.map_err(|error| error.to_string())
-}
-
 pub fn generate_latest_exam_staff_plan(
     app: AppHandle,
+    payload: GenerateExamStaffPlanPayload,
 ) -> Result<GenerateLatestExamStaffPlanResult, String> {
     let result = (|| -> Result<GenerateLatestExamStaffPlanResult, AppError> {
         let mut conn = score::open_connection(&app)?;
         exam_allocation::ensure_schema(&conn)?;
-        generate_latest_exam_staff_plan_internal(&mut conn)
+        let config = build_config_from_payload(&payload);
+        let exclusion_pairs = payload
+            .staff_exclusions
+            .iter()
+            .filter(|item| item.teacher_id > 0 && item.session_id > 0)
+            .map(|item| (item.teacher_id, item.session_id))
+            .collect::<HashSet<_>>();
+        generate_latest_exam_staff_plan_internal(&mut conn, config, exclusion_pairs)
+    })();
+    result.map_err(|error| error.to_string())
+}
+
+pub fn list_invigilation_exclusion_session_options(
+    app: AppHandle,
+) -> Result<Vec<InvigilationExclusionSessionOption>, String> {
+    let result = (|| -> Result<Vec<InvigilationExclusionSessionOption>, AppError> {
+        let conn = score::open_connection(&app)?;
+        exam_allocation::ensure_schema(&conn)?;
+        let rows = load_session_times_runtime(&conn)?;
+        let mut items = Vec::new();
+        for row in rows {
+            items.push(InvigilationExclusionSessionOption {
+                session_id: row.session_id,
+                grade_name: row.grade_name.clone(),
+                subject: row.subject,
+                start_at: row.start_at.clone(),
+                end_at: row.end_at.clone(),
+                label: build_session_label(&row.grade_name, row.subject, &row.start_at, &row.end_at),
+            });
+        }
+        Ok(items)
     })();
     result.map_err(|error| error.to_string())
 }
@@ -2361,11 +2086,10 @@ mod tests {
 
     #[test]
     fn test_allowance_rate_mapping() {
-        let config = InvigilationConfig {
+        let config = RuntimeInvigilationConfig {
             default_exam_room_required_count: 1,
             indoor_allowance_per_minute: 0.5,
             outdoor_allowance_per_minute: 0.3,
-            updated_at: "2026-03-24T10:00:00Z".to_string(),
         };
         assert_eq!(
             allowance_rate_for_role(&config, StaffRole::ExamRoomInvigilator),

@@ -4784,9 +4784,9 @@
                 {
                   "type": "frame",
                   "id": "z7Tbb",
-                  "name": "classPicker",
+                  "name": "classSearchCard",
                   "width": "fill_container",
-                  "height": 74,
+                  "height": 84,
                   "fill": "#FFFFFFB8",
                   "cornerRadius": 18,
                   "stroke": {
@@ -4811,16 +4811,17 @@
                     }
                   ],
                   "padding": [
-                    0,
+                    12,
                     18
                   ],
-                  "justifyContent": "space_between",
+                  "justifyContent": "center",
                   "alignItems": "center",
                   "children": [
                     {
                       "type": "frame",
                       "id": "xoQSs",
                       "name": "classPickerLeft",
+                      "width": "fill_container",
                       "layout": "vertical",
                       "gap": 6,
                       "children": [
@@ -4829,7 +4830,7 @@
                           "id": "ayp5x",
                           "name": "classPickerLabel",
                           "fill": "$color-text-muted",
-                          "content": "当前配置班级",
+                          "content": "查询班级",
                           "fontFamily": "Inter",
                           "fontSize": 13,
                           "fontWeight": "600"
@@ -4838,7 +4839,7 @@
                           "type": "frame",
                           "id": "6QKgd",
                           "name": "classNameInput",
-                          "width": 360,
+                          "width": 380,
                           "height": 44,
                           "fill": "#FFFFFF96",
                           "cornerRadius": 14,
@@ -4855,123 +4856,142 @@
                           "alignItems": "center",
                           "children": [
                             {
-                              "type": "frame",
-                              "id": "CtWXN",
-                              "name": "inputTextContainer",
-                              "width": "fill_container",
-                              "height": 44,
-                              "layout": "vertical",
-                              "justifyContent": "center",
-                              "children": [
-                                {
-                                  "type": "text",
-                                  "id": "AdDtZ",
-                                  "name": "inputText",
-                                  "fill": "#1C1F23",
-                                  "content": "高一3班",
-                                  "fontFamily": "Inter",
-                                  "fontSize": 18,
-                                  "fontWeight": "700"
-                                }
-                              ]
-                            },
-                            {
-                              "type": "frame",
-                              "id": "C05SA",
-                              "name": "statusTagContainer",
-                              "height": 44,
-                              "layout": "vertical",
-                              "padding": [
-                                0,
-                                4
-                              ],
-                              "justifyContent": "center",
-                              "children": [
-                                {
-                                  "type": "frame",
-                                  "id": "iU8X5",
-                                  "name": "renameTag",
-                                  "height": 28,
-                                  "fill": "#FFF3E0",
-                                  "cornerRadius": 999,
-                                  "layout": "vertical",
-                                  "padding": [
-                                    0,
-                                    10
-                                  ],
-                                  "justifyContent": "center",
-                                  "alignItems": "center",
-                                  "children": [
-                                    {
-                                      "type": "text",
-                                      "id": "WC8p9",
-                                      "name": "renameTagText",
-                                      "fill": "#A15C00",
-                                      "content": "重命名",
-                                      "fontFamily": "Inter",
-                                      "fontSize": 12,
-                                      "fontWeight": "600"
-                                    }
-                                  ]
-                                }
-                              ]
+                              "type": "text",
+                              "id": "JcoR7",
+                              "name": "searchInputText",
+                              "fill": "#667085",
+                              "content": "请输入班级名称",
+                              "fontFamily": "Inter",
+                              "fontSize": 16,
+                              "fontWeight": "normal"
                             }
                           ]
                         }
                       ]
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "nrgZK",
+                  "name": "currentClassCard",
+                  "width": "fill_container",
+                  "fill": "#FFFFFFCC",
+                  "cornerRadius": 20,
+                  "stroke": {
+                    "align": "inside",
+                    "thickness": 1,
+                    "fill": "#FFFFFFE0"
+                  },
+                  "effect": [
+                    {
+                      "type": "background_blur",
+                      "radius": 22
+                    },
+                    {
+                      "type": "shadow",
+                      "shadowType": "outer",
+                      "color": "#97A9C21A",
+                      "offset": {
+                        "x": 0,
+                        "y": 14
+                      },
+                      "blur": 34
+                    }
+                  ],
+                  "layout": "vertical",
+                  "gap": 14,
+                  "padding": 22,
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "VTBpU",
+                      "name": "currentClassTitle",
+                      "fill": "$color-text",
+                      "content": "当前配置班级",
+                      "fontFamily": "Inter",
+                      "fontSize": 22,
+                      "fontWeight": "600"
                     },
                     {
                       "type": "frame",
-                      "id": "JIyiY",
-                      "name": "saveConfigBtn",
-                      "width": 132,
-                      "height": 40,
-                      "fill": {
-                        "type": "gradient",
-                        "gradientType": "linear",
-                        "enabled": true,
-                        "rotation": 135,
-                        "size": {
-                          "height": 1
-                        },
-                        "colors": [
-                          {
-                            "color": "#0F6CBD",
-                            "position": 0
-                          },
-                          {
-                            "color": "#2E86DE",
-                            "position": 1
-                          }
-                        ]
-                      },
-                      "cornerRadius": 14,
-                      "effect": {
-                        "type": "shadow",
-                        "shadowType": "outer",
-                        "color": "#0F6CBD26",
-                        "offset": {
-                          "x": 0,
-                          "y": 10
-                        },
-                        "blur": 18
-                      },
-                      "padding": [
-                        0,
-                        18
-                      ],
-                      "justifyContent": "center",
+                      "id": "z3A0F",
+                      "name": "currentClassInputArea",
+                      "width": "fill_container",
+                      "justifyContent": "space_between",
                       "alignItems": "center",
                       "children": [
                         {
-                          "type": "text",
-                          "id": "B8cgT",
-                          "name": "saveBtnText",
-                          "fill": "#FFFFFF",
-                          "content": "保存配置",
-                          "fontFamily": "Inter",
-                          "fontSize": 14,
-                          "fontWeight": "700"
+                          "type": "frame",
+                          "id": "n6pZs",
+                          "name": "classNameInput2",
+                          "width": 400,
+                          "height": 44,
+                          "fill": "#FFFFFF96",
+                          "cornerRadius": 14,
+                          "stroke": {
+                            "align": "inside",
+                            "thickness": 1,
+                            "fill": "#E9F0F8"
+                          },
+                          "padding": [
+                            0,
+                            14
+                          ],
+                          "justifyContent": "space_between",
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "XlUyQ",
+                              "name": "classNameInputText2",
+                              "fill": "#1C1F23",
+                              "content": "高一3班",
+                              "fontFamily": "Inter",
+                              "fontSize": 18,
+                              "fontWeight": "700"
+                            }
+                          ]
+                        },
+                        {
+                          "type": "frame",
+                          "id": "qzmFJ",
+                          "name": "deleteBtn",
+                          "width": 100,
+                          "height": 40,
+                          "fill": "#FFF5F5",
+                          "cornerRadius": 14,
+                          "stroke": {
+                            "align": "inside",
+                            "thickness": 1,
+                            "fill": "#D1343833"
+                          },
+                          "gap": 8,
+                          "justifyContent": "center",
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "icon_font",
+                              "id": "pkf7B",
+                              "name": "deleteBtnIcon",
+                              "width": 20,
+                              "height": 20,
+                              "iconFontName": "delete",
+                              "iconFontFamily": "Material Symbols Rounded",
+                              "weight": 400,
+                              "fill": "#D13438"
+                            },
+                            {
+                              "type": "text",
+                              "id": "54JvF",
+                              "name": "deleteBtnText",
+                              "fill": "#D13438",
+                              "content": "删除",
+                              "fontFamily": "Inter",
+                              "fontSize": 14,
+                              "fontWeight": "600"
+                            }
+                          ]
                         }
                       ]
                     }
@@ -5345,308 +5365,59 @@
                       ]
                     }
                   ]
-                }
-              ]
-            },
-            {
-              "type": "frame",
-              "id": "gIlsH",
-              "name": "statusExamplesArea",
-              "width": "fill_container",
-              "fill": "#FFFFFFB8",
-              "cornerRadius": 20,
-              "stroke": {
-                "align": "inside",
-                "thickness": 1,
-                "fill": "#FFFFFFD8"
-              },
-              "effect": [
-                {
-                  "type": "background_blur",
-                  "radius": 20
-                },
-                {
-                  "type": "shadow",
-                  "shadowType": "outer",
-                  "color": "#97A9C21A",
-                  "offset": {
-                    "x": 0,
-                    "y": 12
-                  },
-                  "blur": 30
-                }
-              ],
-              "layout": "vertical",
-              "gap": 16,
-              "padding": 18,
-              "children": [
-                {
-                  "type": "text",
-                  "id": "0Lo2K",
-                  "name": "examplesTitle",
-                  "fill": "$color-text",
-                  "content": "状态标签示例",
-                  "fontFamily": "Inter",
-                  "fontSize": 18,
-                  "fontWeight": "600"
-                },
-                {
-                  "type": "text",
-                  "id": "G7vy2",
-                  "name": "examplesDesc",
-                  "fill": "$color-text-muted",
-                  "content": "根据输入内容，系统会显示不同的状态标签",
-                  "fontFamily": "Inter",
-                  "fontSize": 13,
-                  "fontWeight": "normal"
                 },
                 {
                   "type": "frame",
-                  "id": "tw8iL",
-                  "name": "examplesRow",
-                  "width": "fill_container",
-                  "gap": 20,
+                  "id": "JIyiY",
+                  "name": "saveConfigBtn",
+                  "width": 132,
+                  "height": 40,
+                  "fill": {
+                    "type": "gradient",
+                    "gradientType": "linear",
+                    "enabled": true,
+                    "rotation": 135,
+                    "size": {
+                      "height": 1
+                    },
+                    "colors": [
+                      {
+                        "color": "#0F6CBD",
+                        "position": 0
+                      },
+                      {
+                        "color": "#2E86DE",
+                        "position": 1
+                      }
+                    ]
+                  },
+                  "cornerRadius": 14,
+                  "effect": {
+                    "type": "shadow",
+                    "shadowType": "outer",
+                    "color": "#0F6CBD26",
+                    "offset": {
+                      "x": 0,
+                      "y": 10
+                    },
+                    "blur": 18
+                  },
+                  "padding": [
+                    0,
+                    18
+                  ],
+                  "justifyContent": "center",
                   "alignItems": "center",
                   "children": [
                     {
-                      "type": "frame",
-                      "id": "nz8M3",
-                      "name": "example1",
-                      "width": "fill_container",
-                      "layout": "vertical",
-                      "gap": 8,
-                      "alignItems": "center",
-                      "children": [
-                        {
-                          "type": "text",
-                          "id": "GYHCm",
-                          "name": "example1Label",
-                          "fill": "$color-text-muted",
-                          "content": "切换班级",
-                          "fontFamily": "Inter",
-                          "fontSize": 12,
-                          "fontWeight": "normal"
-                        },
-                        {
-                          "type": "frame",
-                          "id": "tJwke",
-                          "name": "example1Input",
-                          "width": 240,
-                          "height": 44,
-                          "fill": "#FFFFFF96",
-                          "cornerRadius": 14,
-                          "stroke": {
-                            "align": "inside",
-                            "thickness": 1,
-                            "fill": "#E9F0F8"
-                          },
-                          "padding": [
-                            0,
-                            10
-                          ],
-                          "justifyContent": "space_between",
-                          "alignItems": "center",
-                          "children": [
-                            {
-                              "type": "text",
-                              "id": "cSp4A",
-                              "name": "example1Text",
-                              "fill": "#1C1F23",
-                              "content": "高一2班",
-                              "fontFamily": "Inter",
-                              "fontSize": 16,
-                              "fontWeight": "600"
-                            },
-                            {
-                              "type": "frame",
-                              "id": "EGTR3",
-                              "name": "example1Tag",
-                              "height": 28,
-                              "fill": "#E8F2FF",
-                              "cornerRadius": 999,
-                              "layout": "vertical",
-                              "padding": [
-                                0,
-                                10
-                              ],
-                              "justifyContent": "center",
-                              "alignItems": "center",
-                              "children": [
-                                {
-                                  "type": "text",
-                                  "id": "2xXpz",
-                                  "name": "example1TagText",
-                                  "fill": "#0F6CBD",
-                                  "content": "切换",
-                                  "fontFamily": "Inter",
-                                  "fontSize": 12,
-                                  "fontWeight": "600"
-                                }
-                              ]
-                            }
-                          ]
-                        }
-                      ]
-                    },
-                    {
-                      "type": "frame",
-                      "id": "GMG6d",
-                      "name": "example2",
-                      "width": "fill_container",
-                      "layout": "vertical",
-                      "gap": 8,
-                      "alignItems": "center",
-                      "children": [
-                        {
-                          "type": "text",
-                          "id": "5fubW",
-                          "name": "example2Label",
-                          "fill": "$color-text-muted",
-                          "content": "新建班级",
-                          "fontFamily": "Inter",
-                          "fontSize": 12,
-                          "fontWeight": "normal"
-                        },
-                        {
-                          "type": "frame",
-                          "id": "ghykK",
-                          "name": "example2Input",
-                          "width": 240,
-                          "height": 44,
-                          "fill": "#FFFFFF96",
-                          "cornerRadius": 14,
-                          "stroke": {
-                            "align": "inside",
-                            "thickness": 1,
-                            "fill": "#E9F0F8"
-                          },
-                          "padding": [
-                            0,
-                            10
-                          ],
-                          "justifyContent": "space_between",
-                          "alignItems": "center",
-                          "children": [
-                            {
-                              "type": "text",
-                              "id": "xWZXT",
-                              "name": "example2Text",
-                              "fill": "#1C1F23",
-                              "content": "高一4班",
-                              "fontFamily": "Inter",
-                              "fontSize": 16,
-                              "fontWeight": "600"
-                            },
-                            {
-                              "type": "frame",
-                              "id": "RuxZc",
-                              "name": "example2Tag",
-                              "height": 28,
-                              "fill": "#E8F2FF",
-                              "cornerRadius": 999,
-                              "layout": "vertical",
-                              "padding": [
-                                0,
-                                10
-                              ],
-                              "justifyContent": "center",
-                              "alignItems": "center",
-                              "children": [
-                                {
-                                  "type": "text",
-                                  "id": "BUbe9",
-                                  "name": "example2TagText",
-                                  "fill": "#0F6CBD",
-                                  "content": "新建",
-                                  "fontFamily": "Inter",
-                                  "fontSize": 12,
-                                  "fontWeight": "600"
-                                }
-                              ]
-                            }
-                          ]
-                        }
-                      ]
-                    },
-                    {
-                      "type": "frame",
-                      "id": "LDpcv",
-                      "name": "example3",
-                      "width": "fill_container",
-                      "layout": "vertical",
-                      "gap": 8,
-                      "alignItems": "center",
-                      "children": [
-                        {
-                          "type": "text",
-                          "id": "FL9d6",
-                          "name": "example3Label",
-                          "fill": "$color-text-muted",
-                          "content": "重命名班级",
-                          "fontFamily": "Inter",
-                          "fontSize": 12,
-                          "fontWeight": "normal"
-                        },
-                        {
-                          "type": "frame",
-                          "id": "ZXSB6",
-                          "name": "example3Input",
-                          "width": 240,
-                          "height": 44,
-                          "fill": "#FFFFFF96",
-                          "cornerRadius": 14,
-                          "stroke": {
-                            "align": "inside",
-                            "thickness": 2,
-                            "fill": "#FFB74D"
-                          },
-                          "padding": [
-                            0,
-                            10
-                          ],
-                          "justifyContent": "space_between",
-                          "alignItems": "center",
-                          "children": [
-                            {
-                              "type": "text",
-                              "id": "GmVaw",
-                              "name": "example3Text",
-                              "fill": "#1C1F23",
-                              "content": "高一3班（重点）",
-                              "fontFamily": "Inter",
-                              "fontSize": 16,
-                              "fontWeight": "600"
-                            },
-                            {
-                              "type": "frame",
-                              "id": "uHvdW",
-                              "name": "example3Tag",
-                              "height": 28,
-                              "fill": "#FFF3E0",
-                              "cornerRadius": 999,
-                              "layout": "vertical",
-                              "padding": [
-                                0,
-                                10
-                              ],
-                              "justifyContent": "center",
-                              "alignItems": "center",
-                              "children": [
-                                {
-                                  "type": "text",
-                                  "id": "SFvYI",
-                                  "name": "example3TagText",
-                                  "fill": "#A15C00",
-                                  "content": "重命名",
-                                  "fontFamily": "Inter",
-                                  "fontSize": 12,
-                                  "fontWeight": "600"
-                                }
-                              ]
-                            }
-                          ]
-                        }
-                      ]
+                      "type": "text",
+                      "id": "B8cgT",
+                      "name": "saveBtnText",
+                      "fill": "#FFFFFF",
+                      "content": "保存配置",
+                      "fontFamily": "Inter",
+                      "fontSize": 14,
+                      "fontWeight": "700"
                     }
                   ]
                 }
