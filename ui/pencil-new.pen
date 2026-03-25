@@ -5899,6 +5899,7 @@
               "id": "3GFvG",
               "name": "configShell",
               "width": "fill_container",
+              "height": 980,
               "layout": "vertical",
               "gap": 20,
               "children": [

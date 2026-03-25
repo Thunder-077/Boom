@@ -28,7 +28,7 @@ export function createScoreStore(service: ScoreService = scoreService) {
     importMessage: "",
     lastImportResult: null as ImportResult | null,
     page: 1,
-    pageSize: 200,
+    pageSize: 50,
   });
 
   async function load() {
@@ -90,6 +90,11 @@ export function createScoreStore(service: ScoreService = scoreService) {
     return service.getDetail(admissionNo);
   }
 
+  async function setPage(page: number) {
+    state.page = page;
+    await load();
+  }
+
   async function updateScore(payload: ScoreUpdatePayload) {
     await service.updateScore(payload);
     await load();
@@ -101,6 +106,9 @@ export function createScoreStore(service: ScoreService = scoreService) {
       filters: state.filters,
       rows: state.rows,
       total: state.total,
+      page: state.page,
+      pageSize: state.pageSize,
+      totalPages: Math.max(1, Math.ceil(state.total / state.pageSize)),
       summary: state.summary,
       importStatus: state.importStatus,
       importMessage: state.importMessage,
@@ -112,6 +120,7 @@ export function createScoreStore(service: ScoreService = scoreService) {
     load,
     setFilters,
     resetFilters,
+    setPage,
     importExcel,
     getDetail,
     updateScore,
