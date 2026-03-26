@@ -45,6 +45,12 @@ const emptyStaffOverview: ExamStaffPlanOverview = {
   unassignedCount: 0,
   warningCount: 0,
   imbalanceMinutes: 0,
+  solverEngine: "greedy",
+  optimalityStatus: "fallback",
+  solveDurationMs: 0,
+  fallbackReason: null,
+  fallbackPoolAssignments: 0,
+  baselineDominated: false,
 };
 
 const emptyGenerationProgress: ExamGenerationProgress = {
@@ -406,7 +412,7 @@ export function createExamAllocationStore(service: ExamAllocationService = examA
         }
       }
       const normalizedExclusions = Array.from(exclusionPairs.values());
-      await service.generateStaffPlan({
+      const result = await service.generateStaffPlan({
         defaultExamRoomRequiredCount: Math.max(
           1,
           Math.floor(state.invigilationConfig.defaultExamRoomRequiredCount || 1),
@@ -422,6 +428,7 @@ export function createExamAllocationStore(service: ExamAllocationService = examA
         staffExclusions: normalizedExclusions,
       });
       await loadStaffOutputs();
+      return result;
     } catch (error) {
       state.errorMessage = error instanceof Error ? error.message : String(error);
       throw error;

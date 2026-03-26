@@ -409,8 +409,9 @@ fn parse_schedule_timestamp(value: &str) -> Option<i64> {
 
 fn load_subject_schedule_order(conn: &Connection) -> Result<HashMap<Subject, i64>, AppError> {
     let mut order_map = HashMap::new();
-    let mut stmt =
-        conn.prepare("SELECT subject, start_at FROM exam_subject_time_templates ORDER BY subject ASC")?;
+    let mut stmt = conn.prepare(
+        "SELECT subject, start_at FROM exam_subject_time_templates ORDER BY subject ASC",
+    )?;
     let rows = stmt.query_map([], |row| {
         Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
     })?;

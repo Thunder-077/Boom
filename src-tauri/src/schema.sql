@@ -231,7 +231,13 @@ CREATE TABLE IF NOT EXISTS latest_exam_staff_plan_meta (
     assigned_count INTEGER NOT NULL,
     unassigned_count INTEGER NOT NULL,
     warning_count INTEGER NOT NULL,
-    imbalance_minutes INTEGER NOT NULL
+    imbalance_minutes INTEGER NOT NULL,
+    solver_engine TEXT NOT NULL DEFAULT 'greedy',
+    optimality_status TEXT NOT NULL DEFAULT 'fallback',
+    solve_duration_ms INTEGER NOT NULL DEFAULT 0,
+    fallback_reason TEXT,
+    fallback_pool_assignments INTEGER NOT NULL DEFAULT 0,
+    baseline_dominated INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS latest_exam_staff_tasks (
@@ -249,6 +255,7 @@ CREATE TABLE IF NOT EXISTS latest_exam_staff_tasks (
     duration_minutes INTEGER NOT NULL,
     recommended_subject TEXT,
     priority_subject_chain TEXT,
+    assignment_tier TEXT,
     status TEXT NOT NULL,
     reason TEXT,
     allowance_amount REAL NOT NULL DEFAULT 0,

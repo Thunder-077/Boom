@@ -138,7 +138,10 @@
 
     <ConfigCard>
       <div class="action-row">
-        <p class="action-text">点击即可分配监考老师，并在完成后导出监考表。</p>
+        <div class="action-copy">
+          <p class="action-text">点击即可分配监考老师，并在完成后导出监考表。</p>
+          <p v-if="store.viewState.staffOverview.generatedAt" class="solver-summary">{{ staffSolverSummary }}</p>
+        </div>
         <div
           v-if="assignmentNotice"
           ref="assignmentNoticeEl"
@@ -506,6 +509,26 @@ const selfStudySummaryText = computed(() => {
   if (pendingClassCount.value === 0) return "所有班级已完成科目配置。";
   const pending = selfStudyClasses.value.filter((item) => !item.subject).map((item) => item.className);
   return `待补充：${pending.slice(0, 2).join("、")}${pending.length > 2 ? " 等" : ""}`;
+});
+const staffSolverSummary = computed(() => {
+  const overview = store.viewState.staffOverview;
+  if (!overview.generatedAt) return "";
+  const solverLabel = overview.solverEngine === "cp_sat" ? "CP-SAT 已接管" : "使用基线分配";
+  const statusLabel =
+    overview.optimalityStatus === "optimal"
+      ? "已证明最优"
+      : overview.optimalityStatus === "feasible"
+        ? "更优可行解"
+        : overview.optimalityStatus === "infeasible"
+          ? "求解不可行，已回退"
+          : overview.optimalityStatus === "error"
+            ? "求解异常，已回退"
+            : "未优于基线";
+  const fallbackSummary =
+    overview.fallbackPoolAssignments > 0
+      ? `，fallback_pool ${overview.fallbackPoolAssignments} 项`
+      : "";
+  return `${solverLabel}，${statusLabel}，耗时 ${overview.solveDurationMs} ms${fallbackSummary}`;
 });
 const filteredMiddleManagerTeachers = computed(() => {
   const keyword = middleManagerKeyword.value.trim();
@@ -909,11 +932,24 @@ async function showAssignmentNotice(type: AssignmentNotice["type"], text: string
 async function assignTeachers() {
   assignmentNotice.value = null;
   try {
-    await store.assignTeachers();
-    const overview = store.viewState.staffOverview;
+    const result = await store.assignTeachers();
+    const summary =
+      result.solverEngine === "cp_sat" && result.baselineDominated
+        ? "CP-SAT 求解完成，并优于基线"
+        : "CP-SAT 未优于基线，已采用快速分配结果";
+    const optimality =
+      result.optimalityStatus === "optimal"
+        ? "已证明最优"
+        : result.solverEngine === "cp_sat"
+          ? "当前为可行更优解"
+          : "基线结果";
+    const fallbackPart =
+      result.fallbackPoolAssignments > 0
+        ? `，fallback_pool ${result.fallbackPoolAssignments} 项`
+        : "";
     await showAssignmentNotice(
       "success",
-      `分配完成：已分配 ${overview.assignedCount} 项，未分配 ${overview.unassignedCount} 项。`,
+      `${summary}：已分配 ${result.assignedCount} 项，未分配 ${result.unassignedCount} 项，${optimality}，耗时 ${result.solveDurationMs} ms${fallbackPart}。`,
     );
   } catch (error) {
     const message =
@@ -1694,6 +1730,21 @@ onBeforeUnmount(() => {
   flex: 1 1 auto;
   min-width: 0;
   line-height: 1.5;
+}
+
+.action-copy {
+  display: flex;
+  flex: 1 1 auto;
+  min-width: 0;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.solver-summary {
+  margin: 0;
+  color: var(--color-text-muted);
+  font-size: 12px;
+  line-height: 1.4;
 }
 
 .action-row {
