@@ -59,6 +59,21 @@
       </div>
     </ConfigCard>
 
+    <ConfigCard title="教室类型" description="选择当前维护的是教学教室还是考试教室，系统会按类型校验科目配置。">
+      <div class="type-toggle-row">
+        <button
+          v-for="option in configTypeOptions"
+          :key="option.value"
+          type="button"
+          class="type-toggle-btn"
+          :class="{ active: store.viewState.filters.configType === option.value }"
+          @click="switchConfigType(option.value)"
+        >
+          {{ option.label }}
+        </button>
+      </div>
+    </ConfigCard>
+
     <ConfigCard
       v-if="store.viewState.form.configType === 'teaching_class'"
       title="所学科目配置"
@@ -126,7 +141,8 @@
 
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from "vue";
-import type { ClassConfigRow } from "../../../entities/class-config/model";
+import { CLASS_CONFIG_TYPE_OPTIONS } from "../../../entities/class-config/model";
+import type { ClassConfigRow, ClassConfigType } from "../../../entities/class-config/model";
 import type { Subject } from "../../../entities/score/model";
 import { SUBJECT_OPTIONS } from "../../../entities/class-config/model";
 import ConfigCard from "../../../widgets/common/ConfigCard.vue";
@@ -151,6 +167,7 @@ const dialogState = reactive({
 });
 
 const visibleSubjects = computed(() => SUBJECT_OPTIONS);
+const configTypeOptions = CLASS_CONFIG_TYPE_OPTIONS;
 const normalizedSearchKeyword = computed(() => searchKeyword.value.trim().replace(/\s+/g, ""));
 const suggestionRows = computed(() => {
   if (!normalizedSearchKeyword.value) {
@@ -293,6 +310,32 @@ async function handleSwitchToRow(row: ClassConfigRow) {
   syncSearchToCurrentClass();
 }
 
+async function switchConfigType(configType: ClassConfigType) {
+  if (store.viewState.filters.configType === configType) {
+    return;
+  }
+  if (store.viewState.isDirty) {
+    const abandon = await openDialog({
+      kind: "confirm",
+      tone: "danger",
+      icon: "warning",
+      title: "检测到未保存修改",
+      summary: "切换教室类型前需要先放弃当前页面中尚未保存的配置变更。",
+      details: [
+        `当前编辑：${store.viewState.form.className || "当前配置"}`,
+        `切换到：${configType === "teaching_class" ? "教学教室" : "考试教室"}`,
+      ],
+      confirmText: "放弃并切换",
+      cancelText: "继续编辑",
+    });
+    if (!abandon) {
+      return;
+    }
+  }
+  await store.setFilters({ configType, gradeName: "", keyword: "" });
+  syncSearchToCurrentClass();
+}
+
 async function selectSuggestion(id: number) {
   const row = store.viewState.rows.find((item) => item.id === id);
   if (!row) {
@@ -313,12 +356,19 @@ async function onSearchCommit() {
   }
 
   const exactRow = findExactRowByName(keyword);
+  const normalizedKeyword = keyword.replace(/\s+/g, "");
+  const normalizedCurrentClass = store.viewState.form.className.trim().replace(/\s+/g, "");
   if (exactRow) {
     if (exactRow.id === store.viewState.editingId && store.viewState.mode === "existing") {
       syncSearchToCurrentClass();
       return;
     }
     await handleSwitchToRow(exactRow);
+    return;
+  }
+
+  if (store.viewState.mode === "new" && normalizedKeyword && normalizedKeyword === normalizedCurrentClass) {
+    syncSearchToCurrentClass();
     return;
   }
 
@@ -490,6 +540,35 @@ onMounted(async () => {
 .current-input:focus,
 .metric-input:focus {
   outline: none;
+}
+
+.type-toggle-row {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.type-toggle-btn {
+  min-height: 44px;
+  border: 1px solid var(--color-border-soft);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.56);
+  color: var(--color-text-muted);
+  font-size: 14px;
+  font-weight: 700;
+  cursor: pointer;
+  transition:
+    border-color 0.18s ease,
+    background-color 0.18s ease,
+    color 0.18s ease,
+    box-shadow 0.18s ease;
+}
+
+.type-toggle-btn.active {
+  border-color: #bad7ff;
+  background: #eef5ff;
+  color: #0f6cbd;
+  box-shadow: 0 8px 18px rgba(15, 108, 189, 0.08);
 }
 
 .suggestion-list {

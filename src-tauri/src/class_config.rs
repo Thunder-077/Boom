@@ -98,7 +98,7 @@ pub fn ensure_schema(conn: &Connection) -> Result<(), AppError> {
 
 fn seed_default_class_configs(conn: &Connection) -> Result<(), AppError> {
     let count: i64 = conn.query_row(
-        "SELECT COUNT(*) FROM class_configs WHERE config_type = 'teaching_class'",
+        "SELECT COUNT(*) FROM class_configs",
         [],
         |row| row.get(0),
     )?;
@@ -162,6 +162,30 @@ fn seed_default_class_configs(conn: &Connection) -> Result<(), AppError> {
                 floor: "4层".to_string(),
                 room_label: None,
                 subjects: Some(subjects),
+            },
+            &now,
+        )?;
+    }
+
+    let exam_rooms = [
+        ("高一", "高一5场", "向远楼", "5层"),
+        ("高一", "高一6场", "向远楼", "5层"),
+        ("高二", "高二12场", "向远楼", "2层"),
+        ("高二", "高二13场", "向远楼", "2层"),
+        ("高二", "高二14场", "向远楼", "4层"),
+    ];
+
+    for (grade_name, class_name, building, floor) in exam_rooms {
+        insert_class_config_tx(
+            &tx,
+            &UpsertClassConfigPayload {
+                config_type: ClassConfigType::ExamRoom,
+                grade_name: grade_name.to_string(),
+                class_name: class_name.to_string(),
+                building: building.to_string(),
+                floor: floor.to_string(),
+                room_label: None,
+                subjects: Some(Vec::new()),
             },
             &now,
         )?;
@@ -436,15 +460,23 @@ mod tests {
     #[test]
     fn test_seed_idempotent() {
         let conn = setup_conn();
-        let count: i64 = conn
+        let teaching_count: i64 = conn
             .query_row("SELECT COUNT(*) FROM class_configs WHERE config_type = 'teaching_class'", [], |row| row.get(0))
             .unwrap();
-        assert_eq!(count, 15);
+        let exam_room_count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM class_configs WHERE config_type = 'exam_room'", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(teaching_count, 15);
+        assert_eq!(exam_room_count, 5);
         seed_default_class_configs(&conn).unwrap();
-        let count2: i64 = conn
+        let teaching_count2: i64 = conn
             .query_row("SELECT COUNT(*) FROM class_configs WHERE config_type = 'teaching_class'", [], |row| row.get(0))
             .unwrap();
-        assert_eq!(count2, 15);
+        let exam_room_count2: i64 = conn
+            .query_row("SELECT COUNT(*) FROM class_configs WHERE config_type = 'exam_room'", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(teaching_count2, 15);
+        assert_eq!(exam_room_count2, 5);
     }
 
     #[test]
