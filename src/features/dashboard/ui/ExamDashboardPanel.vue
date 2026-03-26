@@ -2,7 +2,7 @@
   <section class="dashboard-grid">
     <div class="left-col">
       <ConfigCard title="当前考试配置" description="统一设置考试标题、须知与各科目时间。Ctrl+S 只保存本页配置，不会触发考场分配。">
-        <div class="field-stack">
+        <div class="field-stack" :style="{ opacity: store.viewState.loading ? 0 : 1, pointerEvents: store.viewState.loading ? 'none' : 'auto', transition: 'opacity 0.3s ease' }">
           <label class="field-block">
             <span class="metric-label">考试标题</span>
             <input
@@ -28,9 +28,9 @@
           <p class="table-hint">统一配置各科目考试时间。</p>
         </template>
         <template #actions>
-          <button class="secondary-btn" type="button" @click="addManualSubjectRow">新增科目</button>
+          <button class="secondary-btn" type="button" :disabled="store.viewState.loading" @click="addManualSubjectRow">新增科目</button>
         </template>
-        <div class="exam-table-scroll">
+        <div class="exam-table-scroll" :style="{ opacity: store.viewState.loading ? 0 : 1, transition: 'opacity 0.3s ease' }">
           <table class="table exam-table">
             <thead>
               <tr>
@@ -75,9 +75,11 @@
               <tr v-for="item in manualSubjectRows" :key="item.id">
                 <td>
                   <div class="manual-subject-row">
-                    <select v-model="item.subject" class="subject-select">
-                      <option v-for="subject in SUBJECT_OPTIONS" :key="subject" :value="subject">{{ SUBJECT_LABELS[subject] }}</option>
-                    </select>
+                    <FluentSelect
+                      v-model="item.subject"
+                      :options="SUBJECT_OPTIONS.map(s => ({ label: SUBJECT_LABELS[s], value: s }))"
+                      style="width: 140px; min-height: 38px;"
+                    />
                   </div>
                 </td>
                 <td>
@@ -124,7 +126,7 @@
       </section>
 
       <ConfigCard title="考场容量配置">
-        <div class="field-stack compact">
+        <div class="field-stack compact" :style="{ opacity: store.viewState.loading ? 0 : 1, pointerEvents: store.viewState.loading ? 'none' : 'auto', transition: 'opacity 0.3s ease' }">
           <label class="metric-field">
             <span class="metric-label">考场默认容量</span>
             <input v-model.number="capacityForm.defaultCapacity" class="metric-input" type="number" min="1" />
@@ -165,6 +167,7 @@ import { SUBJECT_LABELS } from "../../../entities/class-config/model";
 import { Subject } from "../../../entities/score/model";
 import { revealInExplorer } from "../../../shared/utils/appLog";
 import ConfigCard from "../../../widgets/common/ConfigCard.vue";
+import FluentSelect from "../../../widgets/common/FluentSelect.vue";
 import TableCard from "../../../widgets/common/TableCard.vue";
 import { useExamAllocationStore } from "../store";
 

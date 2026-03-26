@@ -1,40 +1,33 @@
 import { createRouter, createWebHistory } from "vue-router";
-import DashboardPage from "../../pages/dashboard/DashboardPage.vue";
 import ManagementPage from "../../pages/management/ManagementPage.vue";
 
-export type DashboardSection = "exam-assignment" | "monitor-config";
-export type ManagementSection = "teachers" | "scores" | "classes";
+export type AppSection = "exam-assignment" | "monitor-draw" | "monitor-config" | "teachers" | "scores" | "classes";
 
 export const router = createRouter({
   history: createWebHistory(),
   routes: [
     {
       path: "/",
-      redirect: "/dashboard",
+      redirect: "/app/exam-assignment",
     },
     {
-      path: "/dashboard",
-      name: "dashboard",
-      component: DashboardPage,
-      props: {
-        section: "exam-assignment",
+      path: "/dashboard/:pathMatch(.*)*",
+      redirect: (to) => {
+        if (to.path.includes("monitor-config")) return "/app/monitor-config";
+        return "/app/exam-assignment";
       },
     },
     {
-      path: "/dashboard/monitor-config",
-      name: "monitor-config",
-      component: DashboardPage,
-      props: {
-        section: "monitor-config",
+      path: "/management/:pathMatch(.*)*",
+      redirect: (to) => {
+        if (to.path.includes("scores")) return "/app/scores";
+        if (to.path.includes("classes")) return "/app/classes";
+        return "/app/teachers";
       },
     },
     {
-      path: "/management",
-      redirect: "/management/teachers",
-    },
-    {
-      path: "/management/:section(teachers|scores|classes)",
-      name: "management",
+      path: "/app/:section(.*)",
+      name: "app-layout",
       component: ManagementPage,
       props: true,
     },

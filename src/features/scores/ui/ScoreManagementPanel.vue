@@ -8,15 +8,12 @@
     </div>
     <FilterToolbar :items="[]">
       <div class="toolbar-fields">
-        <label class="filter-select">
-          <select :value="store.viewState.filters.gradeName" @change="onGradeChange">
-            <option value="">全部年级</option>
-            <option value="高一">高一</option>
-            <option value="高二">高二</option>
-            <option value="高三">高三</option>
-          </select>
-          <span class="material-symbols-rounded filter-arrow" aria-hidden="true">keyboard_arrow_down</span>
-        </label>
+        <FluentSelect
+          :model-value="store.viewState.filters.gradeName"
+          :options="[{ label: '全部年级', value: '' }, { label: '高一', value: '高一' }, { label: '高二', value: '高二' }, { label: '高三', value: '高三' }]"
+          @update:model-value="store.setFilters({ gradeName: $event as string })"
+          style="width: 220px;"
+        />
         <label class="filter-search">
           <span class="material-symbols-rounded filter-search-icon" aria-hidden="true">search</span>
           <input :value="store.viewState.filters.nameKeyword" placeholder="按姓名筛选" @input="onNameInput" />
@@ -58,27 +55,13 @@
         </tbody>
       </table>
       </div>
-      <div v-if="store.viewState.totalPages > 1" class="pagination">
-        <button class="page-btn" :disabled="store.viewState.page <= 1" @click="goPage(1)">
-          <span class="material-symbols-rounded">first_page</span>
-        </button>
-        <button class="page-btn" :disabled="store.viewState.page <= 1" @click="goPage(store.viewState.page - 1)">
-          <span class="material-symbols-rounded">chevron_left</span>
-        </button>
-        <button
-          v-for="p in visiblePages"
-          :key="p"
-          class="page-btn"
-          :class="{ active: p === store.viewState.page }"
-          @click="goPage(p)"
-        >{{ p }}</button>
-        <button class="page-btn" :disabled="store.viewState.page >= store.viewState.totalPages" @click="goPage(store.viewState.page + 1)">
-          <span class="material-symbols-rounded">chevron_right</span>
-        </button>
-        <button class="page-btn" :disabled="store.viewState.page >= store.viewState.totalPages" @click="goPage(store.viewState.totalPages)">
-          <span class="material-symbols-rounded">last_page</span>
-        </button>
-        <span class="page-info">共 {{ store.viewState.total }} 条</span>
+      <div v-if="store.viewState.totalPages > 1" class="pagination-row">
+        <span class="page-meta">共 {{ store.viewState.total }} 条成绩记录</span>
+        <div class="pagination-actions">
+          <button class="page-btn" type="button" :disabled="store.viewState.page === 1" @click="goPage(store.viewState.page - 1)">上一页</button>
+          <button v-for="page in visiblePages" :key="page" class="page-btn" :class="{ active: page === store.viewState.page }" type="button" @click="goPage(page)">{{ page }}</button>
+          <button class="page-btn" type="button" :disabled="store.viewState.page === store.viewState.totalPages" @click="goPage(store.viewState.page + 1)">下一页</button>
+        </div>
       </div>
     </TableCard>
 
@@ -108,11 +91,12 @@
           <div class="subject-list">
             <div v-for="item in detailState.form.subjects" :key="item.subject" class="subject-row">
               <strong>{{ SUBJECT_LABELS[item.subject] }}</strong>
-              <select v-model="item.state" class="glass-field small" :disabled="detailState.mode === 'view'">
-                <option value="scored">有成绩</option>
-                <option value="absent">缺考</option>
-                <option value="not_selected">未选考</option>
-              </select>
+              <FluentSelect
+                v-model="item.state"
+                :options="[{ label: '有成绩', value: 'scored' }, { label: '缺考', value: 'absent' }, { label: '未选考', value: 'not_selected' }]"
+                :disabled="detailState.mode === 'view'"
+                style="width: 130px; min-height: 38px;"
+              />
               <input
                 v-model.number="item.score"
                 class="glass-field score-input"
@@ -148,6 +132,7 @@ import { SUBJECT_LABELS } from "../../../entities/class-config/model";
 import type { ScoreCellState, ScoreDetail, ScoreRow, ScoreUpdatePayload } from "../../../entities/score/model";
 import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 import FilterToolbar from "../../../widgets/common/FilterToolbar.vue";
+import FluentSelect from "../../../widgets/common/FluentSelect.vue";
 import InfoHint from "../../../widgets/common/InfoHint.vue";
 import TableCard from "../../../widgets/common/TableCard.vue";
 import { useScoreStore } from "../store";
@@ -192,10 +177,6 @@ function rowClass(index: number) {
 
 function onNameInput(event: Event) {
   void store.setFilters({ nameKeyword: (event.target as HTMLInputElement).value });
-}
-
-function onGradeChange(event: Event) {
-  void store.setFilters({ gradeName: (event.target as HTMLSelectElement).value });
 }
 
 function goPage(page: number) {
@@ -414,7 +395,6 @@ onUnmounted(() => {
 }
 
 /* Filter fields – matches .pen scoreFilter spec */
-.filter-select,
 .filter-search {
   position: relative;
   display: inline-flex;
@@ -425,44 +405,6 @@ onUnmounted(() => {
   border: 1px solid var(--color-border-soft);
   border-radius: 14px;
   background: rgba(255, 255, 255, 0.59);
-}
-
-/* Dropdown */
-.filter-select {
-  justify-content: space-between;
-}
-
-.filter-select select {
-  position: absolute;
-  inset: 0;
-  width: 100%;
-  height: 100%;
-  padding: 0 36px 0 14px;
-  border: none;
-  border-radius: 14px;
-  background: transparent;
-  color: var(--color-text);
-  font-size: 14px;
-  appearance: none;
-  cursor: pointer;
-}
-
-.filter-select select:focus {
-  outline: none;
-}
-
-.filter-select:focus-within {
-  border-color: #b9d6ff;
-  box-shadow: 0 0 0 3px rgba(185, 214, 255, 0.35);
-}
-
-.filter-arrow {
-  position: absolute;
-  right: 14px;
-  color: var(--color-text-muted);
-  font-size: 18px;
-  pointer-events: none;
-  font-family: "Material Symbols Rounded";
 }
 
 /* Search */
@@ -537,55 +479,53 @@ onUnmounted(() => {
 }
 
 /* Pagination */
-.pagination {
+.pagination-row {
   display: flex;
   align-items: center;
-  justify-content: center;
-  gap: 4px;
-  padding: 12px 16px 8px;
+  justify-content: space-between;
+  padding: 16px 20px;
   border-top: 1px solid var(--color-border-soft);
+  background: rgba(255, 255, 255, 0.4);
+}
+
+.page-meta {
+  color: var(--color-text-muted);
+  font-size: 13px;
+}
+
+.pagination-actions {
+  display: flex;
+  gap: 8px;
 }
 
 .page-btn {
   min-width: 32px;
   height: 32px;
-  padding: 0 6px;
-  border: 1px solid transparent;
-  border-radius: 6px;
-  background: transparent;
-  color: var(--color-text);
-  font-size: 13px;
+  padding: 0 8px;
+  border-radius: 8px;
+  border: 1px solid #d8e4f2;
+  background: #fff;
   cursor: pointer;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  transition: background 0.12s, border-color 0.12s;
-}
-
-.page-btn .material-symbols-rounded {
-  font-size: 18px;
+  color: #52657f;
+  font-size: 13px;
+  transition: all 0.2s;
 }
 
 .page-btn:hover:not(:disabled) {
-  background: rgba(0, 0, 0, 0.04);
-}
-
-.page-btn:disabled {
-  color: var(--color-text-muted);
-  opacity: 0.4;
-  cursor: default;
+  background: #f8fbff;
+  border-color: #bad7ff;
+  color: #0f6cbd;
 }
 
 .page-btn.active {
-  background: var(--color-brand);
+  background: #0f6cbd;
   color: #fff;
-  font-weight: 600;
+  border-color: #0f6cbd;
 }
 
-.page-info {
-  margin-left: 12px;
-  font-size: 13px;
-  color: var(--color-text-muted);
+.page-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
 .detail-mask {

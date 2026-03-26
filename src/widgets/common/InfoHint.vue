@@ -1,33 +1,51 @@
 <template>
-  <section class="hint">
-    <svg class="dot" viewBox="0 0 24 24" aria-hidden="true">
-      <path d="M11 7h2V5h-2v2Zm0 12h2v-8h-2v8Zm1-17C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2Z" />
+  <section class="hint" :class="type || 'info'">
+    <svg class="dot" viewBox="0 0 24 24">
+      <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 
+               10-4.48 10-10S17.52 2 12 2zm1 15h-2v-6h2v6zm0-8h-2V7h2v2z"/>
     </svg>
     <p>{{ text }}</p>
   </section>
 </template>
 
 <script setup lang="ts">
-defineProps<{
+defineProps<{ 
   text: string;
+  type?: 'info' | 'success' | 'warning' | 'error';
 }>();
 </script>
 
 <style scoped>
 .hint {
-  min-height: 34px;
   display: flex;
   align-items: center;
   gap: 8px;
-  color: var(--color-text-muted);
   font-size: 13px;
-  padding: 0 4px;
 }
+
+.hint.info { 
+  color: #409eff; 
+}
+.hint.info .dot { fill: #409eff; }
+
+.hint.success { 
+  color: #67c23a; 
+}
+.hint.success .dot { fill: #67c23a; }
+
+.hint.error { 
+  color: #f56c6c; 
+}
+.hint.error .dot { fill: #f56c6c; }
+
+.hint.warning { 
+  color: #e6a23c; 
+}
+.hint.warning .dot { fill: #e6a23c; }
 
 .dot {
   width: 16px;
   height: 16px;
-  fill: currentColor;
 }
 
 .hint p {
