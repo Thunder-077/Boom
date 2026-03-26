@@ -5,6 +5,7 @@ mod exam_plan;
 mod exam_staff;
 mod export_bundle;
 mod invigilation;
+mod schema;
 mod score;
 mod teacher;
 

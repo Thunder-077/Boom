@@ -91,35 +91,7 @@ pub struct SuccessResponse {
 }
 
 pub fn ensure_schema(conn: &Connection) -> Result<(), AppError> {
-    score::init_schema(conn)?;
-    conn.execute_batch(
-        r#"
-        CREATE TABLE IF NOT EXISTS class_configs (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            config_type TEXT NOT NULL,
-            grade_name TEXT NOT NULL,
-            class_name TEXT NOT NULL,
-            building TEXT NOT NULL,
-            floor TEXT NOT NULL,
-            room_label TEXT,
-            created_at TEXT NOT NULL,
-            updated_at TEXT NOT NULL,
-            UNIQUE(config_type, class_name)
-        );
-
-        CREATE TABLE IF NOT EXISTS class_config_subjects (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            config_id INTEGER NOT NULL,
-            subject TEXT NOT NULL,
-            UNIQUE(config_id, subject),
-            FOREIGN KEY(config_id) REFERENCES class_configs(id) ON DELETE CASCADE
-        );
-
-        CREATE INDEX IF NOT EXISTS idx_class_configs_type_grade ON class_configs(config_type, grade_name);
-        CREATE INDEX IF NOT EXISTS idx_class_configs_class_name ON class_configs(class_name);
-        CREATE INDEX IF NOT EXISTS idx_class_config_subjects_config_id ON class_config_subjects(config_id);
-        "#,
-    )?;
+    crate::schema::ensure_schema(conn)?;
     seed_default_class_configs(conn)?;
     Ok(())
 }

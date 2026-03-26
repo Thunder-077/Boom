@@ -106,6 +106,7 @@ export interface ExamPlanSessionQuery {
 
 export type StaffRole = "exam_room_invigilator" | "self_study_supervisor" | "floor_rover";
 export type TaskStatus = "assigned" | "unassigned";
+export type ExamStaffTaskSource = "exam" | "exam_linked_self_study" | "full_self_study";
 
 export interface ExamSessionTime {
   sessionId: number;
@@ -143,8 +144,9 @@ export interface ExamStaffPlanOverview {
 
 export interface ExamStaffTask {
   id: number;
-  sessionId: number;
+  sessionId: number | null;
   spaceId: number | null;
+  taskSource: ExamStaffTaskSource;
   role: StaffRole;
   gradeName: string;
   subject: Subject;
@@ -192,7 +194,7 @@ export interface InvigilationConfig {
   outdoorAllowancePerMinute: number;
   middleManagerDefaultEnabled: boolean;
   middleManagerExceptionTeacherIds: number[];
-  selfStudySubject: Subject;
+  selfStudyDate: string;
   selfStudyStartTime: string;
   selfStudyEndTime: string;
 }

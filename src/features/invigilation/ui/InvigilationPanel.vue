@@ -4,7 +4,7 @@
       <ConfigCard class="top-card exam-count-card" title="监考人数配置" description="统一设置每个考场所需监考老师个数，分配时自动按此规则执行。">
         <div class="card-stack">
           <label class="display-field count-field" for="exam-room-required-count">
-            <span class="field-label">每个考场监考老师个数</span>
+            <span class="field-label">每个考场监考老师人数</span>
             <div class="field-value-row">
               <input
                 id="exam-room-required-count"
@@ -96,7 +96,7 @@
           <div class="summary-grid">
             <div class="summary-chip">
               <span class="field-label">时间范围</span>
-              <strong class="summary-value">{{ selfStudyStartTime }} - {{ selfStudyEndTime }}</strong>
+              <strong class="summary-value" v-html="selfStudyScheduleText"></strong>
             </div>
             <div class="summary-chip">
               <span class="field-label">已配置班级</span>
@@ -155,34 +155,38 @@
         <div class="drawer-header">
           <div class="drawer-title-block">
             <h3>配置全员自习</h3>
-            <p>先设置统一时段，再逐页为班级指定科目。支持按年级筛选和当前页批量设置。</p>
+
           </div>
           <button class="drawer-close" type="button" @click="closeSelfStudyDrawer"><span class="material-symbols-rounded">close</span></button>
         </div>
 
         <section class="drawer-section soft-panel">
           <div class="section-header"><h4>统一时段</h4></div>
-          <div class="time-row">
+          <div class="schedule-row">
+            <label class="display-field compact-field">
+              <span class="field-label">自习日期</span>
+              <input class="value-input framed-input date-input" type="text" inputmode="numeric" placeholder="03-26" v-model="selfStudyMonthDay" />
+            </label>
             <label class="display-field compact-field">
               <span class="field-label">开始时间</span>
-              <input class="value-input time-input" type="text" inputmode="numeric" v-model="selfStudyStartTime" @blur="handleSaveConfig" @keyup.enter="handleSaveConfig" />
+              <input class="value-input framed-input time-input" type="text" inputmode="numeric" maxlength="5" placeholder="12:10" v-model="selfStudyStartTime" />
             </label>
             <label class="display-field compact-field">
               <span class="field-label">结束时间</span>
-              <input class="value-input time-input" type="text" inputmode="numeric" v-model="selfStudyEndTime" @blur="handleSaveConfig" @keyup.enter="handleSaveConfig" />
+              <input class="value-input framed-input time-input" type="text" inputmode="numeric" maxlength="5" placeholder="13:40" v-model="selfStudyEndTime" />
             </label>
           </div>
           <div class="footer-row">
-            <span class="field-label">适用范围：期中考试第 3 场结束后</span>
+            <span class="field-label">{{ selfStudyScopeText }}</span>
             <span class="info-pill">全体教师默认转为自习值守</span>
           </div>
+          <div v-if="selfStudyValidationError" class="empty-box error-box">{{ selfStudyValidationError }}</div>
         </section>
 
-        <section class="drawer-section">
+        <section class="drawer-section class-config-section">
           <div class="section-header">
             <div>
               <h4>班级科目配置</h4>
-              <p>班级较多时按页处理，本页可多选后统一设置科目。</p>
             </div>
             <span class="warning-pill">{{ pendingClassCount }} 个待处理</span>
           </div>
@@ -197,11 +201,11 @@
             <div class="toolbar-left">
               <button class="toolbar-btn primary" type="button" :disabled="selectedClassCount === 0" @click="toggleBulkMenu">为选中班级设科目</button>
               <div class="toolbar-filter">
-                <span class="material-symbols-rounded">filter_list</span>
                 <select v-model="gradeFilter">
                   <option value="all">全部年级</option>
                   <option v-for="grade in availableGrades" :key="grade" :value="grade">{{ grade }}</option>
                 </select>
+                <span class="material-symbols-rounded toolbar-filter-arrow">keyboard_arrow_down</span>
               </div>
             </div>
             <div class="page-chip">第 {{ currentPage }} / {{ totalPages }} 页</div>
@@ -241,7 +245,7 @@
         </section>
 
         <div class="drawer-footer">
-          <p>保存前将检查是否存在未配置科目的班级。</p>
+          <p></p>
           <div class="drawer-actions">
             <button class="secondary-btn" type="button" @click="closeSelfStudyDrawer">取消</button>
             <button class="primary-btn" type="button" @click="saveSelfStudySetup">保存配置</button>
@@ -373,8 +377,10 @@ const store = useExamAllocationStore();
 const defaultExamRoomRequiredCount = ref(1);
 const indoorAllowancePerMinute = ref(0.5);
 const outdoorAllowancePerMinute = ref(0.3);
+const selfStudyMonthDay = ref(new Date().toISOString().slice(5, 10));
 const selfStudyStartTime = ref("12:10");
 const selfStudyEndTime = ref("13:40");
+const selfStudyValidationError = ref("");
 const teacherKeyword = ref("");
 const sessionKeyword = ref("");
 const selectedTeacherId = ref<number | null>(null);
@@ -449,6 +455,31 @@ const indeterminateCurrentPageSelected = computed(() => {
   return count > 0 && count < pagedClasses.value.length;
 });
 const selectedClassCount = computed(() => selectedClassIds.value.size);
+const inferredSelfStudyYear = computed(() => {
+  const firstSessionStart = store.viewState.sessionTimes.find((item) => item.startAt)?.startAt;
+  if (firstSessionStart && /^\d{4}-\d{2}-\d{2}/.test(firstSessionStart)) {
+    return firstSessionStart.slice(0, 4);
+  }
+  return String(new Date().getFullYear());
+});
+const normalizedSelfStudyDate = computed(() => {
+  const value = selfStudyMonthDay.value.trim();
+  if (!/^\d{2}-\d{2}$/.test(value)) return "";
+  return `${inferredSelfStudyYear.value}-${value}`;
+});
+const selfStudyScheduleText = computed(() => {
+  if (!selfStudyMonthDay.value || !selfStudyStartTime.value || !selfStudyEndTime.value) {
+    return "未设置";
+  }
+  return `${selfStudyMonthDay.value}<br>${selfStudyStartTime.value} - ${selfStudyEndTime.value}`;
+});
+const selfStudyScopeText = computed(() => {
+  const sessionCount = store.viewState.sessionTimes.length;
+  if (sessionCount > 0) {
+    return `适用范围：本次考试第 ${sessionCount} 场结束后`;
+  }
+  return "适用范围：全员自习开始与结束时间默认在同一天。";
+});
 const selfStudySummaryText = computed(() => {
   if (pendingClassCount.value === 0) return "所有班级已完成科目配置。";
   const pending = selfStudyClasses.value.filter((item) => !item.subject).map((item) => item.className);
@@ -479,6 +510,7 @@ watch(
     defaultExamRoomRequiredCount.value = config.defaultExamRoomRequiredCount;
     indoorAllowancePerMinute.value = Number(config.indoorAllowancePerMinute || 0);
     outdoorAllowancePerMinute.value = Number(config.outdoorAllowancePerMinute || 0);
+    selfStudyMonthDay.value = extractMonthDay(config.selfStudyDate);
     selfStudyStartTime.value = config.selfStudyStartTime;
     selfStudyEndTime.value = config.selfStudyEndTime;
     if (!middleManagerDrawerOpen.value) {
@@ -495,6 +527,10 @@ watch(gradeFilter, () => {
 
 watch(totalPages, (value) => {
   if (currentPage.value > value) currentPage.value = value;
+});
+
+watch([selfStudyMonthDay, selfStudyStartTime, selfStudyEndTime], () => {
+  selfStudyValidationError.value = "";
 });
 
 watch(
@@ -548,6 +584,40 @@ function compareTeachingClasses(a: SelfStudyClassRow, b: SelfStudyClassRow) {
   return a.className.localeCompare(b.className, "zh-CN", { numeric: true });
 }
 
+function extractMonthDay(dateText: string) {
+  const value = (dateText || "").trim();
+  if (/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+    return value.slice(5, 10);
+  }
+  if (/^\d{2}-\d{2}$/.test(value)) {
+    return value;
+  }
+  return new Date().toISOString().slice(5, 10);
+}
+
+function resolvePersistedSelfStudyDate() {
+  return normalizedSelfStudyDate.value || store.viewState.invigilationConfig.selfStudyDate || `${inferredSelfStudyYear.value}-${new Date().toISOString().slice(5, 10)}`;
+}
+
+function resetSelfStudyDraftState() {
+  const config = store.viewState.invigilationConfig;
+  selfStudyMonthDay.value = extractMonthDay(config.selfStudyDate);
+  selfStudyStartTime.value = config.selfStudyStartTime;
+  selfStudyEndTime.value = config.selfStudyEndTime;
+  selfStudyValidationError.value = "";
+  gradeFilter.value = "all";
+  currentPage.value = 1;
+  selectedClassIds.value = new Set();
+  closeSubjectMenu();
+  selfStudyClasses.value = selfStudyClasses.value.map((item) => {
+    const persisted = store.viewState.selfStudyClassSubjects.find((subjectItem) => subjectItem.classId === item.id);
+    return {
+      ...item,
+      subject: persisted?.subject ?? null,
+    };
+  });
+}
+
 async function loadSelfStudyClassData() {
   selfStudyLoading.value = true;
   selfStudyLoadError.value = "";
@@ -569,6 +639,7 @@ async function saveConfig(extra: Partial<InvigilationConfig> = {}) {
     defaultExamRoomRequiredCount: Math.max(1, Math.floor(defaultExamRoomRequiredCount.value || 1)),
     indoorAllowancePerMinute: Math.max(0, Number(indoorAllowancePerMinute.value || 0)),
     outdoorAllowancePerMinute: Math.max(0, Number(outdoorAllowancePerMinute.value || 0)),
+    selfStudyDate: resolvePersistedSelfStudyDate(),
     selfStudyStartTime: selfStudyStartTime.value,
     selfStudyEndTime: selfStudyEndTime.value,
     ...extra,
@@ -586,6 +657,7 @@ function handleSaveConfig() {
 
 function openSelfStudyDrawer() {
   middleManagerDrawerOpen.value = false;
+  resetSelfStudyDraftState();
   selfStudyDrawerOpen.value = true;
 }
 
@@ -719,6 +791,39 @@ function applySubjectSelection(subject: Subject) {
 }
 
 async function saveSelfStudySetup() {
+  const monthDay = selfStudyMonthDay.value.trim();
+  const startTime = selfStudyStartTime.value.trim();
+  const endTime = selfStudyEndTime.value.trim();
+  if (!monthDay) {
+    selfStudyValidationError.value = "请选择自习日期。";
+    return;
+  }
+  if (!/^\d{2}-\d{2}$/.test(monthDay)) {
+    selfStudyValidationError.value = "自习日期请按月-日填写，例如 03-26。";
+    return;
+  }
+  if (!startTime) {
+    selfStudyValidationError.value = "请填写开始时间。";
+    return;
+  }
+  if (!endTime) {
+    selfStudyValidationError.value = "请填写结束时间。";
+    return;
+  }
+  if (!/^\d{2}:\d{2}$/.test(startTime) || !/^\d{2}:\d{2}$/.test(endTime)) {
+    selfStudyValidationError.value = "开始时间和结束时间请按 HH:MM 填写，例如 12:10。";
+    return;
+  }
+  const fullDate = normalizedSelfStudyDate.value;
+  if (!fullDate) {
+    selfStudyValidationError.value = "自习日期格式不正确。";
+    return;
+  }
+  if (`${fullDate}T${endTime}` <= `${fullDate}T${startTime}`) {
+    selfStudyValidationError.value = "结束时间必须晚于开始时间。";
+    return;
+  }
+  selfStudyValidationError.value = "";
   await saveConfig();
   await store.saveSelfStudyClassSubjects(selfStudyClasses.value.map((item) => ({ classId: item.id, subject: item.subject })));
   closeSelfStudyDrawer();
@@ -926,6 +1031,10 @@ onBeforeUnmount(() => {
   min-height: 74px;
 }
 
+.date-field {
+  min-height: 74px;
+}
+
 .count-field {
   width: 320px;
 }
@@ -937,7 +1046,6 @@ onBeforeUnmount(() => {
   color: var(--color-text-muted);
   font-size: 13px;
 }
-
 .warning-text {
   color: var(--color-warning);
 }
@@ -992,7 +1100,21 @@ onBeforeUnmount(() => {
 }
 
 .time-input {
-  width: 76px;
+  width: 86px;
+  letter-spacing: 0.02em;
+}
+
+.date-input {
+  width: 86px;
+  letter-spacing: 0.02em;
+}
+
+.framed-input {
+  min-height: 40px;
+  padding: 0 12px;
+  border: 1px solid #dce6f3;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.96);
 }
 
 .segment-wrap {
@@ -1151,6 +1273,12 @@ onBeforeUnmount(() => {
   gap: 14px;
 }
 
+.schedule-row {
+  display: grid;
+  grid-template-columns: 1.1fr 1fr 1fr;
+  gap: 14px;
+}
+
 .summary-grid {
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 10px;
@@ -1172,6 +1300,12 @@ onBeforeUnmount(() => {
   display: flex;
   flex-direction: column;
   gap: 6px;
+}
+
+.summary-chip2 {
+  display: flex;
+  flex-direction: column;
+  gap: 15px;
 }
 
 .fluent-combo {
@@ -1298,8 +1432,12 @@ onBeforeUnmount(() => {
 }
 
 .toolbar-filter {
+  position: relative;
   padding: 0 14px;
-  gap: 10px;
+  gap: 0;
+  width: fit-content;
+  min-width: 0;
+  flex: 0 0 auto;
 }
 
 .toolbar-filter select,
@@ -1307,6 +1445,31 @@ onBeforeUnmount(() => {
   border: 0;
   background: transparent;
   font-size: 14px;
+}
+
+.toolbar-filter select {
+  width: auto;
+  min-width: 96px;
+  min-height: 42px;
+  padding: 0 34px 0 8px;
+  color: #24364d;
+  font-weight: 600;
+  line-height: 42px;
+  appearance: none;
+  -webkit-appearance: none;
+  -moz-appearance: none;
+  cursor: pointer;
+}
+
+.toolbar-filter-arrow {
+  position: absolute;
+  right: 10px;
+  top: 50%;
+  transform: translateY(-50%);
+  color: #52657f;
+  font-size: 20px;
+  line-height: 1;
+  pointer-events: none;
 }
 
 .toolbar-btn {
@@ -1383,6 +1546,18 @@ onBeforeUnmount(() => {
   background: rgba(255, 255, 255, 0.97);
   box-shadow: 0 22px 44px rgba(107, 124, 147, 0.2);
   z-index: 50;
+}
+
+.soft-panel {
+  padding: 20px;
+  border-radius: 22px;
+  border: 1px solid #dce8f8;
+  background: #f7fbff;
+}
+
+.class-config-section {
+  padding-top: 8px;
+  gap: 14px;
 }
 
 .middle-manager-drawer {
@@ -1626,7 +1801,8 @@ onBeforeUnmount(() => {
   .grid-two,
   .summary-grid,
   .subsidy-row,
-  .time-row {
+  .time-row,
+  .schedule-row {
     grid-template-columns: 1fr;
   }
 

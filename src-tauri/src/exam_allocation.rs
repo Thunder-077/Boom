@@ -356,29 +356,41 @@ struct SpaceCandidate {
     sort_index: i64,
 }
 
-fn has_column(conn: &Connection, table_name: &str, column_name: &str) -> Result<bool, AppError> {
-    let sql = format!("PRAGMA table_info({table_name})");
-    let mut stmt = conn.prepare(&sql)?;
-    let rows = stmt.query_map([], |row| row.get::<_, String>(1))?;
-    for row in rows {
-        if row? == column_name {
-            return Ok(true);
-        }
-    }
-    Ok(false)
-}
+pub(crate) fn ensure_schema(conn: &Connection) -> Result<(), AppError> {
+    crate::schema::ensure_schema(conn)?;
+    class_config::ensure_schema(conn)?;
+    teacher::ensure_schema(conn)?;
 
-fn ensure_column(
-    conn: &Connection,
-    table_name: &str,
-    column_sql: &str,
-    column_name: &str,
-) -> Result<(), AppError> {
-    if has_column(conn, table_name, column_name)? {
-        return Ok(());
+    let now = Utc::now().to_rfc3339();
+    let default_notices_json = default_exam_notices_json()?;
+    conn.execute(
+        "INSERT OR IGNORE INTO exam_allocation_settings (id, default_capacity, max_capacity, exam_title, exam_notices_json, updated_at) VALUES (1, ?1, ?2, ?3, ?4, ?5)",
+        params![DEFAULT_CAPACITY, DEFAULT_MAX_CAPACITY, DEFAULT_EXAM_TITLE, default_notices_json, now],
+    )?;
+    conn.execute(
+        "INSERT OR IGNORE INTO exam_generation_progress (id, status, stage, stage_label, percent, message, current_grade, total_grades, completed_grades, updated_at) VALUES (1, 'idle', 'idle', '等待开始', 0, '等待开始分配考场', NULL, 0, 0, ?1)",
+        params![now],
+    )?;
+    conn.execute(
+        "INSERT OR IGNORE INTO invigilation_config_settings (id, default_exam_room_required_count, indoor_allowance_per_minute, outdoor_allowance_per_minute, middle_manager_default_enabled, middle_manager_exception_teacher_ids_json, self_study_date, self_study_start_time, self_study_end_time, self_study_class_subjects_json, updated_at) VALUES (1, 1, 0.5, 0.3, 0, '[]', '', '12:10', '13:40', '[]', ?1)",
+        params![now],
+    )?;
+    conn.execute(
+        "UPDATE exam_allocation_settings SET exam_title = ?1 WHERE id = 1 AND TRIM(COALESCE(exam_title, '')) = ''",
+        params![DEFAULT_EXAM_TITLE],
+    )?;
+    let current_notices_json: String = conn.query_row(
+        "SELECT COALESCE(exam_notices_json, '') FROM exam_allocation_settings WHERE id = 1",
+        [],
+        |row| row.get(0),
+    )?;
+    if should_replace_exam_notices(&current_notices_json) {
+        conn.execute(
+            "UPDATE exam_allocation_settings SET exam_notices_json = ?1 WHERE id = 1",
+            params![default_exam_notices_json()?],
+        )?;
     }
-    let sql = format!("ALTER TABLE {table_name} ADD COLUMN {column_sql}");
-    conn.execute(&sql, [])?;
+    seed_default_subject_time_templates(conn)?;
     Ok(())
 }
 
@@ -439,316 +451,6 @@ fn next_subject_for_self_study(
         })
         .min_by_key(|(order, _)| *order)
         .map(|(_, subject)| subject)
-}
-
-pub(crate) fn ensure_schema(conn: &Connection) -> Result<(), AppError> {
-    score::init_schema(conn)?;
-    class_config::ensure_schema(conn)?;
-    teacher::ensure_schema(conn)?;
-    conn.execute_batch(
-        r#"
-        CREATE TABLE IF NOT EXISTS exam_allocation_settings (
-            id INTEGER PRIMARY KEY,
-            default_capacity INTEGER NOT NULL,
-            max_capacity INTEGER NOT NULL,
-            exam_title TEXT NOT NULL DEFAULT '',
-            exam_notices_json TEXT NOT NULL DEFAULT '[]',
-            updated_at TEXT NOT NULL
-        );
-
-        CREATE TABLE IF NOT EXISTS latest_exam_plan_meta (
-            id INTEGER PRIMARY KEY,
-            generated_at TEXT NOT NULL,
-            default_capacity INTEGER NOT NULL,
-            max_capacity INTEGER NOT NULL,
-            grade_count INTEGER NOT NULL,
-            session_count INTEGER NOT NULL,
-            warning_count INTEGER NOT NULL
-        );
-
-        CREATE TABLE IF NOT EXISTS exam_generation_progress (
-            id INTEGER PRIMARY KEY,
-            status TEXT NOT NULL,
-            stage TEXT NOT NULL,
-            stage_label TEXT NOT NULL,
-            percent INTEGER NOT NULL,
-            message TEXT NOT NULL,
-            current_grade TEXT,
-            total_grades INTEGER NOT NULL DEFAULT 0,
-            completed_grades INTEGER NOT NULL DEFAULT 0,
-            updated_at TEXT NOT NULL
-        );
-
-        CREATE TABLE IF NOT EXISTS latest_exam_plan_sessions (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            grade_name TEXT NOT NULL,
-            subject TEXT NOT NULL,
-            is_foreign_group INTEGER NOT NULL,
-            foreign_order INTEGER,
-            participant_count INTEGER NOT NULL,
-            exam_room_count INTEGER NOT NULL,
-            self_study_room_count INTEGER NOT NULL
-        );
-
-        CREATE TABLE IF NOT EXISTS latest_exam_plan_spaces (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            session_id INTEGER NOT NULL,
-            space_type TEXT NOT NULL,
-            space_source TEXT NOT NULL,
-            grade_name TEXT NOT NULL,
-            subject TEXT NOT NULL,
-            space_name TEXT NOT NULL,
-            original_class_name TEXT,
-            building TEXT NOT NULL,
-            floor TEXT NOT NULL,
-            capacity INTEGER,
-            sort_index INTEGER NOT NULL,
-            FOREIGN KEY(session_id) REFERENCES latest_exam_plan_sessions(id) ON DELETE CASCADE
-        );
-
-        CREATE TABLE IF NOT EXISTS latest_exam_plan_student_allocations (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            session_id INTEGER NOT NULL,
-            admission_no TEXT NOT NULL,
-            student_name TEXT NOT NULL,
-            class_name TEXT NOT NULL,
-            allocation_type TEXT NOT NULL,
-            space_id INTEGER,
-            seat_no INTEGER,
-            subject_score REAL,
-            FOREIGN KEY(session_id) REFERENCES latest_exam_plan_sessions(id) ON DELETE CASCADE,
-            FOREIGN KEY(space_id) REFERENCES latest_exam_plan_spaces(id) ON DELETE SET NULL
-        );
-
-        CREATE TABLE IF NOT EXISTS latest_exam_plan_staff_assignments (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            session_id INTEGER NOT NULL,
-            space_id INTEGER NOT NULL,
-            teacher_name TEXT NOT NULL,
-            assignment_type TEXT NOT NULL,
-            note TEXT,
-            FOREIGN KEY(session_id) REFERENCES latest_exam_plan_sessions(id) ON DELETE CASCADE,
-            FOREIGN KEY(space_id) REFERENCES latest_exam_plan_spaces(id) ON DELETE CASCADE
-        );
-
-        CREATE TABLE IF NOT EXISTS exam_session_times (
-            session_id INTEGER PRIMARY KEY,
-            subject TEXT NOT NULL,
-            start_at TEXT NOT NULL,
-            end_at TEXT NOT NULL,
-            updated_at TEXT NOT NULL,
-            FOREIGN KEY(session_id) REFERENCES latest_exam_plan_sessions(id) ON DELETE CASCADE
-        );
-
-        CREATE TABLE IF NOT EXISTS exam_subject_time_templates (
-            subject TEXT PRIMARY KEY,
-            start_at TEXT NOT NULL,
-            end_at TEXT NOT NULL,
-            updated_at TEXT NOT NULL
-        );
-
-        CREATE TABLE IF NOT EXISTS latest_exam_staff_plan_meta (
-            id INTEGER PRIMARY KEY,
-            generated_at TEXT NOT NULL,
-            session_count INTEGER NOT NULL,
-            task_count INTEGER NOT NULL,
-            assigned_count INTEGER NOT NULL,
-            unassigned_count INTEGER NOT NULL,
-            warning_count INTEGER NOT NULL,
-            imbalance_minutes INTEGER NOT NULL
-        );
-
-        CREATE TABLE IF NOT EXISTS latest_exam_staff_tasks (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            session_id INTEGER NOT NULL,
-            space_id INTEGER,
-            role TEXT NOT NULL,
-            grade_name TEXT NOT NULL,
-            subject TEXT NOT NULL,
-            space_name TEXT NOT NULL,
-            floor TEXT NOT NULL,
-            start_at TEXT NOT NULL,
-            end_at TEXT NOT NULL,
-            duration_minutes INTEGER NOT NULL,
-            recommended_subject TEXT,
-            priority_subject_chain TEXT,
-            status TEXT NOT NULL,
-            reason TEXT,
-            FOREIGN KEY(session_id) REFERENCES latest_exam_plan_sessions(id) ON DELETE CASCADE,
-            FOREIGN KEY(space_id) REFERENCES latest_exam_plan_spaces(id) ON DELETE SET NULL
-        );
-
-        CREATE TABLE IF NOT EXISTS latest_exam_staff_assignments (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            task_id INTEGER NOT NULL,
-            teacher_id INTEGER NOT NULL,
-            teacher_name TEXT NOT NULL,
-            assigned_at TEXT NOT NULL,
-            FOREIGN KEY(task_id) REFERENCES latest_exam_staff_tasks(id) ON DELETE CASCADE
-        );
-
-        CREATE TABLE IF NOT EXISTS latest_teacher_duty_stats (
-            teacher_id INTEGER PRIMARY KEY,
-            teacher_name TEXT NOT NULL,
-            indoor_minutes INTEGER NOT NULL,
-            outdoor_minutes INTEGER NOT NULL,
-            total_minutes INTEGER NOT NULL,
-            task_count INTEGER NOT NULL,
-            exam_room_task_count INTEGER NOT NULL DEFAULT 0,
-            self_study_task_count INTEGER NOT NULL DEFAULT 0,
-            floor_rover_task_count INTEGER NOT NULL DEFAULT 0,
-            is_middle_manager INTEGER NOT NULL DEFAULT 0
-        );
-
-        CREATE TABLE IF NOT EXISTS invigilation_config_settings (
-            id INTEGER PRIMARY KEY,
-            default_exam_room_required_count INTEGER NOT NULL DEFAULT 1,
-            indoor_allowance_per_minute REAL NOT NULL DEFAULT 0.5,
-            outdoor_allowance_per_minute REAL NOT NULL DEFAULT 0.3,
-            middle_manager_default_enabled INTEGER NOT NULL DEFAULT 0,
-            middle_manager_exception_teacher_ids_json TEXT NOT NULL DEFAULT '[]',
-            self_study_subject TEXT NOT NULL DEFAULT 'chinese',
-            self_study_start_time TEXT NOT NULL DEFAULT '12:10',
-            self_study_end_time TEXT NOT NULL DEFAULT '13:40',
-            self_study_class_subjects_json TEXT NOT NULL DEFAULT '[]',
-            updated_at TEXT NOT NULL
-        );
-
-        CREATE TABLE IF NOT EXISTS invigilation_staff_exclusions (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            teacher_id INTEGER NOT NULL,
-            teacher_name TEXT NOT NULL,
-            session_id INTEGER NOT NULL,
-            session_label TEXT NOT NULL,
-            created_at TEXT NOT NULL,
-            UNIQUE(teacher_id, session_id)
-        );
-
-        CREATE INDEX IF NOT EXISTS idx_exam_session_times_subject ON exam_session_times(subject);
-        CREATE INDEX IF NOT EXISTS idx_exam_subject_time_templates_subject ON exam_subject_time_templates(subject);
-        CREATE INDEX IF NOT EXISTS idx_latest_exam_staff_tasks_session ON latest_exam_staff_tasks(session_id);
-        CREATE INDEX IF NOT EXISTS idx_latest_exam_staff_tasks_role_status ON latest_exam_staff_tasks(role, status);
-        CREATE INDEX IF NOT EXISTS idx_latest_exam_staff_assignments_task ON latest_exam_staff_assignments(task_id);
-        CREATE INDEX IF NOT EXISTS idx_latest_teacher_duty_stats_total ON latest_teacher_duty_stats(total_minutes);
-        CREATE INDEX IF NOT EXISTS idx_invigilation_staff_exclusions_session ON invigilation_staff_exclusions(session_id);
-        "#,
-    )?;
-    ensure_column(
-        conn,
-        "exam_allocation_settings",
-        "exam_title TEXT NOT NULL DEFAULT ''",
-        "exam_title",
-    )?;
-    ensure_column(
-        conn,
-        "exam_allocation_settings",
-        "exam_notices_json TEXT NOT NULL DEFAULT '[]'",
-        "exam_notices_json",
-    )?;
-    ensure_column(
-        conn,
-        "latest_teacher_duty_stats",
-        "exam_room_task_count INTEGER NOT NULL DEFAULT 0",
-        "exam_room_task_count",
-    )?;
-    ensure_column(
-        conn,
-        "latest_teacher_duty_stats",
-        "self_study_task_count INTEGER NOT NULL DEFAULT 0",
-        "self_study_task_count",
-    )?;
-    ensure_column(
-        conn,
-        "latest_teacher_duty_stats",
-        "floor_rover_task_count INTEGER NOT NULL DEFAULT 0",
-        "floor_rover_task_count",
-    )?;
-    ensure_column(
-        conn,
-        "latest_exam_staff_tasks",
-        "allowance_amount REAL NOT NULL DEFAULT 0",
-        "allowance_amount",
-    )?;
-    ensure_column(
-        conn,
-        "latest_teacher_duty_stats",
-        "allowance_total REAL NOT NULL DEFAULT 0",
-        "allowance_total",
-    )?;
-    ensure_column(
-        conn,
-        "latest_teacher_duty_stats",
-        "indoor_allowance_total REAL NOT NULL DEFAULT 0",
-        "indoor_allowance_total",
-    )?;
-    ensure_column(
-        conn,
-        "latest_teacher_duty_stats",
-        "outdoor_allowance_total REAL NOT NULL DEFAULT 0",
-        "outdoor_allowance_total",
-    )?;
-    ensure_column(
-        conn,
-        "latest_teacher_duty_stats",
-        "is_middle_manager INTEGER NOT NULL DEFAULT 0",
-        "is_middle_manager",
-    )?;
-    ensure_column(
-        conn,
-        "latest_exam_plan_spaces",
-        "self_study_subject TEXT",
-        "self_study_subject",
-    )?;
-    ensure_column(
-        conn,
-        "invigilation_config_settings",
-        "middle_manager_default_enabled INTEGER NOT NULL DEFAULT 0",
-        "middle_manager_default_enabled",
-    )?;
-    ensure_column(
-        conn,
-        "invigilation_config_settings",
-        "middle_manager_exception_teacher_ids_json TEXT NOT NULL DEFAULT '[]'",
-        "middle_manager_exception_teacher_ids_json",
-    )?;
-    ensure_column(
-        conn,
-        "invigilation_config_settings",
-        "self_study_class_subjects_json TEXT NOT NULL DEFAULT '[]'",
-        "self_study_class_subjects_json",
-    )?;
-
-    let now = Utc::now().to_rfc3339();
-    let default_notices_json = default_exam_notices_json()?;
-    conn.execute(
-        "INSERT OR IGNORE INTO exam_allocation_settings (id, default_capacity, max_capacity, exam_title, exam_notices_json, updated_at) VALUES (1, ?1, ?2, ?3, ?4, ?5)",
-        params![DEFAULT_CAPACITY, DEFAULT_MAX_CAPACITY, DEFAULT_EXAM_TITLE, default_notices_json, now],
-    )?;
-    conn.execute(
-        "INSERT OR IGNORE INTO exam_generation_progress (id, status, stage, stage_label, percent, message, current_grade, total_grades, completed_grades, updated_at) VALUES (1, 'idle', 'idle', '等待开始', 0, '等待开始分配考场', NULL, 0, 0, ?1)",
-        params![now],
-    )?;
-    conn.execute(
-        "INSERT OR IGNORE INTO invigilation_config_settings (id, default_exam_room_required_count, indoor_allowance_per_minute, outdoor_allowance_per_minute, middle_manager_default_enabled, middle_manager_exception_teacher_ids_json, self_study_subject, self_study_start_time, self_study_end_time, self_study_class_subjects_json, updated_at) VALUES (1, 1, 0.5, 0.3, 0, '[]', 'chinese', '12:10', '13:40', '[]', ?1)",
-        params![now],
-    )?;
-    conn.execute(
-        "UPDATE exam_allocation_settings SET exam_title = ?1 WHERE id = 1 AND TRIM(COALESCE(exam_title, '')) = ''",
-        params![DEFAULT_EXAM_TITLE],
-    )?;
-    let current_notices_json: String = conn.query_row(
-        "SELECT COALESCE(exam_notices_json, '') FROM exam_allocation_settings WHERE id = 1",
-        [],
-        |row| row.get(0),
-    )?;
-    if should_replace_exam_notices(&current_notices_json) {
-        conn.execute(
-            "UPDATE exam_allocation_settings SET exam_notices_json = ?1 WHERE id = 1",
-            params![default_exam_notices_json()?],
-        )?;
-    }
-    seed_default_subject_time_templates(conn)?;
-    Ok(())
 }
 
 fn validate_capacity(default_capacity: i64, max_capacity: i64) -> Result<(), AppError> {

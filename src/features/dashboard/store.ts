@@ -65,7 +65,7 @@ const defaultInvigilationConfig: InvigilationConfig = {
   outdoorAllowancePerMinute: 0.3,
   middleManagerDefaultEnabled: false,
   middleManagerExceptionTeacherIds: [],
-  selfStudySubject: Subject.Chinese,
+  selfStudyDate: new Date().toISOString().slice(0, 10),
   selfStudyStartTime: "12:10",
   selfStudyEndTime: "13:40",
 };
@@ -175,6 +175,7 @@ export function createExamAllocationStore(service: ExamAllocationService = examA
     state.invigilationConfig = {
       ...defaultInvigilationConfig,
       ...persisted.config,
+      selfStudyDate: (persisted.config.selfStudyDate || defaultInvigilationConfig.selfStudyDate).trim(),
     };
     state.staffExclusions = persisted.exclusions
       .map((item) => ({
@@ -448,7 +449,7 @@ export function createExamAllocationStore(service: ExamAllocationService = examA
       middleManagerExceptionTeacherIds: Array.from(
         new Set((next.middleManagerExceptionTeacherIds ?? []).map((item) => Number(item)).filter((item) => item > 0)),
       ).sort((a, b) => a - b),
-      selfStudySubject: next.selfStudySubject ?? Subject.Chinese,
+      selfStudyDate: (next.selfStudyDate || defaultInvigilationConfig.selfStudyDate).trim(),
       selfStudyStartTime: (next.selfStudyStartTime || "12:10").trim(),
       selfStudyEndTime: (next.selfStudyEndTime || "13:40").trim(),
     };
