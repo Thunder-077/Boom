@@ -262,43 +262,7 @@ pub fn open_connection(app: &AppHandle) -> Result<Connection, AppError> {
 }
 
 pub fn init_schema(conn: &Connection) -> Result<(), AppError> {
-    conn.execute_batch(
-        r#"
-        CREATE TABLE IF NOT EXISTS latest_import_meta (
-            id INTEGER PRIMARY KEY,
-            imported_at TEXT NOT NULL,
-            source_file TEXT NOT NULL,
-            row_count INTEGER NOT NULL
-        );
-        CREATE TABLE IF NOT EXISTS latest_student_scores (
-            admission_no TEXT PRIMARY KEY,
-            class_name TEXT NOT NULL,
-            grade_name TEXT NOT NULL,
-            student_name TEXT NOT NULL,
-            subject_combination TEXT NOT NULL DEFAULT '',
-            language TEXT NOT NULL DEFAULT '',
-            total_score REAL NOT NULL,
-            class_rank INTEGER NOT NULL,
-            grade_rank INTEGER NOT NULL,
-            selected_subject_count INTEGER NOT NULL
-        );
-        CREATE TABLE IF NOT EXISTS latest_subject_scores (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            admission_no TEXT NOT NULL,
-            subject TEXT NOT NULL,
-            score REAL,
-            is_selected INTEGER NOT NULL,
-            is_absent INTEGER NOT NULL,
-            FOREIGN KEY(admission_no) REFERENCES latest_student_scores(admission_no)
-        );
-        CREATE INDEX IF NOT EXISTS idx_latest_student_class_name ON latest_student_scores(class_name);
-        CREATE INDEX IF NOT EXISTS idx_latest_student_grade_name ON latest_student_scores(grade_name);
-        CREATE INDEX IF NOT EXISTS idx_latest_student_name ON latest_student_scores(student_name);
-        CREATE INDEX IF NOT EXISTS idx_latest_student_admission ON latest_student_scores(admission_no);
-        CREATE INDEX IF NOT EXISTS idx_latest_subject_admission ON latest_subject_scores(admission_no);
-        "#,
-    )?;
-    Ok(())
+    crate::schema::ensure_schema(conn)
 }
 
 fn cell_to_trimmed_string(cell: Option<&Data>) -> String {

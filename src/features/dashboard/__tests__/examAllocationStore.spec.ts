@@ -105,7 +105,7 @@ const fakeService: ExamAllocationService = {
         outdoorAllowancePerMinute: 0.3,
         middleManagerDefaultEnabled: false,
         middleManagerExceptionTeacherIds: [],
-        selfStudySubject: Subject.Chinese,
+        selfStudyDate: "2026-03-24",
         selfStudyStartTime: "12:10",
         selfStudyEndTime: "13:40",
       },

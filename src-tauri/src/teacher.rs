@@ -128,79 +128,8 @@ struct AggregatedTeacher {
     homeroom_classes: HashSet<String>,
 }
 
-fn has_column(conn: &Connection, table_name: &str, column_name: &str) -> Result<bool, AppError> {
-    let sql = format!("PRAGMA table_info({table_name})");
-    let mut stmt = conn.prepare(&sql)?;
-    let rows = stmt.query_map([], |row| row.get::<_, String>(1))?;
-    for row in rows {
-        if row? == column_name {
-            return Ok(true);
-        }
-    }
-    Ok(false)
-}
-
-fn ensure_column(conn: &Connection, table_name: &str, column_sql: &str, column_name: &str) -> Result<(), AppError> {
-    if has_column(conn, table_name, column_name)? {
-        return Ok(());
-    }
-    let sql = format!("ALTER TABLE {table_name} ADD COLUMN {column_sql}");
-    conn.execute(&sql, [])?;
-    Ok(())
-}
-
 pub fn ensure_schema(conn: &Connection) -> Result<(), AppError> {
-    score::init_schema(conn)?;
-    conn.execute_batch(
-        r#"
-        CREATE TABLE IF NOT EXISTS latest_teacher_import_meta (
-            id INTEGER PRIMARY KEY,
-            imported_at TEXT NOT NULL,
-            source_file TEXT NOT NULL,
-            row_count INTEGER NOT NULL
-        );
-
-        CREATE TABLE IF NOT EXISTS latest_teachers_v2 (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            teacher_name TEXT NOT NULL UNIQUE,
-            remark TEXT
-        );
-
-        CREATE TABLE IF NOT EXISTS latest_teacher_homerooms_v2 (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            teacher_id INTEGER NOT NULL,
-            class_name TEXT NOT NULL,
-            UNIQUE(teacher_id, class_name),
-            FOREIGN KEY(teacher_id) REFERENCES latest_teachers_v2(id) ON DELETE CASCADE
-        );
-
-        CREATE TABLE IF NOT EXISTS latest_teacher_assignments_v2 (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            teacher_id INTEGER NOT NULL,
-            subject TEXT NOT NULL,
-            class_name TEXT NOT NULL,
-            UNIQUE(teacher_id, subject, class_name),
-            FOREIGN KEY(teacher_id) REFERENCES latest_teachers_v2(id) ON DELETE CASCADE
-        );
-
-        CREATE INDEX IF NOT EXISTS idx_latest_teachers_v2_name ON latest_teachers_v2(teacher_name);
-        CREATE INDEX IF NOT EXISTS idx_latest_teacher_assignments_v2_teacher_id ON latest_teacher_assignments_v2(teacher_id);
-        CREATE INDEX IF NOT EXISTS idx_latest_teacher_assignments_v2_subject ON latest_teacher_assignments_v2(subject);
-        CREATE INDEX IF NOT EXISTS idx_latest_teacher_assignments_v2_class_name ON latest_teacher_assignments_v2(class_name);
-        CREATE INDEX IF NOT EXISTS idx_latest_teacher_homerooms_v2_teacher_id ON latest_teacher_homerooms_v2(teacher_id);
-        CREATE INDEX IF NOT EXISTS idx_latest_teacher_homerooms_v2_class_name ON latest_teacher_homerooms_v2(class_name);
-        "#,
-    )?;
-    ensure_column(
-        conn,
-        "latest_teachers_v2",
-        "is_middle_manager INTEGER NOT NULL DEFAULT 0",
-        "is_middle_manager",
-    )?;
-    conn.execute(
-        "UPDATE latest_teachers_v2 SET is_middle_manager = 0 WHERE is_middle_manager IS NULL",
-        [],
-    )?;
+    crate::schema::ensure_schema(conn)?;
     Ok(())
 }
 
