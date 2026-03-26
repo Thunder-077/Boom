@@ -1,0 +1,12 @@
+prefix=C:/Users/corentinl/work/or-tools/or-tools_x64_VisualStudio2022_cpp_v9.12.4544
+exec_prefix=C:/Users/corentinl/work/or-tools/or-tools_x64_VisualStudio2022_cpp_v9.12.4544
+libdir=C:/Users/corentinl/work/or-tools/or-tools_x64_VisualStudio2022_cpp_v9.12.4544/lib
+includedir=C:/Users/corentinl/work/or-tools/or-tools_x64_VisualStudio2022_cpp_v9.12.4544/include
+
+Name: Protocol Buffers
+Description: Google's Data Interchange Format
+Version: 29.3.0
+Requires: abseil_dll utf8_range
+Libs: -L${libdir} -lprotobuf-lite 
+Cflags: -I${includedir} -DPROTOBUF_USE_DLLS
+Conflicts: protobuf

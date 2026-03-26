@@ -25,6 +25,9 @@
   "bundle": {
     "active": true,
     "targets": "all",
+    "resources": {
+      "vendor/or-tools_x64_VisualStudio2022_cpp_v9.12.4544/bin/": "ortools/"
+    },
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",

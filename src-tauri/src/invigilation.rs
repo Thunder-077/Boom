@@ -101,4 +101,3 @@ pub fn list_latest_teacher_duty_stats(
 ) -> Result<ListResult<TeacherDutyStat>, String> {
     exam_staff::list_latest_teacher_duty_stats(app, params)
 }
-

@@ -9,10 +9,18 @@ mod schema;
 mod score;
 mod teacher;
 
+use std::path::PathBuf;
+
+use tauri::Manager;
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
+        .setup(|app| {
+            configure_cp_sat_runtime(app);
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             app_log::append_app_log,
             app_log::get_app_log_path,
@@ -54,4 +62,20 @@ pub fn run() {
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+fn configure_cp_sat_runtime(app: &mut tauri::App) {
+    let mut candidates = Vec::<PathBuf>::new();
+    if let Some(path) = option_env!("ACADEMIC_ORTOOLS_DEV_DIR") {
+        candidates.push(PathBuf::from(path).join("sat_runner.exe"));
+    }
+    if let Ok(resource_dir) = app.path().resource_dir() {
+        candidates.push(resource_dir.join("ortools").join("sat_runner.exe"));
+    }
+    for candidate in candidates {
+        if candidate.is_file() {
+            std::env::set_var("CP_SAT_SAT_RUNNER", candidate);
+            break;
+        }
+    }
 }

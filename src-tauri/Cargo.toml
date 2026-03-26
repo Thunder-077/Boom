@@ -28,3 +28,4 @@ regex = "1"
 chrono = { version = "0.4", features = ["serde"] }
 rust_xlsxwriter = "0.92"
 zip = "4.6.1"
+cp_sat = { path = "third_party/cp_sat" }

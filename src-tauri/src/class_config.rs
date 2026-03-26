@@ -97,11 +97,7 @@ pub fn ensure_schema(conn: &Connection) -> Result<(), AppError> {
 }
 
 fn seed_default_class_configs(conn: &Connection) -> Result<(), AppError> {
-    let count: i64 = conn.query_row(
-        "SELECT COUNT(*) FROM class_configs",
-        [],
-        |row| row.get(0),
-    )?;
+    let count: i64 = conn.query_row("SELECT COUNT(*) FROM class_configs", [], |row| row.get(0))?;
     if count > 0 {
         return Ok(());
     }
@@ -138,17 +134,138 @@ fn seed_default_class_configs(conn: &Connection) -> Result<(), AppError> {
     }
 
     let grade2: [(&str, Vec<Subject>); 11] = [
-        ("高二1班", vec![Subject::Chinese, Subject::Math, Subject::Physics, Subject::Chemistry, Subject::Biology, Subject::Russian, Subject::English]),
-        ("高二2班", vec![Subject::Chinese, Subject::Math, Subject::Physics, Subject::Chemistry, Subject::Biology, Subject::English, Subject::Russian]),
-        ("高二3班", vec![Subject::Chinese, Subject::Math, Subject::Physics, Subject::Chemistry, Subject::Geography, Subject::Russian, Subject::English]),
-        ("高二4班", vec![Subject::Chinese, Subject::Math, Subject::Physics, Subject::Chemistry, Subject::Geography, Subject::English, Subject::Russian]),
-        ("高二5班", vec![Subject::Chinese, Subject::Math, Subject::History, Subject::Biology, Subject::Geography, Subject::Russian, Subject::English]),
-        ("高二6班", vec![Subject::Chinese, Subject::Math, Subject::History, Subject::Biology, Subject::Geography, Subject::English, Subject::Russian]),
-        ("高二7班", vec![Subject::Chinese, Subject::Math, Subject::History, Subject::Politics, Subject::Geography, Subject::Russian, Subject::English]),
-        ("高二8班", vec![Subject::Chinese, Subject::Math, Subject::History, Subject::Politics, Subject::Geography, Subject::Russian, Subject::English]),
-        ("高二9班", vec![Subject::Chinese, Subject::Math, Subject::History, Subject::Politics, Subject::Geography, Subject::English, Subject::Russian]),
-        ("高二10班", vec![Subject::Chinese, Subject::Math, Subject::History, Subject::Politics, Subject::Geography, Subject::English, Subject::Russian]),
-        ("高二11班", vec![Subject::Chinese, Subject::Math, Subject::History, Subject::Politics, Subject::Geography, Subject::English, Subject::Russian]),
+        (
+            "高二1班",
+            vec![
+                Subject::Chinese,
+                Subject::Math,
+                Subject::Physics,
+                Subject::Chemistry,
+                Subject::Biology,
+                Subject::Russian,
+                Subject::English,
+            ],
+        ),
+        (
+            "高二2班",
+            vec![
+                Subject::Chinese,
+                Subject::Math,
+                Subject::Physics,
+                Subject::Chemistry,
+                Subject::Biology,
+                Subject::English,
+                Subject::Russian,
+            ],
+        ),
+        (
+            "高二3班",
+            vec![
+                Subject::Chinese,
+                Subject::Math,
+                Subject::Physics,
+                Subject::Chemistry,
+                Subject::Geography,
+                Subject::Russian,
+                Subject::English,
+            ],
+        ),
+        (
+            "高二4班",
+            vec![
+                Subject::Chinese,
+                Subject::Math,
+                Subject::Physics,
+                Subject::Chemistry,
+                Subject::Geography,
+                Subject::English,
+                Subject::Russian,
+            ],
+        ),
+        (
+            "高二5班",
+            vec![
+                Subject::Chinese,
+                Subject::Math,
+                Subject::History,
+                Subject::Biology,
+                Subject::Geography,
+                Subject::Russian,
+                Subject::English,
+            ],
+        ),
+        (
+            "高二6班",
+            vec![
+                Subject::Chinese,
+                Subject::Math,
+                Subject::History,
+                Subject::Biology,
+                Subject::Geography,
+                Subject::English,
+                Subject::Russian,
+            ],
+        ),
+        (
+            "高二7班",
+            vec![
+                Subject::Chinese,
+                Subject::Math,
+                Subject::History,
+                Subject::Politics,
+                Subject::Geography,
+                Subject::Russian,
+                Subject::English,
+            ],
+        ),
+        (
+            "高二8班",
+            vec![
+                Subject::Chinese,
+                Subject::Math,
+                Subject::History,
+                Subject::Politics,
+                Subject::Geography,
+                Subject::Russian,
+                Subject::English,
+            ],
+        ),
+        (
+            "高二9班",
+            vec![
+                Subject::Chinese,
+                Subject::Math,
+                Subject::History,
+                Subject::Politics,
+                Subject::Geography,
+                Subject::English,
+                Subject::Russian,
+            ],
+        ),
+        (
+            "高二10班",
+            vec![
+                Subject::Chinese,
+                Subject::Math,
+                Subject::History,
+                Subject::Politics,
+                Subject::Geography,
+                Subject::English,
+                Subject::Russian,
+            ],
+        ),
+        (
+            "高二11班",
+            vec![
+                Subject::Chinese,
+                Subject::Math,
+                Subject::History,
+                Subject::Politics,
+                Subject::Geography,
+                Subject::English,
+                Subject::Russian,
+            ],
+        ),
     ];
 
     for (name, subjects) in grade2 {
@@ -229,7 +346,11 @@ fn dedup_subjects(input: Vec<Subject>) -> Vec<Subject> {
     out
 }
 
-fn insert_class_config_tx(tx: &Transaction<'_>, payload: &UpsertClassConfigPayload, now: &str) -> Result<i64, AppError> {
+fn insert_class_config_tx(
+    tx: &Transaction<'_>,
+    payload: &UpsertClassConfigPayload,
+    now: &str,
+) -> Result<i64, AppError> {
     validate_payload(payload)?;
     tx.execute(
         r#"
@@ -259,7 +380,12 @@ fn insert_class_config_tx(tx: &Transaction<'_>, payload: &UpsertClassConfigPaylo
     Ok(id)
 }
 
-fn update_class_config_tx(tx: &Transaction<'_>, id: i64, payload: &UpsertClassConfigPayload, now: &str) -> Result<(), AppError> {
+fn update_class_config_tx(
+    tx: &Transaction<'_>,
+    id: i64,
+    payload: &UpsertClassConfigPayload,
+    now: &str,
+) -> Result<(), AppError> {
     validate_payload(payload)?;
     let affected = tx.execute(
         r#"
@@ -281,7 +407,10 @@ fn update_class_config_tx(tx: &Transaction<'_>, id: i64, payload: &UpsertClassCo
     if affected == 0 {
         return Err(AppError::new("配置不存在"));
     }
-    tx.execute("DELETE FROM class_config_subjects WHERE config_id = ?1", params![id])?;
+    tx.execute(
+        "DELETE FROM class_config_subjects WHERE config_id = ?1",
+        params![id],
+    )?;
     for subject in dedup_subjects(payload.subjects.clone().unwrap_or_default()) {
         tx.execute(
             "INSERT INTO class_config_subjects (config_id, subject) VALUES (?1, ?2)",
@@ -292,7 +421,10 @@ fn update_class_config_tx(tx: &Transaction<'_>, id: i64, payload: &UpsertClassCo
 }
 
 #[tauri::command]
-pub fn list_class_configs(app: AppHandle, params: ListClassConfigsParams) -> Result<ListResult<ClassConfigRow>, String> {
+pub fn list_class_configs(
+    app: AppHandle,
+    params: ListClassConfigsParams,
+) -> Result<ListResult<ClassConfigRow>, String> {
     let result = (|| -> Result<ListResult<ClassConfigRow>, AppError> {
         let conn = score::open_connection(&app)?;
         ensure_schema(&conn)?;
@@ -302,19 +434,31 @@ pub fn list_class_configs(app: AppHandle, params: ListClassConfigsParams) -> Res
         let mut values = vec![Value::Text(config_type.as_key().to_string())];
 
         if config_type == ClassConfigType::TeachingClass {
-            if let Some(grade_name) = params.grade_name.as_ref().map(|v| v.trim()).filter(|v| !v.is_empty()) {
+            if let Some(grade_name) = params
+                .grade_name
+                .as_ref()
+                .map(|v| v.trim())
+                .filter(|v| !v.is_empty())
+            {
                 where_parts.push("grade_name = ?".to_string());
                 values.push(Value::Text(grade_name.to_string()));
             }
         }
-        if let Some(keyword) = params.keyword.as_ref().map(|v| v.trim()).filter(|v| !v.is_empty()) {
+        if let Some(keyword) = params
+            .keyword
+            .as_ref()
+            .map(|v| v.trim())
+            .filter(|v| !v.is_empty())
+        {
             where_parts.push("class_name LIKE ?".to_string());
             values.push(Value::Text(format!("%{keyword}%")));
         }
 
         let where_sql = format!(" WHERE {}", where_parts.join(" AND "));
         let count_sql = format!("SELECT COUNT(*) FROM class_configs{where_sql}");
-        let total: i64 = conn.query_row(&count_sql, params_from_iter(values.iter()), |row| row.get(0))?;
+        let total: i64 = conn.query_row(&count_sql, params_from_iter(values.iter()), |row| {
+            row.get(0)
+        })?;
 
         let list_sql = format!(
             "SELECT id, config_type, grade_name, class_name, building, floor, room_label, updated_at FROM class_configs{where_sql} ORDER BY grade_name ASC, class_name ASC, id ASC"
@@ -323,7 +467,11 @@ pub fn list_class_configs(app: AppHandle, params: ListClassConfigsParams) -> Res
         let rows = stmt.query_map(params_from_iter(values.iter()), |row| {
             let type_key: String = row.get(1)?;
             let config_type = ClassConfigType::from_key(&type_key).ok_or_else(|| {
-                rusqlite::Error::InvalidColumnType(1, "config_type".to_string(), rusqlite::types::Type::Text)
+                rusqlite::Error::InvalidColumnType(
+                    1,
+                    "config_type".to_string(),
+                    rusqlite::types::Type::Text,
+                )
             })?;
             Ok(ClassConfigRow {
                 id: row.get(0)?,
@@ -358,9 +506,12 @@ pub fn get_class_config_detail(app: AppHandle, id: i64) -> Result<ClassConfigDet
         let mut rows = stmt.query(params![id])?;
         let row = rows.next()?.ok_or_else(|| AppError::new("配置不存在"))?;
         let type_key: String = row.get(1)?;
-        let config_type = ClassConfigType::from_key(&type_key).ok_or_else(|| AppError::new("配置类型错误"))?;
+        let config_type =
+            ClassConfigType::from_key(&type_key).ok_or_else(|| AppError::new("配置类型错误"))?;
 
-        let mut subject_stmt = conn.prepare("SELECT subject FROM class_config_subjects WHERE config_id = ?1 ORDER BY id ASC")?;
+        let mut subject_stmt = conn.prepare(
+            "SELECT subject FROM class_config_subjects WHERE config_id = ?1 ORDER BY id ASC",
+        )?;
         let subject_rows = subject_stmt.query_map(params![id], |srow| srow.get::<_, String>(0))?;
         let mut subjects = Vec::new();
         for key in subject_rows {
@@ -385,7 +536,10 @@ pub fn get_class_config_detail(app: AppHandle, id: i64) -> Result<ClassConfigDet
 }
 
 #[tauri::command]
-pub fn create_class_config(app: AppHandle, payload: UpsertClassConfigPayload) -> Result<CreateClassConfigResult, String> {
+pub fn create_class_config(
+    app: AppHandle,
+    payload: UpsertClassConfigPayload,
+) -> Result<CreateClassConfigResult, String> {
     let result = (|| -> Result<CreateClassConfigResult, AppError> {
         let mut conn = score::open_connection(&app)?;
         ensure_schema(&conn)?;
@@ -399,7 +553,11 @@ pub fn create_class_config(app: AppHandle, payload: UpsertClassConfigPayload) ->
 }
 
 #[tauri::command]
-pub fn update_class_config(app: AppHandle, id: i64, payload: UpsertClassConfigPayload) -> Result<SuccessResponse, String> {
+pub fn update_class_config(
+    app: AppHandle,
+    id: i64,
+    payload: UpsertClassConfigPayload,
+) -> Result<SuccessResponse, String> {
     let result = (|| -> Result<SuccessResponse, AppError> {
         let mut conn = score::open_connection(&app)?;
         ensure_schema(&conn)?;
@@ -418,7 +576,10 @@ pub fn delete_class_config(app: AppHandle, id: i64) -> Result<SuccessResponse, S
         let mut conn = score::open_connection(&app)?;
         ensure_schema(&conn)?;
         let tx = conn.transaction()?;
-        tx.execute("DELETE FROM class_config_subjects WHERE config_id = ?1", params![id])?;
+        tx.execute(
+            "DELETE FROM class_config_subjects WHERE config_id = ?1",
+            params![id],
+        )?;
         let affected = tx.execute("DELETE FROM class_configs WHERE id = ?1", params![id])?;
         if affected == 0 {
             return Err(AppError::new("配置不存在"));
@@ -461,19 +622,35 @@ mod tests {
     fn test_seed_idempotent() {
         let conn = setup_conn();
         let teaching_count: i64 = conn
-            .query_row("SELECT COUNT(*) FROM class_configs WHERE config_type = 'teaching_class'", [], |row| row.get(0))
+            .query_row(
+                "SELECT COUNT(*) FROM class_configs WHERE config_type = 'teaching_class'",
+                [],
+                |row| row.get(0),
+            )
             .unwrap();
         let exam_room_count: i64 = conn
-            .query_row("SELECT COUNT(*) FROM class_configs WHERE config_type = 'exam_room'", [], |row| row.get(0))
+            .query_row(
+                "SELECT COUNT(*) FROM class_configs WHERE config_type = 'exam_room'",
+                [],
+                |row| row.get(0),
+            )
             .unwrap();
         assert_eq!(teaching_count, 15);
         assert_eq!(exam_room_count, 5);
         seed_default_class_configs(&conn).unwrap();
         let teaching_count2: i64 = conn
-            .query_row("SELECT COUNT(*) FROM class_configs WHERE config_type = 'teaching_class'", [], |row| row.get(0))
+            .query_row(
+                "SELECT COUNT(*) FROM class_configs WHERE config_type = 'teaching_class'",
+                [],
+                |row| row.get(0),
+            )
             .unwrap();
         let exam_room_count2: i64 = conn
-            .query_row("SELECT COUNT(*) FROM class_configs WHERE config_type = 'exam_room'", [], |row| row.get(0))
+            .query_row(
+                "SELECT COUNT(*) FROM class_configs WHERE config_type = 'exam_room'",
+                [],
+                |row| row.get(0),
+            )
             .unwrap();
         assert_eq!(teaching_count2, 15);
         assert_eq!(exam_room_count2, 5);
@@ -549,14 +726,21 @@ mod tests {
         assert_eq!(subject_count, 1);
 
         let tx3 = conn.unchecked_transaction().unwrap();
-        tx3.execute("DELETE FROM class_config_subjects WHERE config_id = ?1", params![id])
-            .unwrap();
+        tx3.execute(
+            "DELETE FROM class_config_subjects WHERE config_id = ?1",
+            params![id],
+        )
+        .unwrap();
         tx3.execute("DELETE FROM class_configs WHERE id = ?1", params![id])
             .unwrap();
         tx3.commit().unwrap();
 
         let row_count: i64 = conn
-            .query_row("SELECT COUNT(*) FROM class_configs WHERE id = ?1", params![id], |row| row.get(0))
+            .query_row(
+                "SELECT COUNT(*) FROM class_configs WHERE id = ?1",
+                params![id],
+                |row| row.get(0),
+            )
             .unwrap();
         assert_eq!(row_count, 0);
     }

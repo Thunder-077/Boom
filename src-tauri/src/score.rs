@@ -287,7 +287,10 @@ fn cell_to_trimmed_string(cell: Option<&Data>) -> String {
 fn parse_subject_combination(text: &str, row_index: usize) -> Result<HashSet<Subject>, AppError> {
     let trimmed = text.trim();
     if trimmed.is_empty() {
-        return Err(AppError::new(format!("第 {} 行选科组合为空", row_index + 1)));
+        return Err(AppError::new(format!(
+            "第 {} 行选科组合为空",
+            row_index + 1
+        )));
     }
     let mut subjects: HashSet<Subject> = HashSet::new();
     // 所有学生默认选语文和数学
@@ -339,7 +342,12 @@ fn parse_language(text: &str, row_index: usize) -> Result<Subject, AppError> {
     }
 }
 
-fn parse_score_cell(cell: Option<&Data>, row_index: usize, subject_header: &str, is_selected: bool) -> Result<ParsedSubjectScoreState, AppError> {
+fn parse_score_cell(
+    cell: Option<&Data>,
+    row_index: usize,
+    subject_header: &str,
+    is_selected: bool,
+) -> Result<ParsedSubjectScoreState, AppError> {
     let text = cell_to_trimmed_string(cell);
 
     if is_selected {
@@ -433,7 +441,9 @@ fn parse_excel_rows(file_path: &str) -> Result<Vec<ParsedStudent>, AppError> {
         .ok_or_else(|| AppError::new("Excel 文件未找到工作表"))?
         .map_err(AppError::from)?;
     let mut rows_iter = range.rows();
-    let header_row = rows_iter.next().ok_or_else(|| AppError::new("Excel 文件为空，缺少表头"))?;
+    let header_row = rows_iter
+        .next()
+        .ok_or_else(|| AppError::new("Excel 文件为空，缺少表头"))?;
     validate_header(header_row)?;
 
     let mut students = Vec::new();
@@ -464,7 +474,12 @@ fn parse_excel_rows(file_path: &str) -> Result<Vec<ParsedStudent>, AppError> {
         let mut selected_subject_count = 0_i64;
         for (column_index, subject, header_name) in SUBJECT_COLUMNS {
             let is_selected = selected_subjects.contains(&subject);
-            let parsed = parse_score_cell(row.get(column_index), excel_row_index, header_name, is_selected)?;
+            let parsed = parse_score_cell(
+                row.get(column_index),
+                excel_row_index,
+                header_name,
+                is_selected,
+            )?;
             if parsed.selected {
                 selected_subject_count += 1;
                 total_score += parsed.score.unwrap_or(0.0);
@@ -496,7 +511,11 @@ fn parse_excel_rows(file_path: &str) -> Result<Vec<ParsedStudent>, AppError> {
     Ok(students)
 }
 
-fn assign_competition_rank(students: &mut [ParsedStudent], groups: HashMap<String, Vec<usize>>, is_class: bool) {
+fn assign_competition_rank(
+    students: &mut [ParsedStudent],
+    groups: HashMap<String, Vec<usize>>,
+    is_class: bool,
+) {
     for (_, mut indexes) in groups {
         indexes.sort_by(|a, b| {
             students[*b]
@@ -528,8 +547,14 @@ fn apply_ranks(students: &mut [ParsedStudent]) {
     let mut class_groups: HashMap<String, Vec<usize>> = HashMap::new();
     let mut grade_groups: HashMap<String, Vec<usize>> = HashMap::new();
     for (idx, student) in students.iter().enumerate() {
-        class_groups.entry(student.class_name.clone()).or_default().push(idx);
-        grade_groups.entry(student.grade_name.clone()).or_default().push(idx);
+        class_groups
+            .entry(student.class_name.clone())
+            .or_default()
+            .push(idx);
+        grade_groups
+            .entry(student.grade_name.clone())
+            .or_default()
+            .push(idx);
     }
     assign_competition_rank(students, class_groups, true);
     assign_competition_rank(students, grade_groups, false);
@@ -549,8 +574,14 @@ fn assign_rank_rows(rows: &mut [RankRow]) {
     let mut class_groups: HashMap<String, Vec<usize>> = HashMap::new();
     let mut grade_groups: HashMap<String, Vec<usize>> = HashMap::new();
     for (idx, row) in rows.iter().enumerate() {
-        class_groups.entry(row.class_name.clone()).or_default().push(idx);
-        grade_groups.entry(row.grade_name.clone()).or_default().push(idx);
+        class_groups
+            .entry(row.class_name.clone())
+            .or_default()
+            .push(idx);
+        grade_groups
+            .entry(row.grade_name.clone())
+            .or_default()
+            .push(idx);
     }
     for (_, mut indexes) in class_groups {
         indexes.sort_by(|a, b| {
@@ -624,7 +655,12 @@ fn recompute_ranks_tx(tx: &Transaction<'_>) -> Result<(), AppError> {
     Ok(())
 }
 
-fn persist_latest_snapshot(conn: &mut Connection, source_file: &str, imported_at: &str, students: &[ParsedStudent]) -> Result<(), AppError> {
+fn persist_latest_snapshot(
+    conn: &mut Connection,
+    source_file: &str,
+    imported_at: &str,
+    students: &[ParsedStudent],
+) -> Result<(), AppError> {
     let tx = conn.transaction()?;
     tx.execute("DELETE FROM latest_subject_scores", [])?;
     tx.execute("DELETE FROM latest_student_scores", [])?;
@@ -693,28 +729,50 @@ pub fn import_scores_from_excel(app: AppHandle, file_path: String) -> Result<Imp
         })
     })();
     result.map_err(|e| {
-        app_log::log_error(&app, "score.import_scores_from_excel", &format!("file_path={file_path} | {e}"));
+        app_log::log_error(
+            &app,
+            "score.import_scores_from_excel",
+            &format!("file_path={file_path} | {e}"),
+        );
         e.to_string()
     })
 }
 
 #[tauri::command]
-pub fn list_latest_score_rows(app: AppHandle, params: ScoreListParams) -> Result<ListResult<ScoreRow>, String> {
+pub fn list_latest_score_rows(
+    app: AppHandle,
+    params: ScoreListParams,
+) -> Result<ListResult<ScoreRow>, String> {
     let result = (|| -> Result<ListResult<ScoreRow>, AppError> {
         let conn = open_connection(&app)?;
         init_schema(&conn)?;
         let mut where_clauses: Vec<String> = Vec::new();
         let mut bind_values: Vec<Value> = Vec::new();
 
-        if let Some(keyword) = params.name_keyword.as_ref().map(|v| v.trim()).filter(|v| !v.is_empty()) {
+        if let Some(keyword) = params
+            .name_keyword
+            .as_ref()
+            .map(|v| v.trim())
+            .filter(|v| !v.is_empty())
+        {
             where_clauses.push("student_name LIKE ?".to_string());
             bind_values.push(Value::Text(format!("%{keyword}%")));
         }
-        if let Some(class_name) = params.class_name.as_ref().map(|v| v.trim()).filter(|v| !v.is_empty()) {
+        if let Some(class_name) = params
+            .class_name
+            .as_ref()
+            .map(|v| v.trim())
+            .filter(|v| !v.is_empty())
+        {
             where_clauses.push("class_name LIKE ?".to_string());
             bind_values.push(Value::Text(format!("%{class_name}%")));
         }
-        if let Some(grade_name) = params.grade_name.as_ref().map(|v| v.trim()).filter(|v| !v.is_empty()) {
+        if let Some(grade_name) = params
+            .grade_name
+            .as_ref()
+            .map(|v| v.trim())
+            .filter(|v| !v.is_empty())
+        {
             where_clauses.push("grade_name = ?".to_string());
             bind_values.push(Value::Text(grade_name.to_string()));
         }
@@ -725,7 +783,10 @@ pub fn list_latest_score_rows(app: AppHandle, params: ScoreListParams) -> Result
             format!(" WHERE {}", where_clauses.join(" AND "))
         };
         let total_sql = format!("SELECT COUNT(*) FROM latest_student_scores{where_sql}");
-        let total: i64 = conn.query_row(&total_sql, params_from_iter(bind_values.iter()), |row| row.get(0))?;
+        let total: i64 =
+            conn.query_row(&total_sql, params_from_iter(bind_values.iter()), |row| {
+                row.get(0)
+            })?;
 
         let page = params.page.unwrap_or(1).max(1);
         let page_size = params.page_size.unwrap_or(50).clamp(1, 500);
@@ -846,13 +907,19 @@ pub fn get_score_detail(app: AppHandle, admission_no: String) -> Result<ScoreDet
                 });
             }
         }
-        Ok(ScoreDetail { subjects, ..student })
+        Ok(ScoreDetail {
+            subjects,
+            ..student
+        })
     })();
     result.map_err(|e| e.to_string())
 }
 
 #[tauri::command]
-pub fn update_score_row(app: AppHandle, payload: UpdateScorePayload) -> Result<SuccessResponse, String> {
+pub fn update_score_row(
+    app: AppHandle,
+    payload: UpdateScorePayload,
+) -> Result<SuccessResponse, String> {
     let result = (|| -> Result<SuccessResponse, AppError> {
         let mut conn = open_connection(&app)?;
         init_schema(&conn)?;
@@ -896,9 +963,9 @@ pub fn update_score_row(app: AppHandle, payload: UpdateScorePayload) -> Result<S
                     selected_subject_count += 1;
                 }
                 ScoreCellState::Scored => {
-                    let score = item
-                        .score
-                        .ok_or_else(|| AppError::new(format!("{}成绩不能为空", subject.as_key())))?;
+                    let score = item.score.ok_or_else(|| {
+                        AppError::new(format!("{}成绩不能为空", subject.as_key()))
+                    })?;
                     if score < 0.0 {
                         return Err(AppError::new(format!("{}成绩不能小于 0", subject.as_key())));
                     }
@@ -955,11 +1022,26 @@ pub fn get_latest_summary(app: AppHandle) -> Result<LatestSummary, String> {
         let conn = open_connection(&app)?;
         init_schema(&conn)?;
         let imported_at = conn
-            .query_row("SELECT imported_at FROM latest_import_meta WHERE id = 1", [], |row| row.get::<_, String>(0))
+            .query_row(
+                "SELECT imported_at FROM latest_import_meta WHERE id = 1",
+                [],
+                |row| row.get::<_, String>(0),
+            )
             .ok();
-        let student_count: i64 = conn.query_row("SELECT COUNT(*) FROM latest_student_scores", [], |row| row.get(0))?;
-        let class_count: i64 = conn.query_row("SELECT COUNT(DISTINCT class_name) FROM latest_student_scores", [], |row| row.get(0))?;
-        let grade_count: i64 = conn.query_row("SELECT COUNT(DISTINCT grade_name) FROM latest_student_scores", [], |row| row.get(0))?;
+        let student_count: i64 =
+            conn.query_row("SELECT COUNT(*) FROM latest_student_scores", [], |row| {
+                row.get(0)
+            })?;
+        let class_count: i64 = conn.query_row(
+            "SELECT COUNT(DISTINCT class_name) FROM latest_student_scores",
+            [],
+            |row| row.get(0),
+        )?;
+        let grade_count: i64 = conn.query_row(
+            "SELECT COUNT(DISTINCT grade_name) FROM latest_student_scores",
+            [],
+            |row| row.get(0),
+        )?;
         Ok(LatestSummary {
             imported_at,
             student_count,
@@ -980,7 +1062,8 @@ mod tests {
         assert!(matches!(scored.state, ScoreCellState::Scored));
         assert_eq!(scored.score, Some(88.5));
 
-        let absent = parse_score_cell(Some(&Data::String("-".to_string())), 1, "物理", true).unwrap();
+        let absent =
+            parse_score_cell(Some(&Data::String("-".to_string())), 1, "物理", true).unwrap();
         assert!(matches!(absent.state, ScoreCellState::Absent));
         assert_eq!(absent.score, Some(0.0));
 
@@ -995,7 +1078,8 @@ mod tests {
         assert!(matches!(empty.state, ScoreCellState::NotSelected));
         assert_eq!(empty.score, None);
 
-        let dash = parse_score_cell(Some(&Data::String("-".to_string())), 1, "化学", false).unwrap();
+        let dash =
+            parse_score_cell(Some(&Data::String("-".to_string())), 1, "化学", false).unwrap();
         assert!(matches!(dash.state, ScoreCellState::NotSelected));
         assert_eq!(dash.score, None);
 
@@ -1030,9 +1114,18 @@ mod tests {
 
     #[test]
     fn test_parse_language() {
-        assert!(matches!(parse_language("英语", 0).unwrap(), Subject::English));
-        assert!(matches!(parse_language("俄语", 0).unwrap(), Subject::Russian));
-        assert!(matches!(parse_language("日语", 0).unwrap(), Subject::Japanese));
+        assert!(matches!(
+            parse_language("英语", 0).unwrap(),
+            Subject::English
+        ));
+        assert!(matches!(
+            parse_language("俄语", 0).unwrap(),
+            Subject::Russian
+        ));
+        assert!(matches!(
+            parse_language("日语", 0).unwrap(),
+            Subject::Japanese
+        ));
         assert!(parse_language("法语", 0).is_err());
     }
 }

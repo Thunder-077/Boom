@@ -3,8 +3,8 @@ use tauri::AppHandle;
 use crate::exam_allocation;
 
 pub use crate::exam_allocation::{
-    ExamAllocationSettings, ExamGenerationProgress, ExamPlanOverview, ExamPlanSessionDetail, GenerateLatestExamPlanPayload,
-    ListExamPlanSessionsParams, SuccessResponse,
+    ExamAllocationSettings, ExamGenerationProgress, ExamPlanOverview, ExamPlanSessionDetail,
+    GenerateLatestExamPlanPayload, ListExamPlanSessionsParams, SuccessResponse,
 };
 pub use crate::score::ListResult;
 

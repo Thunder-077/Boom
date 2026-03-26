@@ -24,7 +24,12 @@ pub fn log_path(app: &AppHandle) -> Result<PathBuf, AppError> {
     Ok(path)
 }
 
-pub fn append_log(app: &AppHandle, level: &str, scope: &str, message: &str) -> Result<(), AppError> {
+pub fn append_log(
+    app: &AppHandle,
+    level: &str,
+    scope: &str,
+    message: &str,
+) -> Result<(), AppError> {
     let path = log_path(app)?;
     let mut file = OpenOptions::new()
         .create(true)
@@ -48,7 +53,12 @@ pub fn log_error(app: &AppHandle, scope: &str, error: &str) {
 }
 
 #[tauri::command]
-pub fn append_app_log(app: AppHandle, level: String, scope: String, message: String) -> Result<(), String> {
+pub fn append_app_log(
+    app: AppHandle,
+    level: String,
+    scope: String,
+    message: String,
+) -> Result<(), String> {
     append_log(&app, &level, &scope, &message).map_err(|e| e.to_string())
 }
 

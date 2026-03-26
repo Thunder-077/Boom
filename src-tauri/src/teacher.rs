@@ -179,7 +179,8 @@ fn normalize_class_code(token: &str) -> String {
     if trimmed.is_empty() {
         return String::new();
     }
-    let with_class = Regex::new(r"^([123]\d{2})班$").expect("class code with 班 regex should be valid");
+    let with_class =
+        Regex::new(r"^([123]\d{2})班$").expect("class code with 班 regex should be valid");
     if let Some(caps) = with_class.captures(trimmed) {
         return normalize_class_code(&caps[1]);
     }
@@ -338,7 +339,9 @@ fn parse_teacher_excel(file_path: &str) -> Result<Vec<ParsedTeacherRow>, AppErro
         .map_err(AppError::from)?;
 
     let mut rows = range.rows();
-    let first_row = rows.next().ok_or_else(|| AppError::new("Excel 文件为空，缺少表头"))?;
+    let first_row = rows
+        .next()
+        .ok_or_else(|| AppError::new("Excel 文件为空，缺少表头"))?;
     let (header_indexes, data_start_row_no) = match detect_header_indexes(first_row) {
         Ok(indexes) => (indexes, 2_usize),
         Err(_) => {
@@ -367,8 +370,9 @@ fn parse_teacher_excel(file_path: &str) -> Result<Vec<ParsedTeacherRow>, AppErro
         if teacher_name.is_empty() {
             return Err(AppError::new(format!("第 {} 行教师姓名不能为空", row_no)));
         }
-        let subject = parse_teacher_subject(&subject_text)
-            .ok_or_else(|| AppError::new(format!("第 {} 行任教学科不合法: {}", row_no, subject_text)))?;
+        let subject = parse_teacher_subject(&subject_text).ok_or_else(|| {
+            AppError::new(format!("第 {} 行任教学科不合法: {}", row_no, subject_text))
+        })?;
         let class_names = parse_class_names(&class_text);
         if class_names.is_empty() {
             return Err(AppError::new(format!("第 {} 行任教班级不能为空", row_no)));
@@ -377,7 +381,11 @@ fn parse_teacher_excel(file_path: &str) -> Result<Vec<ParsedTeacherRow>, AppErro
             teacher_name,
             subject,
             class_names,
-            remark: if remark.is_empty() { None } else { Some(remark) },
+            remark: if remark.is_empty() {
+                None
+            } else {
+                Some(remark)
+            },
         });
     }
     if out.is_empty() {
@@ -473,7 +481,10 @@ fn persist_teachers(
 }
 
 #[tauri::command]
-pub fn import_teachers_from_excel(app: AppHandle, file_path: String) -> Result<TeacherImportResult, String> {
+pub fn import_teachers_from_excel(
+    app: AppHandle,
+    file_path: String,
+) -> Result<TeacherImportResult, String> {
     let start = Utc::now();
     let result = (|| -> Result<TeacherImportResult, AppError> {
         let mut conn = score::open_connection(&app)?;
@@ -489,13 +500,20 @@ pub fn import_teachers_from_excel(app: AppHandle, file_path: String) -> Result<T
         })
     })();
     result.map_err(|e| {
-        app_log::log_error(&app, "teacher.import_teachers_from_excel", &format!("file_path={file_path} | {e}"));
+        app_log::log_error(
+            &app,
+            "teacher.import_teachers_from_excel",
+            &format!("file_path={file_path} | {e}"),
+        );
         e.to_string()
     })
 }
 
 #[tauri::command]
-pub fn list_latest_teachers(app: AppHandle, params: TeacherListParams) -> Result<ListResult<TeacherRow>, String> {
+pub fn list_latest_teachers(
+    app: AppHandle,
+    params: TeacherListParams,
+) -> Result<ListResult<TeacherRow>, String> {
     let result = (|| -> Result<ListResult<TeacherRow>, AppError> {
         let conn = score::open_connection(&app)?;
         ensure_schema(&conn)?;
@@ -503,11 +521,21 @@ pub fn list_latest_teachers(app: AppHandle, params: TeacherListParams) -> Result
         let mut where_sql = String::from(" WHERE 1=1 ");
         let mut values: Vec<Value> = Vec::new();
 
-        if let Some(name_keyword) = params.name_keyword.as_ref().map(|s| s.trim()).filter(|s| !s.is_empty()) {
+        if let Some(name_keyword) = params
+            .name_keyword
+            .as_ref()
+            .map(|s| s.trim())
+            .filter(|s| !s.is_empty())
+        {
             where_sql.push_str(" AND t.teacher_name LIKE ? ");
             values.push(Value::Text(format!("%{name_keyword}%")));
         }
-        if let Some(class_name) = params.class_name.as_ref().map(|s| s.trim()).filter(|s| !s.is_empty()) {
+        if let Some(class_name) = params
+            .class_name
+            .as_ref()
+            .map(|s| s.trim())
+            .filter(|s| !s.is_empty())
+        {
             where_sql.push_str(" AND EXISTS (SELECT 1 FROM latest_teacher_assignments_v2 ta WHERE ta.teacher_id = t.id AND ta.class_name LIKE ?) ");
             values.push(Value::Text(format!("%{class_name}%")));
         }
@@ -517,7 +545,9 @@ pub fn list_latest_teachers(app: AppHandle, params: TeacherListParams) -> Result
         }
 
         let total_sql = format!("SELECT COUNT(*) FROM latest_teachers_v2 t {where_sql}");
-        let total: i64 = conn.query_row(&total_sql, params_from_iter(values.iter()), |row| row.get(0))?;
+        let total: i64 = conn.query_row(&total_sql, params_from_iter(values.iter()), |row| {
+            row.get(0)
+        })?;
 
         let list_sql = format!("SELECT t.id, t.teacher_name, t.remark, COALESCE(t.is_middle_manager, 0) FROM latest_teachers_v2 t {where_sql} ORDER BY t.id ASC");
         let mut stmt = conn.prepare(&list_sql)?;
@@ -585,7 +615,10 @@ pub fn get_latest_teacher_summary(app: AppHandle) -> Result<TeacherSummary, Stri
                 |row| row.get::<_, String>(0),
             )
             .ok();
-        let teacher_count: i64 = conn.query_row("SELECT COUNT(*) FROM latest_teachers_v2", [], |row| row.get(0))?;
+        let teacher_count: i64 =
+            conn.query_row("SELECT COUNT(*) FROM latest_teachers_v2", [], |row| {
+                row.get(0)
+            })?;
         Ok(TeacherSummary {
             imported_at,
             teacher_count,
@@ -616,16 +649,24 @@ mod tests {
     fn test_subject_extended() {
         assert_eq!(parse_teacher_subject("体育"), Some(TeacherSubject::Sports));
         assert_eq!(parse_teacher_subject("音乐"), Some(TeacherSubject::Music));
-        assert_eq!(parse_teacher_subject("信息"), Some(TeacherSubject::Information));
+        assert_eq!(
+            parse_teacher_subject("信息"),
+            Some(TeacherSubject::Information)
+        );
         assert_eq!(parse_teacher_subject("通用"), Some(TeacherSubject::General));
-        assert_eq!(parse_teacher_subject("美术"), Some(TeacherSubject::FineArts));
+        assert_eq!(
+            parse_teacher_subject("美术"),
+            Some(TeacherSubject::FineArts)
+        );
     }
 
     #[test]
     fn test_parse_homeroom_classes_and_middle_manager() {
         let classes = parse_homeroom_classes("202班班主任，中层领导");
         assert_eq!(classes, vec!["高二2班"]);
-        assert!(is_middle_manager(Some(&"202班班主任，中层领导".to_string())));
+        assert!(is_middle_manager(Some(
+            &"202班班主任，中层领导".to_string()
+        )));
     }
 
     #[test]
@@ -639,6 +680,9 @@ mod tests {
     fn test_build_teacher_remark_normalized() {
         let classes = HashSet::from(["高一2班".to_string(), "高一10班".to_string()]);
         let remark = build_teacher_remark(&classes, true, Some(&"中层领导/102班主任".to_string()));
-        assert_eq!(remark, Some("高一2班班主任，高一10班班主任，中层领导".to_string()));
+        assert_eq!(
+            remark,
+            Some("高一2班班主任，高一10班班主任，中层领导".to_string())
+        );
     }
 }
