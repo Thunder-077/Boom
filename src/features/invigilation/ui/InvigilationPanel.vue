@@ -138,10 +138,24 @@
 
     <ConfigCard>
       <div class="action-row">
-        <p class="action-text">确认规则后即可分配监考老师，并在完成后导出监考表。</p>
+        <p class="action-text">点击即可分配监考老师，并在完成后导出监考表。</p>
+        <div
+          v-if="assignmentNotice"
+          ref="assignmentNoticeEl"
+          class="assignment-notice inline"
+          :class="assignmentNotice.type"
+          :role="assignmentNotice.type === 'error' ? 'alert' : 'status'"
+          aria-live="polite"
+          tabindex="-1"
+        >
+          <span class="material-symbols-rounded assignment-notice-icon">
+            {{ assignmentNotice.type === "success" ? "check_circle" : "error" }}
+          </span>
+          <span class="assignment-notice-text">{{ assignmentNotice.text }}</span>
+        </div>
         <div class="action-buttons">
-          <button class="primary-btn action-btn" :disabled="store.viewState.assigning" @click="assignTeachers">{{ store.viewState.assigning ? "分配中..." : "分配监考老师" }}</button>
-          <button class="secondary-btn action-btn" :disabled="!store.viewState.staffOverview.generatedAt">导出监考表</button>
+          <button class="primary-btn action-btn" type="button" :disabled="store.viewState.assigning" @click="assignTeachers">{{ store.viewState.assigning ? "分配中..." : "分配监考老师" }}</button>
+          <button class="secondary-btn action-btn" type="button" :disabled="!store.viewState.staffOverview.generatedAt">导出监考表</button>
         </div>
       </div>
     </ConfigCard>
@@ -201,11 +215,11 @@
             <div class="toolbar-left">
               <button class="toolbar-btn primary" type="button" :disabled="selectedClassCount === 0" @click="toggleBulkMenu">为选中班级设科目</button>
               <div class="toolbar-filter">
-                <select v-model="gradeFilter">
-                  <option value="all">全部年级</option>
-                  <option v-for="grade in availableGrades" :key="grade" :value="grade">{{ grade }}</option>
-                </select>
-                <span class="material-symbols-rounded toolbar-filter-arrow">keyboard_arrow_down</span>
+                <FluentSelect
+                  v-model="gradeFilter"
+                  :options="[{ label: '全部年级', value: 'all' }, ...availableGrades.map(g => ({ label: g, value: g }))]"
+                  style="width: 140px;"
+                />
               </div>
             </div>
             <div class="page-chip">第 {{ currentPage }} / {{ totalPages }} 页</div>
@@ -361,6 +375,7 @@ import type { InvigilationConfig } from "../../../entities/exam-plan/model";
 import type { Subject } from "../../../entities/score/model";
 import { Subject as SubjectEnum } from "../../../entities/score/model";
 import ConfigCard from "../../../widgets/common/ConfigCard.vue";
+import FluentSelect from "../../../widgets/common/FluentSelect.vue";
 import { classConfigService } from "../../classes/service";
 import { useExamAllocationStore } from "../../dashboard/store";
 
@@ -369,6 +384,11 @@ interface SelfStudyClassRow {
   className: string;
   gradeName: string;
   subject: Subject | null;
+}
+
+interface AssignmentNotice {
+  type: "success" | "error";
+  text: string;
 }
 
 const gradeRankMap: Record<string, number> = { 高一: 1, 高二: 2, 高三: 3 };
@@ -406,6 +426,8 @@ const showOnlyMiddleManagerExceptions = ref(false);
 const subjectMenu = ref({ open: false, top: 0, left: 0, rowId: null as number | null, mode: "single" as "single" | "bulk" });
 const selfStudyClasses = ref<SelfStudyClassRow[]>([]);
 const middleManagerPageSize = 3;
+const assignmentNotice = ref<AssignmentNotice | null>(null);
+const assignmentNoticeEl = ref<HTMLElement | null>(null);
 
 const subjectLabelMap: Record<Subject, string> = {
   [SubjectEnum.Chinese]: "语文",
@@ -875,8 +897,31 @@ async function removeExclusion(teacherId: number, sessionId: number) {
   await store.removeStaffExclusion(teacherId, sessionId);
 }
 
+async function showAssignmentNotice(type: AssignmentNotice["type"], text: string) {
+  assignmentNotice.value = { type, text };
+  await nextTick();
+  assignmentNoticeEl.value?.scrollIntoView({
+    behavior: "smooth",
+    block: "nearest",
+  });
+}
+
 async function assignTeachers() {
-  await store.assignTeachers();
+  assignmentNotice.value = null;
+  try {
+    await store.assignTeachers();
+    const overview = store.viewState.staffOverview;
+    await showAssignmentNotice(
+      "success",
+      `分配完成：已分配 ${overview.assignedCount} 项，未分配 ${overview.unassignedCount} 项。`,
+    );
+  } catch (error) {
+    const message =
+      store.viewState.errorMessage ||
+      (error instanceof Error ? error.message : String(error)) ||
+      "分配失败，请检查配置后重试。";
+    await showAssignmentNotice("error", `分配失败：${message}`);
+  }
 }
 
 function handleGlobalPointerDown(event: MouseEvent) {
@@ -1433,43 +1478,15 @@ onBeforeUnmount(() => {
 
 .toolbar-filter {
   position: relative;
-  padding: 0 14px;
-  gap: 0;
   width: fit-content;
   min-width: 0;
   flex: 0 0 auto;
 }
 
-.toolbar-filter select,
 .search-bar input {
   border: 0;
   background: transparent;
   font-size: 14px;
-}
-
-.toolbar-filter select {
-  width: auto;
-  min-width: 96px;
-  min-height: 42px;
-  padding: 0 34px 0 8px;
-  color: #24364d;
-  font-weight: 600;
-  line-height: 42px;
-  appearance: none;
-  -webkit-appearance: none;
-  -moz-appearance: none;
-  cursor: pointer;
-}
-
-.toolbar-filter-arrow {
-  position: absolute;
-  right: 10px;
-  top: 50%;
-  transform: translateY(-50%);
-  color: #52657f;
-  font-size: 20px;
-  line-height: 1;
-  pointer-events: none;
 }
 
 .toolbar-btn {
@@ -1674,8 +1691,57 @@ onBeforeUnmount(() => {
 
 .action-text {
   margin: 0;
-  flex: 1;
+  flex: 1 1 auto;
+  min-width: 0;
   line-height: 1.5;
+}
+
+.action-row {
+  justify-content: flex-start;
+}
+
+.assignment-notice {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 14px 16px;
+  border-radius: 16px;
+  border: 1px solid transparent;
+  font-size: 14px;
+  line-height: 1.6;
+}
+
+.assignment-notice.inline {
+  flex: 0 1 340px;
+  max-width: 340px;
+  min-width: 0;
+  padding: 10px 12px;
+  border-radius: 14px;
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.assignment-notice.success {
+  background: transparent;
+  border-color: transparent;
+  color: #166534;
+}
+
+.assignment-notice.error {
+  background: #fff4f4;
+  border-color: #f3b2b2;
+  color: #b42318;
+}
+
+.assignment-notice-icon {
+  font-size: 18px;
+  line-height: 1.2;
+}
+
+.assignment-notice-text {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 .title-stack {

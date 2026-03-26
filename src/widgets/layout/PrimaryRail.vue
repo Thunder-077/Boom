@@ -30,7 +30,6 @@ defineEmits<{
 <style scoped>
 .primary-rail {
   width: 76px;
-  height: 924px;
   padding: 18px 12px;
   display: flex;
   flex-direction: column;

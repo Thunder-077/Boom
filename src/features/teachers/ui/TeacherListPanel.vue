@@ -14,25 +14,26 @@
           </svg>
           <input class="glass-field" :value="store.viewState.filters.nameKeyword" placeholder="按教师姓名查询" @input="onNameInput" />
         </label>
-        <label class="select-field">
-          <select class="glass-field" :value="store.viewState.filters.className" @change="onClassChange">
-            <option value="">班级</option>
-            <option v-for="className in classOptions" :key="className" :value="className">{{ className }}</option>
-          </select>
-          <span class="material-symbols-rounded select-icon" aria-hidden="true">keyboard_arrow_down</span>
-        </label>
-        <label class="select-field">
-          <select class="glass-field" :value="store.viewState.filters.subject" @change="onSubjectChange">
-            <option v-for="option in TEACHER_SUBJECT_OPTIONS" :key="option.value || 'all'" :value="option.value">{{ option.label }}</option>
-          </select>
-          <span class="material-symbols-rounded select-icon" aria-hidden="true">keyboard_arrow_down</span>
-        </label>
+        <FluentSelect
+          :model-value="store.viewState.filters.className"
+          :options="[{ label: '班级', value: '' }, ...classOptions.map(c => ({ label: c, value: c }))]"
+          @update:model-value="store.setFilters({ className: $event as string })"
+          style="width: 150px;"
+        />
+        <FluentSelect
+          :model-value="store.viewState.filters.subject"
+          :options="TEACHER_SUBJECT_OPTIONS"
+          @update:model-value="store.setFilters({ subject: $event as any })"
+          style="width: 150px;"
+        />
       </div>
     </FilterToolbar>
 
-    <p class="import-status" :class="store.viewState.importStatus">
-      {{ importStatusLabel }}：{{ importStatusMessage }}
-    </p>
+    <InfoHint
+      class="import-status"
+      :type="store.viewState.importStatus === 'success' ? 'success' : store.viewState.importStatus === 'error' ? 'error' : store.viewState.importStatus === 'importing' ? 'warning' : 'info'"
+      :text="importStatusLabel + '：' + importStatusMessage"
+    />
 
     <TableCard title="教师列表" :meta="`共 ${store.viewState.total} 位`">
       <div class="table-scroll">
@@ -43,7 +44,7 @@
           <div class="cell head remark-col">备注</div>
         </div>
         <div
-          v-for="(row, index) in store.viewState.rows"
+          v-for="(row, index) in pagedRows"
           :key="row.id"
           class="teacher-grid teacher-grid-row"
           :class="{ 'row-alt': index % 2 === 1 }"
@@ -58,15 +59,25 @@
           <div class="cell remark-col">{{ row.remark || "--" }}</div>
         </div>
       </div>
+      <div v-if="totalPages > 1" class="pagination-row">
+        <span class="page-meta">共 {{ totalRows }} 位教师，本页 {{ pageStart }} - {{ pageEnd }}</span>
+        <div class="pagination-actions">
+          <button class="page-btn" type="button" :disabled="currentPage === 1" @click="goToPrevPage">上一页</button>
+          <button v-for="page in visiblePages" :key="page" class="page-btn" :class="{ active: page === currentPage }" type="button" @click="goToPage(page)">{{ page }}</button>
+          <button class="page-btn" type="button" :disabled="currentPage === totalPages" @click="goToNextPage">下一页</button>
+        </div>
+      </div>
     </TableCard>
   </section>
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref } from "vue";
+import { computed, onMounted, onUnmounted, ref, watch } from "vue";
 import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { TEACHER_SUBJECT_LABELS, type TeacherSubject } from "../../../entities/teacher/model";
 import FilterToolbar from "../../../widgets/common/FilterToolbar.vue";
+import FluentSelect from "../../../widgets/common/FluentSelect.vue";
+import InfoHint from "../../../widgets/common/InfoHint.vue";
 import TableCard from "../../../widgets/common/TableCard.vue";
 import { TEACHER_SUBJECT_OPTIONS, useTeacherStore } from "../store";
 
@@ -76,6 +87,47 @@ let unlistenDragDrop: (() => void) | null = null;
 
 const classOptions = computed(() =>
   Array.from(new Set(store.viewState.rows.flatMap((row) => row.classNames))).sort((a, b) => a.localeCompare(b, "zh-CN")),
+);
+
+const currentPage = ref(1);
+const pageSize = ref(15);
+
+const totalRows = computed(() => store.viewState.rows.length);
+const totalPages = computed(() => Math.max(1, Math.ceil(totalRows.value / pageSize.value)));
+
+const pagedRows = computed(() => {
+  const start = (currentPage.value - 1) * pageSize.value;
+  return store.viewState.rows.slice(start, start + pageSize.value);
+});
+
+const pageStart = computed(() => totalRows.value === 0 ? 0 : (currentPage.value - 1) * pageSize.value + 1);
+const pageEnd = computed(() => Math.min(currentPage.value * pageSize.value, totalRows.value));
+
+const visiblePages = computed(() => {
+  const current = currentPage.value;
+  const total = totalPages.value;
+  const pages = new Set([1, Math.max(1, current - 1), current, Math.min(total, current + 1), total]);
+  return Array.from(pages).filter((p) => p >= 1 && p <= total).sort((a, b) => a - b);
+});
+
+function goToPage(page: number) {
+  currentPage.value = page;
+}
+
+function goToPrevPage() {
+  if (currentPage.value > 1) currentPage.value--;
+}
+
+function goToNextPage() {
+  if (currentPage.value < totalPages.value) currentPage.value++;
+}
+
+watch(
+  () => store.viewState.filters,
+  () => {
+    currentPage.value = 1;
+  },
+  { deep: true }
 );
 
 const importStatusLabel = computed(() => {
@@ -100,15 +152,6 @@ const importStatusMessage = computed(() => {
 
 function onNameInput(event: Event) {
   void store.setFilters({ nameKeyword: (event.target as HTMLInputElement).value });
-}
-
-function onClassChange(event: Event) {
-  void store.setFilters({ className: (event.target as HTMLSelectElement).value });
-}
-
-function onSubjectChange(event: Event) {
-  const subject = (event.target as HTMLSelectElement).value as TeacherSubject | "";
-  void store.setFilters({ subject });
 }
 
 async function handleImport(filePath: string) {
@@ -202,6 +245,7 @@ onUnmounted(() => {
 
 .panel :deep(.table-card .content) {
   display: flex;
+  flex-direction: column;
   min-height: 0;
 }
 
@@ -270,26 +314,6 @@ onUnmounted(() => {
 .search-field input {
   width: 260px;
   padding-left: 42px;
-}
-
-.select-field {
-  position: relative;
-}
-
-.select-field .glass-field {
-  width: 150px;
-  appearance: none;
-  padding-right: 36px;
-}
-
-.select-icon {
-  position: absolute;
-  right: 12px;
-  top: 12px;
-  color: var(--color-text-muted);
-  font-size: 18px;
-  pointer-events: none;
-  font-family: "Material Symbols Rounded";
 }
 
 .table-scroll {
@@ -361,22 +385,54 @@ onUnmounted(() => {
 
 .import-status {
   margin: -10px 4px 0;
+}
+
+.pagination-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 20px;
+  border-top: 1px solid var(--color-border-soft);
+  background: rgba(255, 255, 255, 0.4);
+}
+
+.page-meta {
+  color: var(--color-text-muted);
   font-size: 13px;
 }
 
-.import-status.idle {
-  color: var(--color-text-muted);
+.pagination-actions {
+  display: flex;
+  gap: 8px;
 }
 
-.import-status.importing {
-  color: var(--color-brand);
+.page-btn {
+  min-width: 32px;
+  height: 32px;
+  padding: 0 8px;
+  border-radius: 8px;
+  border: 1px solid #d8e4f2;
+  background: #fff;
+  cursor: pointer;
+  color: #52657f;
+  font-size: 13px;
+  transition: all 0.2s;
 }
 
-.import-status.success {
-  color: var(--color-success);
+.page-btn:hover:not(:disabled) {
+  background: #f8fbff;
+  border-color: #bad7ff;
+  color: #0f6cbd;
 }
 
-.import-status.error {
-  color: var(--color-danger);
+.page-btn.active {
+  background: #0f6cbd;
+  color: #fff;
+  border-color: #0f6cbd;
+}
+
+.page-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 </style>

@@ -1,21 +1,25 @@
 <template>
   <aside class="secondary-nav card-shell">
-    <h2 class="title">{{ title }}</h2>
-    <p class="desc">{{ description }}</p>
-    <div class="list">
-      <button
-        v-for="item in items"
-        :key="item.key"
-        type="button"
-        class="nav-item"
-        :class="{ active: item.key === activeKey }"
-        @click="$emit('select', item.key)"
-      >
-        <span v-if="item.icon" class="nav-icon material-symbols-rounded" aria-hidden="true">{{ item.icon }}</span>
-        <span v-else class="nav-icon placeholder" aria-hidden="true" />
-        {{ item.label }}
-      </button>
-    </div>
+    <Transition name="nav-switch" appear mode="out-in">
+      <div class="nav-content" :key="title">
+        <h2 class="title">{{ title }}</h2>
+        <p class="desc">{{ description }}</p>
+        <div class="list">
+          <button
+            v-for="item in items"
+            :key="item.key"
+            type="button"
+            class="nav-item"
+            :class="{ active: item.key === activeKey }"
+            @click="$emit('select', item.key)"
+          >
+            <span v-if="item.icon" class="nav-icon material-symbols-rounded" aria-hidden="true">{{ item.icon }}</span>
+            <span v-else class="nav-icon placeholder" aria-hidden="true" />
+            {{ item.label }}
+          </button>
+        </div>
+      </div>
+    </Transition>
   </aside>
 </template>
 
@@ -37,12 +41,30 @@ defineEmits<{
 <style scoped>
 .secondary-nav {
   width: 232px;
-  height: 924px;
   padding: 24px 18px;
+  border-radius: 22px;
+}
+
+.nav-content {
   display: flex;
   flex-direction: column;
   gap: 10px;
-  border-radius: 22px;
+  width: 100%;
+}
+
+.nav-switch-enter-active,
+.nav-switch-leave-active {
+  transition: opacity 0.15s ease, transform 0.15s ease;
+}
+
+.nav-switch-enter-from {
+  opacity: 0;
+  transform: translateX(-8px);
+}
+
+.nav-switch-leave-to {
+  opacity: 0;
+  transform: translateX(8px);
 }
 
 .title {
