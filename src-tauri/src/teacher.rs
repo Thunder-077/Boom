@@ -100,6 +100,7 @@ pub struct TeacherRow {
     subjects: Vec<TeacherSubject>,
     class_names: Vec<String>,
     remark: Option<String>,
+    is_middle_manager: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -589,19 +590,20 @@ pub fn list_latest_teachers(app: AppHandle, params: TeacherListParams) -> Result
         let total_sql = format!("SELECT COUNT(*) FROM latest_teachers_v2 t {where_sql}");
         let total: i64 = conn.query_row(&total_sql, params_from_iter(values.iter()), |row| row.get(0))?;
 
-        let list_sql = format!("SELECT t.id, t.teacher_name, t.remark FROM latest_teachers_v2 t {where_sql} ORDER BY t.id ASC");
+        let list_sql = format!("SELECT t.id, t.teacher_name, t.remark, COALESCE(t.is_middle_manager, 0) FROM latest_teachers_v2 t {where_sql} ORDER BY t.id ASC");
         let mut stmt = conn.prepare(&list_sql)?;
         let rows = stmt.query_map(params_from_iter(values.iter()), |row| {
             Ok((
                 row.get::<_, i64>(0)?,
                 row.get::<_, String>(1)?,
                 row.get::<_, Option<String>>(2)?,
+                row.get::<_, i64>(3)? == 1,
             ))
         })?;
 
         let mut items = Vec::new();
         for row in rows {
-            let (id, teacher_name, remark) = row?;
+            let (id, teacher_name, remark, is_middle_manager) = row?;
 
             let mut assignment_stmt = conn.prepare(
                 "SELECT subject, class_name FROM latest_teacher_assignments_v2 WHERE teacher_id = ?1 ORDER BY id ASC",
@@ -633,6 +635,7 @@ pub fn list_latest_teachers(app: AppHandle, params: TeacherListParams) -> Result
                 subjects,
                 class_names,
                 remark,
+                is_middle_manager,
             });
         }
 

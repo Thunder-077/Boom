@@ -8,7 +8,8 @@ pub use crate::exam_staff::{
     ExamSessionTime, ExamSessionTimeUpsert, ExamStaffPlanOverview, ExamStaffTask,
     GenerateExamStaffPlanPayload, GenerateLatestExamStaffPlanResult,
     InvigilationExclusionSessionOption, ListExamStaffTasksParams, ListTeacherDutyStatsParams,
-    TeacherDutyStat,
+    PersistedExamStaffExclusion, PersistedInvigilationConfig, PersistedInvigilationState,
+    PersistedSelfStudyClassSubject, TeacherDutyStat,
 };
 
 #[tauri::command]
@@ -37,6 +38,37 @@ pub fn delete_exam_session_time(
     subject: crate::score::Subject,
 ) -> Result<SuccessResponse, String> {
     exam_staff::delete_exam_session_time(app, subject)
+}
+
+#[tauri::command]
+pub fn get_persisted_invigilation_state(
+    app: AppHandle,
+) -> Result<PersistedInvigilationState, String> {
+    exam_staff::get_persisted_invigilation_state(app)
+}
+
+#[tauri::command]
+pub fn save_persisted_invigilation_config(
+    app: AppHandle,
+    payload: PersistedInvigilationConfig,
+) -> Result<SuccessResponse, String> {
+    exam_staff::save_persisted_invigilation_config(app, payload)
+}
+
+#[tauri::command]
+pub fn replace_persisted_invigilation_exclusions(
+    app: AppHandle,
+    items: Vec<PersistedExamStaffExclusion>,
+) -> Result<SuccessResponse, String> {
+    exam_staff::replace_persisted_invigilation_exclusions(app, items)
+}
+
+#[tauri::command]
+pub fn save_persisted_self_study_class_subjects(
+    app: AppHandle,
+    items: Vec<PersistedSelfStudyClassSubject>,
+) -> Result<SuccessResponse, String> {
+    exam_staff::save_persisted_self_study_class_subjects(app, items)
 }
 
 #[tauri::command]

@@ -12,6 +12,7 @@ const fakeService: TeacherService = {
         subjects: ["chinese"] as TeacherSubject[],
         classNames: ["高一1班"],
         remark: null,
+        isMiddleManager: false,
       },
       {
         id: 2,
@@ -19,6 +20,7 @@ const fakeService: TeacherService = {
         subjects: ["math", "information"] as TeacherSubject[],
         classNames: ["高二3班"],
         remark: "组长",
+        isMiddleManager: true,
       },
     ];
 

@@ -63,21 +63,16 @@ const defaultInvigilationConfig: InvigilationConfig = {
   defaultExamRoomRequiredCount: 1,
   indoorAllowancePerMinute: 0.5,
   outdoorAllowancePerMinute: 0.3,
+  middleManagerDefaultEnabled: false,
+  middleManagerExceptionTeacherIds: [],
   selfStudySubject: Subject.Chinese,
   selfStudyStartTime: "12:10",
   selfStudyEndTime: "13:40",
 };
 
-const INVIGILATION_SESSION_STORAGE_KEY = "invigilation_config_session_v1";
-
 interface SessionTimeDraft {
   startAt: string;
   endAt: string;
-}
-
-interface InvigilationSessionState {
-  config: InvigilationConfig;
-  exclusions: ExamStaffExclusion[];
 }
 
 export function createExamAllocationStore(service: ExamAllocationService = examAllocationService) {
@@ -108,6 +103,7 @@ export function createExamAllocationStore(service: ExamAllocationService = examA
     teacherDutyStats: [] as TeacherDutyStat[],
     invigilationConfig: { ...defaultInvigilationConfig } as InvigilationConfig,
     staffExclusions: [] as ExamStaffExclusion[],
+    selfStudyClassSubjects: [] as Array<{ classId: number; subject: Subject | null }>,
     exclusionSessionOptions: [] as InvigilationExclusionSessionOption[],
     teachers: [] as TeacherRow[],
     lastExportZipPath: "",
@@ -123,42 +119,6 @@ export function createExamAllocationStore(service: ExamAllocationService = examA
       return value.slice(0, 16);
     }
     return value;
-  }
-
-  function loadInvigilationSessionState() {
-    try {
-      const raw = sessionStorage.getItem(INVIGILATION_SESSION_STORAGE_KEY);
-      if (!raw) {
-        return;
-      }
-      const parsed = JSON.parse(raw) as Partial<InvigilationSessionState>;
-      if (parsed.config) {
-        state.invigilationConfig = {
-          ...defaultInvigilationConfig,
-          ...parsed.config,
-        };
-      }
-      if (Array.isArray(parsed.exclusions)) {
-        state.staffExclusions = parsed.exclusions
-          .map((item) => ({
-            teacherId: Number(item.teacherId),
-            teacherName: String(item.teacherName || ""),
-            sessionId: Number(item.sessionId),
-            sessionLabel: String(item.sessionLabel || ""),
-          }))
-          .filter((item) => item.teacherId > 0 && item.sessionId > 0 && item.teacherName);
-      }
-    } catch {
-      sessionStorage.removeItem(INVIGILATION_SESSION_STORAGE_KEY);
-    }
-  }
-
-  function saveInvigilationSessionState() {
-    const payload: InvigilationSessionState = {
-      config: state.invigilationConfig,
-      exclusions: state.staffExclusions,
-    };
-    sessionStorage.setItem(INVIGILATION_SESSION_STORAGE_KEY, JSON.stringify(payload));
   }
 
   async function loadSessions() {
@@ -210,6 +170,26 @@ export function createExamAllocationStore(service: ExamAllocationService = examA
       await service.listInvigilationExclusionSessionOptions();
   }
 
+  async function loadPersistedInvigilationState() {
+    const persisted = await service.getPersistedInvigilationState();
+    state.invigilationConfig = {
+      ...defaultInvigilationConfig,
+      ...persisted.config,
+    };
+    state.staffExclusions = persisted.exclusions
+      .map((item) => ({
+        teacherId: Number(item.teacherId),
+        teacherName: String(item.teacherName || ""),
+        sessionId: Number(item.sessionId),
+        sessionLabel: String(item.sessionLabel || ""),
+      }))
+      .filter((item) => item.teacherId > 0 && item.sessionId > 0 && item.teacherName);
+    state.selfStudyClassSubjects = persisted.selfStudyClassSubjects.map((item) => ({
+      classId: Number(item.classId),
+      subject: item.subject ?? null,
+    }));
+  }
+
   async function loadAll() {
     state.loading = true;
     state.errorMessage = "";
@@ -223,8 +203,7 @@ export function createExamAllocationStore(service: ExamAllocationService = examA
       state.overview = overview;
       state.generationProgress = generationProgress;
       await Promise.all([loadSessions(), loadSessionTimes()]);
-      await Promise.allSettled([loadTeachers(), loadExclusionSessionOptions()]);
-      loadInvigilationSessionState();
+      await Promise.all([loadTeachers(), loadExclusionSessionOptions(), loadPersistedInvigilationState()]);
 
       if (state.selectedSessionId) {
         await loadDetail(state.selectedSessionId);
@@ -465,11 +444,15 @@ export function createExamAllocationStore(service: ExamAllocationService = examA
         0,
         Number(next.outdoorAllowancePerMinute ?? 0),
       ),
+      middleManagerDefaultEnabled: Boolean(next.middleManagerDefaultEnabled),
+      middleManagerExceptionTeacherIds: Array.from(
+        new Set((next.middleManagerExceptionTeacherIds ?? []).map((item) => Number(item)).filter((item) => item > 0)),
+      ).sort((a, b) => a - b),
       selfStudySubject: next.selfStudySubject ?? Subject.Chinese,
       selfStudyStartTime: (next.selfStudyStartTime || "12:10").trim(),
       selfStudyEndTime: (next.selfStudyEndTime || "13:40").trim(),
     };
-    saveInvigilationSessionState();
+    await service.savePersistedInvigilationConfig(state.invigilationConfig);
   }
 
   async function addStaffExclusion(teacherId: number, sessionId: number) {
@@ -492,7 +475,7 @@ export function createExamAllocationStore(service: ExamAllocationService = examA
       sessionId,
       sessionLabel: session.label,
     });
-    saveInvigilationSessionState();
+    await service.replacePersistedInvigilationExclusions(state.staffExclusions);
     return true;
   }
 
@@ -500,7 +483,17 @@ export function createExamAllocationStore(service: ExamAllocationService = examA
     state.staffExclusions = state.staffExclusions.filter(
       (item) => !(item.teacherId === teacherId && item.sessionId === sessionId),
     );
-    saveInvigilationSessionState();
+    await service.replacePersistedInvigilationExclusions(state.staffExclusions);
+  }
+
+  async function saveSelfStudyClassSubjects(
+    items: Array<{ classId: number; subject: Subject | null }>,
+  ) {
+    state.selfStudyClassSubjects = items.map((item) => ({
+      classId: item.classId,
+      subject: item.subject ?? null,
+    }));
+    await service.savePersistedSelfStudyClassSubjects(state.selfStudyClassSubjects);
   }
 
   const viewState = readonly(
@@ -526,6 +519,7 @@ export function createExamAllocationStore(service: ExamAllocationService = examA
       teacherDutyStats: state.teacherDutyStats,
       invigilationConfig: state.invigilationConfig,
       staffExclusions: state.staffExclusions,
+      selfStudyClassSubjects: state.selfStudyClassSubjects,
       exclusionSessionOptions: state.exclusionSessionOptions.map((item) => ({
         sessionId: item.sessionId,
         label: item.label,
@@ -550,6 +544,7 @@ export function createExamAllocationStore(service: ExamAllocationService = examA
     saveInvigilationConfig,
     addStaffExclusion,
     removeStaffExclusion,
+    saveSelfStudyClassSubjects,
     refreshGenerationProgress,
     get viewState() {
       return viewState.value;

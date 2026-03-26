@@ -43,6 +43,7 @@ export interface TeacherRow {
   subjects: TeacherSubject[];
   classNames: string[];
   remark: string | null;
+  isMiddleManager: boolean;
 }
 
 export interface TeacherQuery {
