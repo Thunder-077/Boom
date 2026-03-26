@@ -3,7 +3,7 @@ use std::collections::{HashMap, HashSet};
 use std::thread;
 use std::time::Duration;
 
-use chrono::Utc;
+use chrono::{DateTime, NaiveDateTime, Utc};
 use rusqlite::types::Value;
 use rusqlite::{params, params_from_iter, Connection};
 use serde::{Deserialize, Serialize};
@@ -209,6 +209,7 @@ pub struct ExamPlanSpace {
     subject: Subject,
     space_name: String,
     original_class_name: Option<String>,
+    self_study_subject: Option<Subject>,
     building: String,
     floor: String,
     capacity: Option<i64>,
@@ -348,6 +349,7 @@ struct SpaceCandidate {
     space_source: ExamPlanSpaceSource,
     space_name: String,
     original_class_name: Option<String>,
+    self_study_subject: Option<Subject>,
     building: String,
     floor: String,
     capacity: Option<i64>,
@@ -378,6 +380,65 @@ fn ensure_column(
     let sql = format!("ALTER TABLE {table_name} ADD COLUMN {column_sql}");
     conn.execute(&sql, [])?;
     Ok(())
+}
+
+fn parse_schedule_timestamp(value: &str) -> Option<i64> {
+    if let Ok(dt) = DateTime::parse_from_rfc3339(value) {
+        return Some(dt.timestamp_millis());
+    }
+    if let Ok(naive) = NaiveDateTime::parse_from_str(value, "%Y-%m-%dT%H:%M") {
+        return Some(naive.and_utc().timestamp_millis());
+    }
+    if let Ok(naive) = NaiveDateTime::parse_from_str(value, "%Y-%m-%d %H:%M:%S") {
+        return Some(naive.and_utc().timestamp_millis());
+    }
+    None
+}
+
+fn load_subject_schedule_order(conn: &Connection) -> Result<HashMap<Subject, i64>, AppError> {
+    let mut order_map = HashMap::new();
+    let mut stmt =
+        conn.prepare("SELECT subject, start_at FROM exam_subject_time_templates ORDER BY subject ASC")?;
+    let rows = stmt.query_map([], |row| {
+        Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+    })?;
+    for row in rows {
+        let (subject_key, start_at) = row?;
+        let Some(subject) = Subject::from_key(&subject_key) else {
+            continue;
+        };
+        if let Some(ts) = parse_schedule_timestamp(&start_at) {
+            order_map.insert(subject, ts);
+        }
+    }
+    Ok(order_map)
+}
+
+fn next_subject_for_self_study(
+    current_subject: Subject,
+    class_name: &str,
+    class_subjects: &HashMap<String, HashSet<Subject>>,
+    subject_schedule_order: &HashMap<Subject, i64>,
+) -> Option<Subject> {
+    let subjects = class_subjects.get(class_name)?;
+    let current_order = subject_schedule_order
+        .get(&current_subject)
+        .copied()
+        .unwrap_or_else(|| subject_order(current_subject) as i64);
+
+    subjects
+        .iter()
+        .copied()
+        .filter(|subject| *subject != current_subject)
+        .filter_map(|subject| {
+            let order = subject_schedule_order
+                .get(&subject)
+                .copied()
+                .unwrap_or_else(|| subject_order(subject) as i64);
+            (order > current_order).then_some((order, subject))
+        })
+        .min_by_key(|(order, _)| *order)
+        .map(|(_, subject)| subject)
 }
 
 pub(crate) fn ensure_schema(conn: &Connection) -> Result<(), AppError> {
@@ -539,12 +600,37 @@ pub(crate) fn ensure_schema(conn: &Connection) -> Result<(), AppError> {
             is_middle_manager INTEGER NOT NULL DEFAULT 0
         );
 
+        CREATE TABLE IF NOT EXISTS invigilation_config_settings (
+            id INTEGER PRIMARY KEY,
+            default_exam_room_required_count INTEGER NOT NULL DEFAULT 1,
+            indoor_allowance_per_minute REAL NOT NULL DEFAULT 0.5,
+            outdoor_allowance_per_minute REAL NOT NULL DEFAULT 0.3,
+            middle_manager_default_enabled INTEGER NOT NULL DEFAULT 0,
+            middle_manager_exception_teacher_ids_json TEXT NOT NULL DEFAULT '[]',
+            self_study_subject TEXT NOT NULL DEFAULT 'chinese',
+            self_study_start_time TEXT NOT NULL DEFAULT '12:10',
+            self_study_end_time TEXT NOT NULL DEFAULT '13:40',
+            self_study_class_subjects_json TEXT NOT NULL DEFAULT '[]',
+            updated_at TEXT NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS invigilation_staff_exclusions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            teacher_id INTEGER NOT NULL,
+            teacher_name TEXT NOT NULL,
+            session_id INTEGER NOT NULL,
+            session_label TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            UNIQUE(teacher_id, session_id)
+        );
+
         CREATE INDEX IF NOT EXISTS idx_exam_session_times_subject ON exam_session_times(subject);
         CREATE INDEX IF NOT EXISTS idx_exam_subject_time_templates_subject ON exam_subject_time_templates(subject);
         CREATE INDEX IF NOT EXISTS idx_latest_exam_staff_tasks_session ON latest_exam_staff_tasks(session_id);
         CREATE INDEX IF NOT EXISTS idx_latest_exam_staff_tasks_role_status ON latest_exam_staff_tasks(role, status);
         CREATE INDEX IF NOT EXISTS idx_latest_exam_staff_assignments_task ON latest_exam_staff_assignments(task_id);
         CREATE INDEX IF NOT EXISTS idx_latest_teacher_duty_stats_total ON latest_teacher_duty_stats(total_minutes);
+        CREATE INDEX IF NOT EXISTS idx_invigilation_staff_exclusions_session ON invigilation_staff_exclusions(session_id);
         "#,
     )?;
     ensure_column(
@@ -607,6 +693,30 @@ pub(crate) fn ensure_schema(conn: &Connection) -> Result<(), AppError> {
         "is_middle_manager INTEGER NOT NULL DEFAULT 0",
         "is_middle_manager",
     )?;
+    ensure_column(
+        conn,
+        "latest_exam_plan_spaces",
+        "self_study_subject TEXT",
+        "self_study_subject",
+    )?;
+    ensure_column(
+        conn,
+        "invigilation_config_settings",
+        "middle_manager_default_enabled INTEGER NOT NULL DEFAULT 0",
+        "middle_manager_default_enabled",
+    )?;
+    ensure_column(
+        conn,
+        "invigilation_config_settings",
+        "middle_manager_exception_teacher_ids_json TEXT NOT NULL DEFAULT '[]'",
+        "middle_manager_exception_teacher_ids_json",
+    )?;
+    ensure_column(
+        conn,
+        "invigilation_config_settings",
+        "self_study_class_subjects_json TEXT NOT NULL DEFAULT '[]'",
+        "self_study_class_subjects_json",
+    )?;
 
     let now = Utc::now().to_rfc3339();
     let default_notices_json = default_exam_notices_json()?;
@@ -616,6 +726,10 @@ pub(crate) fn ensure_schema(conn: &Connection) -> Result<(), AppError> {
     )?;
     conn.execute(
         "INSERT OR IGNORE INTO exam_generation_progress (id, status, stage, stage_label, percent, message, current_grade, total_grades, completed_grades, updated_at) VALUES (1, 'idle', 'idle', '等待开始', 0, '等待开始分配考场', NULL, 0, 0, ?1)",
+        params![now],
+    )?;
+    conn.execute(
+        "INSERT OR IGNORE INTO invigilation_config_settings (id, default_exam_room_required_count, indoor_allowance_per_minute, outdoor_allowance_per_minute, middle_manager_default_enabled, middle_manager_exception_teacher_ids_json, self_study_subject, self_study_start_time, self_study_end_time, self_study_class_subjects_json, updated_at) VALUES (1, 1, 0.5, 0.3, 0, '[]', 'chinese', '12:10', '13:40', '[]', ?1)",
         params![now],
     )?;
     conn.execute(
@@ -975,6 +1089,7 @@ fn build_session(
     grade_name: &str,
     subject: Subject,
     grade_ctx: &GradeContext,
+    subject_schedule_order: &HashMap<Subject, i64>,
     default_capacity: i64,
     max_capacity: i64,
     foreign_occupied_classes: &mut HashSet<String>,
@@ -1041,6 +1156,7 @@ fn build_session(
             space_source: ExamPlanSpaceSource::TeachingClass,
             space_name: class_to_exam_room_name(&classroom.class_name),
             original_class_name: Some(classroom.class_name),
+            self_study_subject: None,
             building: classroom.building,
             floor: classroom.floor,
             capacity: None,
@@ -1056,6 +1172,7 @@ fn build_session(
             space_source: ExamPlanSpaceSource::ExamRoom,
             space_name: room.room_name.clone(),
             original_class_name: None,
+            self_study_subject: None,
             building: room.building.clone(),
             floor: room.floor.clone(),
             capacity: None,
@@ -1069,6 +1186,7 @@ fn build_session(
             space_source: ExamPlanSpaceSource::VirtualBackup,
             space_name: format!("{grade_name}{virtual_index}场"),
             original_class_name: None,
+            self_study_subject: None,
             building: "备用考场".to_string(),
             floor: "临时".to_string(),
             capacity: None,
@@ -1092,6 +1210,12 @@ fn build_session(
             space_source: ExamPlanSpaceSource::TeachingClass,
             space_name: classroom.class_name.clone(),
             original_class_name: Some(classroom.class_name.clone()),
+            self_study_subject: next_subject_for_self_study(
+                subject,
+                &classroom.class_name,
+                &grade_ctx.class_subjects,
+                subject_schedule_order,
+            ),
             building: classroom.building.clone(),
             floor: classroom.floor.clone(),
             capacity: None,
@@ -1123,8 +1247,8 @@ fn build_session(
         tx.execute(
             r#"
             INSERT INTO latest_exam_plan_spaces
-            (session_id, space_type, space_source, grade_name, subject, space_name, original_class_name, building, floor, capacity, sort_index)
-            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
+            (session_id, space_type, space_source, grade_name, subject, space_name, original_class_name, self_study_subject, building, floor, capacity, sort_index)
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)
             "#,
             params![
                 session_id,
@@ -1134,6 +1258,7 @@ fn build_session(
                 subject.as_key(),
                 space.space_name,
                 space.original_class_name,
+                space.self_study_subject.map(|value| value.as_key().to_string()),
                 space.building,
                 space.floor,
                 space.capacity,
@@ -1149,8 +1274,8 @@ fn build_session(
         tx.execute(
             r#"
             INSERT INTO latest_exam_plan_spaces
-            (session_id, space_type, space_source, grade_name, subject, space_name, original_class_name, building, floor, capacity, sort_index)
-            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
+            (session_id, space_type, space_source, grade_name, subject, space_name, original_class_name, self_study_subject, building, floor, capacity, sort_index)
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)
             "#,
             params![
                 session_id,
@@ -1160,6 +1285,7 @@ fn build_session(
                 subject.as_key(),
                 space.space_name,
                 space.original_class_name,
+                space.self_study_subject.map(|value| value.as_key().to_string()),
                 space.building,
                 space.floor,
                 Option::<i64>::None,
@@ -1350,6 +1476,7 @@ fn generate_latest_exam_plan_internal(
     validate_capacity(default_capacity, max_capacity)?;
 
     let grade_contexts = load_grade_contexts(&conn)?;
+    let subject_schedule_order = load_subject_schedule_order(&conn)?;
     let mut grades: Vec<String> = grade_contexts.keys().cloned().collect();
     grades.sort_by(|a, b| grade_order_key(a).cmp(&grade_order_key(b)).then(a.cmp(b)));
     let total_grades = grades.len() as i64;
@@ -1418,6 +1545,7 @@ fn generate_latest_exam_plan_internal(
                 grade_name,
                 subject,
                 grade_ctx,
+                &subject_schedule_order,
                 default_capacity,
                 max_capacity,
                 &mut foreign_occupied,
@@ -1729,7 +1857,7 @@ pub fn get_latest_exam_plan_session_detail(
         let session = get_session_by_id(&conn, session_id)?;
 
         let mut spaces_stmt = conn.prepare(
-            "SELECT id, session_id, space_type, space_source, grade_name, subject, space_name, original_class_name, building, floor, capacity, sort_index FROM latest_exam_plan_spaces WHERE session_id = ?1 ORDER BY sort_index ASC, id ASC",
+            "SELECT id, session_id, space_type, space_source, grade_name, subject, space_name, original_class_name, self_study_subject, building, floor, capacity, sort_index FROM latest_exam_plan_spaces WHERE session_id = ?1 ORDER BY sort_index ASC, id ASC",
         )?;
         let space_rows = spaces_stmt.query_map(params![session_id], |row| {
             let space_type_key: String = row.get(2)?;
@@ -1757,6 +1885,9 @@ pub fn get_latest_exam_plan_session_detail(
                     rusqlite::types::Type::Text,
                 )
             })?;
+            let self_study_subject = row
+                .get::<_, Option<String>>(8)?
+                .and_then(|value| Subject::from_key(&value));
             Ok(ExamPlanSpace {
                 id: row.get(0)?,
                 session_id: row.get(1)?,
@@ -1766,10 +1897,11 @@ pub fn get_latest_exam_plan_session_detail(
                 subject,
                 space_name: row.get(6)?,
                 original_class_name: row.get(7)?,
-                building: row.get(8)?,
-                floor: row.get(9)?,
-                capacity: row.get(10)?,
-                sort_index: row.get(11)?,
+                self_study_subject,
+                building: row.get(9)?,
+                floor: row.get(10)?,
+                capacity: row.get(11)?,
+                sort_index: row.get(12)?,
             })
         })?;
         let mut spaces = Vec::new();

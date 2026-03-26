@@ -190,6 +190,8 @@ export interface InvigilationConfig {
   defaultExamRoomRequiredCount: number;
   indoorAllowancePerMinute: number;
   outdoorAllowancePerMinute: number;
+  middleManagerDefaultEnabled: boolean;
+  middleManagerExceptionTeacherIds: number[];
   selfStudySubject: Subject;
   selfStudyStartTime: string;
   selfStudyEndTime: string;
@@ -200,6 +202,11 @@ export interface ExamStaffExclusion {
   teacherName: string;
   sessionId: number;
   sessionLabel: string;
+}
+
+export interface SelfStudyClassSubjectConfig {
+  classId: number;
+  subject: Subject | null;
 }
 
 export interface GenerateExamStaffPlanPayload {

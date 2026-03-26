@@ -97,6 +97,31 @@ const fakeService: ExamAllocationService = {
   async deleteSessionTime() {
     return { success: true };
   },
+  async getPersistedInvigilationState() {
+    return {
+      config: {
+        defaultExamRoomRequiredCount: 1,
+        indoorAllowancePerMinute: 0.5,
+        outdoorAllowancePerMinute: 0.3,
+        middleManagerDefaultEnabled: false,
+        middleManagerExceptionTeacherIds: [],
+        selfStudySubject: Subject.Chinese,
+        selfStudyStartTime: "12:10",
+        selfStudyEndTime: "13:40",
+      },
+      exclusions: [],
+      selfStudyClassSubjects: [],
+    };
+  },
+  async savePersistedInvigilationConfig() {
+    return { success: true };
+  },
+  async replacePersistedInvigilationExclusions() {
+    return { success: true };
+  },
+  async savePersistedSelfStudyClassSubjects() {
+    return { success: true };
+  },
   async generateStaffPlan(_payload) {
     return {
       generatedAt: "2026-03-24T10:00:00Z",
@@ -153,7 +178,6 @@ const fakeService: ExamAllocationService = {
           classNames: ["高一1班"],
           remark: "",
           isMiddleManager: false,
-          updatedAt: "2026-03-24T10:00:00Z",
         },
       ],
     };

@@ -159,6 +159,8 @@ struct RuntimeInvigilationConfig {
     default_exam_room_required_count: i64,
     indoor_allowance_per_minute: f64,
     outdoor_allowance_per_minute: f64,
+    middle_manager_default_enabled: bool,
+    middle_manager_exception_teacher_ids: HashSet<i64>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -175,6 +177,43 @@ pub struct GenerateExamStaffPlanPayload {
 pub struct GenerateExamStaffPlanExclusion {
     pub teacher_id: i64,
     pub session_id: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PersistedInvigilationConfig {
+    default_exam_room_required_count: i64,
+    indoor_allowance_per_minute: f64,
+    outdoor_allowance_per_minute: f64,
+    middle_manager_default_enabled: bool,
+    middle_manager_exception_teacher_ids: Vec<i64>,
+    self_study_subject: Subject,
+    self_study_start_time: String,
+    self_study_end_time: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PersistedExamStaffExclusion {
+    teacher_id: i64,
+    teacher_name: String,
+    session_id: i64,
+    session_label: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PersistedSelfStudyClassSubject {
+    class_id: i64,
+    subject: Option<Subject>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PersistedInvigilationState {
+    config: PersistedInvigilationConfig,
+    exclusions: Vec<PersistedExamStaffExclusion>,
+    self_study_class_subjects: Vec<PersistedSelfStudyClassSubject>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -459,6 +498,54 @@ fn build_config_from_payload(payload: &GenerateExamStaffPlanPayload) -> RuntimeI
         default_exam_room_required_count: payload.default_exam_room_required_count.max(1),
         indoor_allowance_per_minute: payload.indoor_allowance_per_minute.max(0.0),
         outdoor_allowance_per_minute: payload.outdoor_allowance_per_minute.max(0.0),
+        middle_manager_default_enabled: false,
+        middle_manager_exception_teacher_ids: HashSet::new(),
+    }
+}
+
+fn hydrate_runtime_middle_manager_config(
+    conn: &Connection,
+    config: &mut RuntimeInvigilationConfig,
+) -> Result<(), AppError> {
+    let persisted: Option<(i64, String)> = conn
+        .query_row(
+            "SELECT middle_manager_default_enabled, middle_manager_exception_teacher_ids_json FROM invigilation_config_settings WHERE id = 1",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .ok();
+    if let Some((default_enabled, exception_json)) = persisted {
+        config.middle_manager_default_enabled = default_enabled == 1;
+        config.middle_manager_exception_teacher_ids = serde_json::from_str::<Vec<i64>>(&exception_json)
+            .map(normalize_teacher_id_list)
+            .unwrap_or_default()
+            .into_iter()
+            .collect();
+    }
+    Ok(())
+}
+
+fn normalize_teacher_id_list(items: Vec<i64>) -> Vec<i64> {
+    let mut values: Vec<i64> = items.into_iter().filter(|item| *item > 0).collect();
+    values.sort_unstable();
+    values.dedup();
+    values
+}
+
+fn is_middle_manager_enabled(
+    teacher: &TeacherInfo,
+    config: &RuntimeInvigilationConfig,
+) -> bool {
+    if !teacher.is_middle_manager {
+        return true;
+    }
+    let is_exception = config
+        .middle_manager_exception_teacher_ids
+        .contains(&teacher.id);
+    if config.middle_manager_default_enabled {
+        !is_exception
+    } else {
+        is_exception
     }
 }
 
@@ -863,10 +950,11 @@ fn choose_teacher_for_task(
     runtime: &HashMap<i64, TeacherRuntimeState>,
     self_study_class_name: Option<&str>,
     exclusion_pairs: &HashSet<(i64, i64)>,
+    config: &RuntimeInvigilationConfig,
 ) -> (Option<i64>, Option<String>) {
     let active_teachers: Vec<&TeacherInfo> = teachers
         .iter()
-        .filter(|teacher| !teacher.is_middle_manager)
+        .filter(|teacher| is_middle_manager_enabled(teacher, config))
         .collect();
     if active_teachers.is_empty() {
         return (None, Some("no_available_teacher".to_string()));
@@ -986,9 +1074,9 @@ fn clear_latest_staff_plan(tx: &rusqlite::Transaction<'_>) -> Result<(), AppErro
 fn load_spaces_for_session(
     conn: &Connection,
     session_id: i64,
-) -> Result<Vec<(i64, SpaceType, String, Option<String>, String)>, AppError> {
+) -> Result<Vec<(i64, SpaceType, String, Option<String>, Option<Subject>, String)>, AppError> {
     let mut stmt = conn.prepare(
-        "SELECT id, space_type, space_name, original_class_name, floor FROM latest_exam_plan_spaces WHERE session_id = ?1 ORDER BY sort_index ASC, id ASC",
+        "SELECT id, space_type, space_name, original_class_name, self_study_subject, floor FROM latest_exam_plan_spaces WHERE session_id = ?1 ORDER BY sort_index ASC, id ASC",
     )?;
     let rows = stmt.query_map(params![session_id], |row| {
         let space_type_key: String = row.get(1)?;
@@ -1008,7 +1096,9 @@ fn load_spaces_for_session(
             space_type,
             row.get::<_, String>(2)?,
             row.get::<_, Option<String>>(3)?,
-            row.get::<_, String>(4)?,
+            row.get::<_, Option<String>>(4)?
+                .and_then(|value| Subject::from_key(&value)),
+            row.get::<_, String>(5)?,
         ))
     })?;
     let mut out = Vec::new();
@@ -1080,7 +1170,7 @@ fn generate_latest_exam_staff_plan_internal(
 
         let mut floors = HashSet::<String>::new();
         let (day_key, half_day) = parse_day_slot(&session.start_at)?;
-        for (space_id, space_type, space_name, original_class_name, floor) in &spaces {
+        for (space_id, space_type, space_name, original_class_name, self_study_subject, floor) in &spaces {
             if floor.trim().is_empty() {
                 return Err(AppError::new(format!(
                     "场次 {} 存在空楼层，无法分配流动监考",
@@ -1118,13 +1208,19 @@ fn generate_latest_exam_staff_plan_internal(
                     let class_name = original_class_name
                         .clone()
                         .unwrap_or_else(|| space_name.clone());
-                    let chain = build_priority_subject_chain(
-                        session,
-                        &class_name,
-                        &sessions_by_grade,
-                        &class_subject_map,
-                    );
-                    let recommended_subject = chain.first().copied();
+                    let (recommended_subject, chain) = if let Some(saved_subject) = self_study_subject
+                    {
+                        (Some(*saved_subject), vec![*saved_subject])
+                    } else {
+                        let chain = build_priority_subject_chain(
+                            session,
+                            &class_name,
+                            &sessions_by_grade,
+                            &class_subject_map,
+                        );
+                        let recommended_subject = chain.first().copied();
+                        (recommended_subject, chain)
+                    };
                     tasks.push(TaskBuild {
                         session_id: session.session_id,
                         space_id: Some(*space_id),
@@ -1208,6 +1304,7 @@ fn generate_latest_exam_staff_plan_internal(
                 &runtime,
                 self_study_class_name,
                 &exclusion_pairs,
+                &invigilation_config,
             );
         let status = if selected_teacher_id.is_some() {
             TaskStatus::Assigned
@@ -1436,7 +1533,8 @@ pub fn generate_latest_exam_staff_plan(
     let result = (|| -> Result<GenerateLatestExamStaffPlanResult, AppError> {
         let mut conn = score::open_connection(&app)?;
         exam_allocation::ensure_schema(&conn)?;
-        let config = build_config_from_payload(&payload);
+        let mut config = build_config_from_payload(&payload);
+        hydrate_runtime_middle_manager_config(&conn, &mut config)?;
         let exclusion_pairs = payload
             .staff_exclusions
             .iter()
@@ -1489,6 +1587,220 @@ pub fn list_invigilation_exclusion_session_options(
         Ok(items)
     })();
     result.map_err(|error| error.to_string())
+}
+
+fn default_persisted_invigilation_config() -> PersistedInvigilationConfig {
+    PersistedInvigilationConfig {
+        default_exam_room_required_count: 1,
+        indoor_allowance_per_minute: 0.5,
+        outdoor_allowance_per_minute: 0.3,
+        middle_manager_default_enabled: false,
+        middle_manager_exception_teacher_ids: Vec::new(),
+        self_study_subject: Subject::Chinese,
+        self_study_start_time: "12:10".to_string(),
+        self_study_end_time: "13:40".to_string(),
+    }
+}
+
+pub fn get_persisted_invigilation_state(
+    app: AppHandle,
+) -> Result<PersistedInvigilationState, String> {
+    let result = (|| -> Result<PersistedInvigilationState, AppError> {
+        let conn = score::open_connection(&app)?;
+        exam_allocation::ensure_schema(&conn)?;
+
+        let config = conn
+            .query_row(
+                r#"
+                SELECT
+                    default_exam_room_required_count,
+                    indoor_allowance_per_minute,
+                    outdoor_allowance_per_minute,
+                    middle_manager_default_enabled,
+                    middle_manager_exception_teacher_ids_json,
+                    self_study_subject,
+                    self_study_start_time,
+                    self_study_end_time
+                FROM invigilation_config_settings
+                WHERE id = 1
+                "#,
+                [],
+                |row| {
+                    let subject_key: String = row.get(5)?;
+                    let middle_manager_exception_teacher_ids = row
+                        .get::<_, String>(4)
+                        .ok()
+                        .and_then(|text| serde_json::from_str::<Vec<i64>>(&text).ok())
+                        .map(normalize_teacher_id_list)
+                        .unwrap_or_default();
+                    Ok(PersistedInvigilationConfig {
+                        default_exam_room_required_count: row.get::<_, i64>(0)?.max(1),
+                        indoor_allowance_per_minute: row.get::<_, f64>(1)?.max(0.0),
+                        outdoor_allowance_per_minute: row.get::<_, f64>(2)?.max(0.0),
+                        middle_manager_default_enabled: row.get::<_, i64>(3)? == 1,
+                        middle_manager_exception_teacher_ids,
+                        self_study_subject: Subject::from_key(&subject_key)
+                            .unwrap_or(Subject::Chinese),
+                        self_study_start_time: row.get(6)?,
+                        self_study_end_time: row.get(7)?,
+                    })
+                },
+            )
+            .unwrap_or_else(|_| default_persisted_invigilation_config());
+
+        let self_study_class_subjects = conn
+            .query_row(
+                "SELECT self_study_class_subjects_json FROM invigilation_config_settings WHERE id = 1",
+                [],
+                |row| row.get::<_, String>(0),
+            )
+            .ok()
+            .and_then(|text| serde_json::from_str::<Vec<PersistedSelfStudyClassSubject>>(&text).ok())
+            .unwrap_or_default();
+
+        let mut stmt = conn.prepare(
+            r#"
+            SELECT teacher_id, teacher_name, session_id, session_label
+            FROM invigilation_staff_exclusions
+            ORDER BY id DESC
+            "#,
+        )?;
+        let rows = stmt.query_map([], |row| {
+            Ok(PersistedExamStaffExclusion {
+                teacher_id: row.get(0)?,
+                teacher_name: row.get(1)?,
+                session_id: row.get(2)?,
+                session_label: row.get(3)?,
+            })
+        })?;
+        let mut exclusions = Vec::new();
+        for row in rows {
+            exclusions.push(row?);
+        }
+
+        Ok(PersistedInvigilationState {
+            config,
+            exclusions,
+            self_study_class_subjects,
+        })
+    })();
+    result.map_err(|e| e.to_string())
+}
+
+pub fn save_persisted_invigilation_config(
+    app: AppHandle,
+    payload: PersistedInvigilationConfig,
+) -> Result<SuccessResponse, String> {
+    let result = (|| -> Result<SuccessResponse, AppError> {
+        let conn = score::open_connection(&app)?;
+        exam_allocation::ensure_schema(&conn)?;
+        let now = Utc::now().to_rfc3339();
+        let middle_manager_exception_teacher_ids_json = serde_json::to_string(
+            &normalize_teacher_id_list(payload.middle_manager_exception_teacher_ids.clone()),
+        )
+        .map_err(|e| AppError::new(format!("中层监考例外序列化失败: {e}")))?;
+        conn.execute(
+            r#"
+            INSERT INTO invigilation_config_settings
+            (id, default_exam_room_required_count, indoor_allowance_per_minute, outdoor_allowance_per_minute, middle_manager_default_enabled, middle_manager_exception_teacher_ids_json, self_study_subject, self_study_start_time, self_study_end_time, updated_at)
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
+            ON CONFLICT(id) DO UPDATE SET
+                default_exam_room_required_count = excluded.default_exam_room_required_count,
+                indoor_allowance_per_minute = excluded.indoor_allowance_per_minute,
+                outdoor_allowance_per_minute = excluded.outdoor_allowance_per_minute,
+                middle_manager_default_enabled = excluded.middle_manager_default_enabled,
+                middle_manager_exception_teacher_ids_json = excluded.middle_manager_exception_teacher_ids_json,
+                self_study_subject = excluded.self_study_subject,
+                self_study_start_time = excluded.self_study_start_time,
+                self_study_end_time = excluded.self_study_end_time,
+                updated_at = excluded.updated_at
+            "#,
+            params![
+                1_i64,
+                payload.default_exam_room_required_count.max(1),
+                payload.indoor_allowance_per_minute.max(0.0),
+                payload.outdoor_allowance_per_minute.max(0.0),
+                if payload.middle_manager_default_enabled { 1_i64 } else { 0_i64 },
+                middle_manager_exception_teacher_ids_json,
+                payload.self_study_subject.as_key(),
+                payload.self_study_start_time.trim(),
+                payload.self_study_end_time.trim(),
+                now
+            ],
+        )?;
+        Ok(SuccessResponse::ok())
+    })();
+    result.map_err(|e| e.to_string())
+}
+
+pub fn save_persisted_self_study_class_subjects(
+    app: AppHandle,
+    items: Vec<PersistedSelfStudyClassSubject>,
+) -> Result<SuccessResponse, String> {
+    let result = (|| -> Result<SuccessResponse, AppError> {
+        let conn = score::open_connection(&app)?;
+        exam_allocation::ensure_schema(&conn)?;
+        let now = Utc::now().to_rfc3339();
+        let json_text = serde_json::to_string(&items)
+            .map_err(|e| AppError::new(format!("自习科目配置序列化失败: {e}")))?;
+        conn.execute(
+            r#"
+            INSERT INTO invigilation_config_settings
+            (id, default_exam_room_required_count, indoor_allowance_per_minute, outdoor_allowance_per_minute, middle_manager_default_enabled, middle_manager_exception_teacher_ids_json, self_study_subject, self_study_start_time, self_study_end_time, self_study_class_subjects_json, updated_at)
+            VALUES (
+                1,
+                COALESCE((SELECT default_exam_room_required_count FROM invigilation_config_settings WHERE id = 1), 1),
+                COALESCE((SELECT indoor_allowance_per_minute FROM invigilation_config_settings WHERE id = 1), 0.5),
+                COALESCE((SELECT outdoor_allowance_per_minute FROM invigilation_config_settings WHERE id = 1), 0.3),
+                COALESCE((SELECT middle_manager_default_enabled FROM invigilation_config_settings WHERE id = 1), 0),
+                COALESCE((SELECT middle_manager_exception_teacher_ids_json FROM invigilation_config_settings WHERE id = 1), '[]'),
+                COALESCE((SELECT self_study_subject FROM invigilation_config_settings WHERE id = 1), 'chinese'),
+                COALESCE((SELECT self_study_start_time FROM invigilation_config_settings WHERE id = 1), '12:10'),
+                COALESCE((SELECT self_study_end_time FROM invigilation_config_settings WHERE id = 1), '13:40'),
+                ?1,
+                ?2
+            )
+            ON CONFLICT(id) DO UPDATE SET
+                self_study_class_subjects_json = excluded.self_study_class_subjects_json,
+                updated_at = excluded.updated_at
+            "#,
+            params![json_text, now],
+        )?;
+        Ok(SuccessResponse::ok())
+    })();
+    result.map_err(|e| e.to_string())
+}
+
+pub fn replace_persisted_invigilation_exclusions(
+    app: AppHandle,
+    items: Vec<PersistedExamStaffExclusion>,
+) -> Result<SuccessResponse, String> {
+    let result = (|| -> Result<SuccessResponse, AppError> {
+        let mut conn = score::open_connection(&app)?;
+        exam_allocation::ensure_schema(&conn)?;
+        let tx = conn.transaction()?;
+        tx.execute("DELETE FROM invigilation_staff_exclusions", [])?;
+        let now = Utc::now().to_rfc3339();
+        for item in items {
+            tx.execute(
+                r#"
+                INSERT INTO invigilation_staff_exclusions
+                (teacher_id, teacher_name, session_id, session_label, created_at)
+                VALUES (?1, ?2, ?3, ?4, ?5)
+                "#,
+                params![
+                    item.teacher_id,
+                    item.teacher_name.trim(),
+                    item.session_id,
+                    item.session_label.trim(),
+                    now
+                ],
+            )?;
+        }
+        tx.commit()?;
+        Ok(SuccessResponse::ok())
+    })();
+    result.map_err(|e| e.to_string())
 }
 
 pub fn get_latest_exam_staff_plan_overview(
@@ -1701,6 +2013,16 @@ pub fn list_latest_teacher_duty_stats(
 mod tests {
     use super::*;
 
+    fn test_runtime_config() -> RuntimeInvigilationConfig {
+        RuntimeInvigilationConfig {
+            default_exam_room_required_count: 1,
+            indoor_allowance_per_minute: 0.5,
+            outdoor_allowance_per_minute: 0.3,
+            middle_manager_default_enabled: false,
+            middle_manager_exception_teacher_ids: HashSet::new(),
+        }
+    }
+
     #[test]
     fn test_choose_teacher_exam_room_subject_conflict() {
         let teachers = vec![
@@ -1740,8 +2062,15 @@ mod tests {
             day_key: "2026-03-24".to_string(),
             half_day: HalfDay::Morning,
         };
-        let (teacher_id, reason) =
-            choose_teacher_for_task(&task, &teachers, &runtime, None, &HashSet::new());
+        let config = test_runtime_config();
+        let (teacher_id, reason) = choose_teacher_for_task(
+            &task,
+            &teachers,
+            &runtime,
+            None,
+            &HashSet::new(),
+            &config,
+        );
         assert_eq!(teacher_id, Some(2));
         assert_eq!(reason, None);
     }
@@ -1785,12 +2114,14 @@ mod tests {
             day_key: "2026-03-24".to_string(),
             half_day: HalfDay::Morning,
         };
+        let config = test_runtime_config();
         let (teacher_id, reason) = choose_teacher_for_task(
             &task,
             &teachers,
             &runtime,
             Some("高二3班"),
             &HashSet::new(),
+            &config,
         );
         assert_eq!(teacher_id, Some(2));
         assert_eq!(reason, None);
@@ -1825,12 +2156,14 @@ mod tests {
             day_key: "2026-03-24".to_string(),
             half_day: HalfDay::Morning,
         };
+        let config = test_runtime_config();
         let (teacher_id, reason) = choose_teacher_for_task(
             &task,
             &teachers,
             &runtime,
             Some("高二3班"),
             &HashSet::new(),
+            &config,
         );
         assert_eq!(teacher_id, Some(1));
         assert_eq!(reason, None);
@@ -1865,15 +2198,60 @@ mod tests {
             day_key: "2026-03-24".to_string(),
             half_day: HalfDay::Morning,
         };
+        let config = test_runtime_config();
         let (teacher_id, reason) = choose_teacher_for_task(
             &task,
             &teachers,
             &runtime,
             Some("高一1班"),
             &HashSet::new(),
+            &config,
         );
         assert_eq!(teacher_id, None);
         assert_eq!(reason, Some("no_available_teacher".to_string()));
+    }
+
+    #[test]
+    fn test_choose_teacher_middle_manager_exception_enabled() {
+        let teachers = vec![TeacherInfo {
+            id: 1,
+            name: "中层".to_string(),
+            subjects: HashSet::from([Subject::Chinese]),
+            class_names: HashSet::new(),
+            homeroom_classes: HashSet::new(),
+            is_middle_manager: true,
+        }];
+        let runtime = HashMap::<i64, TeacherRuntimeState>::new();
+        let task = TaskBuild {
+            session_id: 1,
+            space_id: Some(1),
+            role: StaffRole::ExamRoomInvigilator,
+            grade_name: "高一".to_string(),
+            subject: Subject::Math,
+            space_name: "高一1场".to_string(),
+            floor: "3层".to_string(),
+            start_at: "2026-03-24T08:00".to_string(),
+            end_at: "2026-03-24T10:00".to_string(),
+            start_ts: 1_000,
+            end_ts: 2_000,
+            duration_minutes: 120,
+            recommended_subject: None,
+            priority_subject_chain: Vec::new(),
+            day_key: "2026-03-24".to_string(),
+            half_day: HalfDay::Morning,
+        };
+        let mut config = test_runtime_config();
+        config.middle_manager_exception_teacher_ids = HashSet::from([1_i64]);
+        let (teacher_id, reason) = choose_teacher_for_task(
+            &task,
+            &teachers,
+            &runtime,
+            None,
+            &HashSet::new(),
+            &config,
+        );
+        assert_eq!(teacher_id, Some(1));
+        assert_eq!(reason, None);
     }
 
     #[test]
@@ -1931,12 +2309,14 @@ mod tests {
             day_key: "2026-03-24".to_string(),
             half_day: HalfDay::Morning,
         };
+        let config = test_runtime_config();
         let (teacher_id, reason) = choose_teacher_for_task(
             &task,
             &teachers,
             &runtime,
             Some("高二3班"),
             &HashSet::new(),
+            &config,
         );
         assert_eq!(teacher_id, Some(2));
         assert_eq!(reason, None);
@@ -1989,8 +2369,15 @@ mod tests {
             day_key: "2026-03-24".to_string(),
             half_day: HalfDay::Afternoon,
         };
-        let (teacher_id, reason) =
-            choose_teacher_for_task(&task, &teachers, &runtime, None, &HashSet::new());
+        let config = test_runtime_config();
+        let (teacher_id, reason) = choose_teacher_for_task(
+            &task,
+            &teachers,
+            &runtime,
+            None,
+            &HashSet::new(),
+            &config,
+        );
         assert_eq!(teacher_id, Some(1));
         assert_eq!(reason, None);
     }
@@ -2052,8 +2439,15 @@ mod tests {
             day_key: "2026-03-24".to_string(),
             half_day: HalfDay::Afternoon,
         };
-        let (teacher_id, reason) =
-            choose_teacher_for_task(&task, &teachers, &runtime, None, &HashSet::new());
+        let config = test_runtime_config();
+        let (teacher_id, reason) = choose_teacher_for_task(
+            &task,
+            &teachers,
+            &runtime,
+            None,
+            &HashSet::new(),
+            &config,
+        );
         assert_eq!(teacher_id, Some(2));
         assert_eq!(reason, None);
     }
@@ -2098,19 +2492,22 @@ mod tests {
             half_day: HalfDay::Afternoon,
         };
         let exclusions = HashSet::from([(2_i64, 99_i64)]);
-        let (teacher_id, reason) =
-            choose_teacher_for_task(&task, &teachers, &runtime, None, &exclusions);
+        let config = test_runtime_config();
+        let (teacher_id, reason) = choose_teacher_for_task(
+            &task,
+            &teachers,
+            &runtime,
+            None,
+            &exclusions,
+            &config,
+        );
         assert_eq!(teacher_id, Some(1));
         assert_eq!(reason, None);
     }
 
     #[test]
     fn test_allowance_rate_mapping() {
-        let config = RuntimeInvigilationConfig {
-            default_exam_room_required_count: 1,
-            indoor_allowance_per_minute: 0.5,
-            outdoor_allowance_per_minute: 0.3,
-        };
+        let config = test_runtime_config();
         assert_eq!(
             allowance_rate_for_role(&config, StaffRole::ExamRoomInvigilator),
             0.5

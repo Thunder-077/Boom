@@ -11,9 +11,12 @@ import type {
   GenerateLatestExamStaffPlanResult,
   GenerateExamStaffPlanPayload,
   InvigilationExclusionSessionOption,
+  InvigilationConfig,
   ExamStaffPlanOverview,
   ExamStaffTask,
   ExamStaffTaskQuery,
+  ExamStaffExclusion,
+  SelfStudyClassSubjectConfig,
   TeacherDutyStat,
   ExportLatestExamAllocationBundleResult,
 } from "../../entities/exam-plan/model";
@@ -36,6 +39,10 @@ export interface ExamAllocationService {
   listSessionTimes(): Promise<ExamSessionTime[]>;
   upsertSessionTimes(items: ExamSessionTimeUpsert[]): Promise<{ success: boolean }>;
   deleteSessionTime(subject: ExamSessionTime["subject"]): Promise<{ success: boolean }>;
+  getPersistedInvigilationState(): Promise<{ config: InvigilationConfig; exclusions: ExamStaffExclusion[]; selfStudyClassSubjects: SelfStudyClassSubjectConfig[] }>;
+  savePersistedInvigilationConfig(payload: InvigilationConfig): Promise<{ success: boolean }>;
+  replacePersistedInvigilationExclusions(items: ExamStaffExclusion[]): Promise<{ success: boolean }>;
+  savePersistedSelfStudyClassSubjects(items: SelfStudyClassSubjectConfig[]): Promise<{ success: boolean }>;
   generateStaffPlan(payload: GenerateExamStaffPlanPayload): Promise<GenerateLatestExamStaffPlanResult>;
   getStaffPlanOverview(): Promise<ExamStaffPlanOverview>;
   listStaffTasks(params: ExamStaffTaskQuery): Promise<ListResult<ExamStaffTask>>;
@@ -75,6 +82,18 @@ export const examAllocationService: ExamAllocationService = {
   },
   deleteSessionTime(subject) {
     return invoke<{ success: boolean }>("delete_exam_session_time", { subject });
+  },
+  getPersistedInvigilationState() {
+    return invoke<{ config: InvigilationConfig; exclusions: ExamStaffExclusion[]; selfStudyClassSubjects: SelfStudyClassSubjectConfig[] }>("get_persisted_invigilation_state");
+  },
+  savePersistedInvigilationConfig(payload) {
+    return invoke<{ success: boolean }>("save_persisted_invigilation_config", { payload });
+  },
+  replacePersistedInvigilationExclusions(items) {
+    return invoke<{ success: boolean }>("replace_persisted_invigilation_exclusions", { items });
+  },
+  savePersistedSelfStudyClassSubjects(items) {
+    return invoke<{ success: boolean }>("save_persisted_self_study_class_subjects", { items });
   },
   generateStaffPlan(payload) {
     return invoke<GenerateLatestExamStaffPlanResult>("generate_latest_exam_staff_plan", { payload });
