@@ -149,6 +149,11 @@ export interface GenerateLatestExamStaffPlanResult {
   fallbackPoolAssignments: number;
 }
 
+export interface ExportLatestInvigilationScheduleResult {
+  filePath: string;
+  exportedAt: string;
+}
+
 export interface ExamStaffAssignmentProgress {
   status: "running" | "completed" | "error";
   stage: string;

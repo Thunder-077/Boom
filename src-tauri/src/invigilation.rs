@@ -1,6 +1,7 @@
 use tauri::AppHandle;
 
 use crate::exam_staff;
+use crate::export_invigilation;
 use crate::score::ListResult;
 
 pub use crate::exam_allocation::SuccessResponse;
@@ -11,6 +12,7 @@ pub use crate::exam_staff::{
     PersistedExamStaffExclusion, PersistedInvigilationConfig, PersistedInvigilationState,
     PersistedSelfStudyClassSubject, TeacherDutyStat,
 };
+pub use crate::export_invigilation::ExportLatestInvigilationScheduleResult;
 
 #[tauri::command]
 pub fn list_exam_session_times(app: AppHandle) -> Result<Vec<ExamSessionTime>, String> {
@@ -104,4 +106,15 @@ pub fn list_latest_teacher_duty_stats(
     params: ListTeacherDutyStatsParams,
 ) -> Result<ListResult<TeacherDutyStat>, String> {
     exam_staff::list_latest_teacher_duty_stats(app, params)
+}
+
+#[tauri::command]
+pub async fn export_latest_invigilation_schedule(
+    app: AppHandle,
+) -> Result<ExportLatestInvigilationScheduleResult, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        export_invigilation::export_latest_invigilation_schedule(app)
+    })
+    .await
+    .map_err(|error| format!("监考表导出任务执行失败: {error}"))?
 }

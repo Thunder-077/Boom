@@ -19,6 +19,7 @@ import type {
   SelfStudyClassSubjectConfig,
   TeacherDutyStat,
   ExportLatestExamAllocationBundleResult,
+  ExportLatestInvigilationScheduleResult,
 } from "../../entities/exam-plan/model";
 import type { TeacherRow } from "../../entities/teacher/model";
 import type { ListResult } from "../../shared/types/api";
@@ -50,6 +51,7 @@ export interface ExamAllocationService {
   listInvigilationExclusionSessionOptions(): Promise<InvigilationExclusionSessionOption[]>;
   listTeachers(params?: { nameKeyword?: string; page?: number; pageSize?: number }): Promise<ListResult<TeacherRow>>;
   exportLatestExamAllocationBundle(): Promise<ExportLatestExamAllocationBundleResult>;
+  exportLatestInvigilationSchedule(): Promise<ExportLatestInvigilationScheduleResult>;
 }
 
 export const examAllocationService: ExamAllocationService = {
@@ -115,5 +117,8 @@ export const examAllocationService: ExamAllocationService = {
   },
   exportLatestExamAllocationBundle() {
     return invoke<ExportLatestExamAllocationBundleResult>("export_latest_exam_allocation_bundle");
+  },
+  exportLatestInvigilationSchedule() {
+    return invoke<ExportLatestInvigilationScheduleResult>("export_latest_invigilation_schedule");
   },
 };

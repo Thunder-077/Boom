@@ -17,7 +17,7 @@ use crate::teacher;
 
 const DEFAULT_CAPACITY: i64 = 40;
 const DEFAULT_MAX_CAPACITY: i64 = 41;
-const GENERATION_STAGE_PAUSE_MS: u64 = 650;
+const GENERATION_STAGE_PAUSE_MS: u64 = 30;
 const DEFAULT_EXAM_TITLE: &str = "2026年3月月考";
 const DEFAULT_EXAM_NOTICES: [&str; 5] = [
     "1. 考生进入考场，准备好2B铅笔、书写用0.5mm黑色签字笔、橡皮等考试必需用品。",

@@ -86,6 +86,7 @@ export function createExamAllocationStore(service: ExamAllocationService = examA
     generating: false,
     saving: false,
     exporting: false,
+    exportingInvigilation: false,
     assigning: false,
     savingTimes: false,
     errorMessage: "",
@@ -112,6 +113,7 @@ export function createExamAllocationStore(service: ExamAllocationService = examA
     exclusionSessionOptions: [] as InvigilationExclusionSessionOption[],
     teachers: [] as TeacherRow[],
     lastExportZipPath: "",
+    lastInvigilationExportPath: "",
     generationProgress: { ...emptyGenerationProgress } as ExamGenerationProgress,
   });
   let progressPollTimer: number | null = null;
@@ -329,6 +331,21 @@ export function createExamAllocationStore(service: ExamAllocationService = examA
     }
   }
 
+  async function exportLatestInvigilationSchedule() {
+    state.exportingInvigilation = true;
+    state.errorMessage = "";
+    try {
+      const result = await service.exportLatestInvigilationSchedule();
+      state.lastInvigilationExportPath = result.filePath;
+      return result;
+    } catch (error) {
+      state.errorMessage = error instanceof Error ? error.message : String(error);
+      throw error;
+    } finally {
+      state.exportingInvigilation = false;
+    }
+  }
+
   function setSessionTimeDraft(sessionId: number, field: "startAt" | "endAt", value: string) {
     if (!state.sessionTimeDrafts[sessionId]) {
       state.sessionTimeDrafts[sessionId] = { startAt: "", endAt: "" };
@@ -509,6 +526,7 @@ export function createExamAllocationStore(service: ExamAllocationService = examA
       generating: state.generating,
       saving: state.saving,
       exporting: state.exporting,
+      exportingInvigilation: state.exportingInvigilation,
       assigning: state.assigning,
       savingTimes: state.savingTimes,
       errorMessage: state.errorMessage,
@@ -533,6 +551,7 @@ export function createExamAllocationStore(service: ExamAllocationService = examA
       })),
       teachers: state.teachers,
       lastExportZipPath: state.lastExportZipPath,
+      lastInvigilationExportPath: state.lastInvigilationExportPath,
       generationProgress: state.generationProgress,
     })),
   );
@@ -541,6 +560,7 @@ export function createExamAllocationStore(service: ExamAllocationService = examA
     loadAll,
     saveSettings,
     exportLatestBundle,
+    exportLatestInvigilationSchedule,
     generate,
     loadDetail,
     setFilters,
