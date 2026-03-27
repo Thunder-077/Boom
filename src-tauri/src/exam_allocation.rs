@@ -951,6 +951,17 @@ fn load_not_selected_students(
     Ok(out)
 }
 
+fn load_self_study_students_for_session(
+    conn: &Connection,
+    grade_name: &str,
+    subject: Subject,
+) -> Result<Vec<Participant>, AppError> {
+    if is_foreign_subject(subject) {
+        return Ok(Vec::new());
+    }
+    load_not_selected_students(conn, grade_name, subject)
+}
+
 fn build_round_robin_order(participants: &[Participant]) -> Vec<Participant> {
     let mut groups: HashMap<String, Vec<Participant>> = HashMap::new();
     for p in participants {
@@ -1001,6 +1012,42 @@ fn clear_latest_plan(tx: &rusqlite::Transaction<'_>) -> Result<(), AppError> {
     Ok(())
 }
 
+fn fill_with_configured_exam_rooms(
+    grade_name: &str,
+    subject: Subject,
+    chosen_spaces: &mut Vec<SpaceCandidate>,
+    required_room_count: usize,
+    exam_rooms: &[ExamRoomResource],
+) -> Result<(), AppError> {
+    for room in exam_rooms {
+        if chosen_spaces.len() >= required_room_count {
+            break;
+        }
+        chosen_spaces.push(SpaceCandidate {
+            space_type: ExamPlanSpaceType::ExamRoom,
+            space_source: ExamPlanSpaceSource::ExamRoom,
+            space_name: room.room_name.clone(),
+            original_class_name: None,
+            self_study_topic: None,
+            building: room.building.clone(),
+            floor: room.floor.clone(),
+            capacity: None,
+            sort_index: chosen_spaces.len() as i64 + 1,
+        });
+    }
+
+    if chosen_spaces.len() < required_room_count {
+        return Err(AppError::new(format!(
+            "{} {} 考场不足：需要 {} 个考场，现有教学教室和 exam_room 共 {} 个。请在 class_configs 中补充 exam_room 配置。",
+            grade_name,
+            subject_label(subject),
+            required_room_count,
+            chosen_spaces.len()
+        )));
+    }
+    Ok(())
+}
+
 fn build_session(
     tx: &rusqlite::Transaction<'_>,
     grade_name: &str,
@@ -1015,7 +1062,7 @@ fn build_session(
     let mut warnings = 0_i64;
     let is_foreign = is_foreign_subject(subject);
     let foreign_seq = foreign_order(subject);
-    let not_selected = load_not_selected_students(tx, grade_name, subject)?;
+    let not_selected = load_self_study_students_for_session(tx, grade_name, subject)?;
     let self_study_class_names: HashSet<String> = not_selected
         .iter()
         .map(|item| item.class_name.clone())
@@ -1081,37 +1128,13 @@ fn build_session(
             sort_index: chosen_spaces.len() as i64 + 1,
         });
     }
-    for room in &grade_ctx.exam_rooms {
-        if chosen_spaces.len() >= required_room_count {
-            break;
-        }
-        chosen_spaces.push(SpaceCandidate {
-            space_type: ExamPlanSpaceType::ExamRoom,
-            space_source: ExamPlanSpaceSource::ExamRoom,
-            space_name: room.room_name.clone(),
-            original_class_name: None,
-            self_study_topic: None,
-            building: room.building.clone(),
-            floor: room.floor.clone(),
-            capacity: None,
-            sort_index: chosen_spaces.len() as i64 + 1,
-        });
-    }
-    let mut virtual_index = grade_ctx.teaching_classes.len() as i64 + 1;
-    while chosen_spaces.len() < required_room_count {
-        chosen_spaces.push(SpaceCandidate {
-            space_type: ExamPlanSpaceType::ExamRoom,
-            space_source: ExamPlanSpaceSource::VirtualBackup,
-            space_name: format!("{grade_name}{virtual_index}场"),
-            original_class_name: None,
-            self_study_topic: None,
-            building: "备用考场".to_string(),
-            floor: "临时".to_string(),
-            capacity: None,
-            sort_index: chosen_spaces.len() as i64 + 1,
-        });
-        virtual_index += 1;
-    }
+    fill_with_configured_exam_rooms(
+        grade_name,
+        subject,
+        &mut chosen_spaces,
+        required_room_count,
+        &grade_ctx.exam_rooms,
+    )?;
     if is_foreign {
         for class_name in &used_teaching_classes {
             foreign_occupied_classes.insert(class_name.clone());
@@ -1937,6 +1960,7 @@ pub fn get_latest_exam_plan_session_detail(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use rusqlite::Connection;
 
     #[test]
     fn test_capacity_rebalance() {
@@ -2041,6 +2065,146 @@ mod tests {
         let topic =
             build_foreign_group_self_study_topic(vec![Subject::English, Subject::Russian]);
         assert_eq!(topic.label, "外语自习（英、俄）");
+    }
+
+    #[test]
+    fn test_fill_with_configured_exam_rooms_uses_exam_rooms_after_teaching_classes() {
+        let mut chosen_spaces = vec![SpaceCandidate {
+            space_type: ExamPlanSpaceType::ExamRoom,
+            space_source: ExamPlanSpaceSource::TeachingClass,
+            space_name: "高一1场".to_string(),
+            original_class_name: Some("高一1班".to_string()),
+            self_study_topic: None,
+            building: "教学楼A".to_string(),
+            floor: "3层".to_string(),
+            capacity: None,
+            sort_index: 1,
+        }];
+        let exam_rooms = vec![
+            ExamRoomResource {
+                room_name: "高一5场".to_string(),
+                building: "教学楼A".to_string(),
+                floor: "5层".to_string(),
+            },
+            ExamRoomResource {
+                room_name: "高一6场".to_string(),
+                building: "教学楼A".to_string(),
+                floor: "5层".to_string(),
+            },
+        ];
+
+        fill_with_configured_exam_rooms(
+            "高一",
+            Subject::Math,
+            &mut chosen_spaces,
+            3,
+            &exam_rooms,
+        )
+        .unwrap();
+
+        assert_eq!(chosen_spaces.len(), 3);
+        assert_eq!(
+            chosen_spaces
+                .iter()
+                .map(|space| space.space_source)
+                .collect::<Vec<_>>(),
+            vec![
+                ExamPlanSpaceSource::TeachingClass,
+                ExamPlanSpaceSource::ExamRoom,
+                ExamPlanSpaceSource::ExamRoom,
+            ]
+        );
+        assert_eq!(chosen_spaces[1].space_name, "高一5场");
+        assert_eq!(chosen_spaces[2].space_name, "高一6场");
+    }
+
+    #[test]
+    fn test_fill_with_configured_exam_rooms_errors_when_rooms_are_insufficient() {
+        let mut chosen_spaces = vec![SpaceCandidate {
+            space_type: ExamPlanSpaceType::ExamRoom,
+            space_source: ExamPlanSpaceSource::TeachingClass,
+            space_name: "高一1场".to_string(),
+            original_class_name: Some("高一1班".to_string()),
+            self_study_topic: None,
+            building: "教学楼A".to_string(),
+            floor: "3层".to_string(),
+            capacity: None,
+            sort_index: 1,
+        }];
+        let exam_rooms = vec![ExamRoomResource {
+            room_name: "高一5场".to_string(),
+            building: "教学楼A".to_string(),
+            floor: "5层".to_string(),
+        }];
+
+        let err = fill_with_configured_exam_rooms(
+            "高一",
+            Subject::Math,
+            &mut chosen_spaces,
+            3,
+            &exam_rooms,
+        )
+        .expect_err("应在 teaching_class + exam_room 仍不足时直接报错");
+
+        let message = err.to_string();
+        assert!(message.contains("高一 数学 考场不足"));
+        assert!(message.contains("请在 class_configs 中补充 exam_room 配置"));
+        assert_eq!(chosen_spaces.len(), 2);
+        assert_eq!(chosen_spaces[1].space_source, ExamPlanSpaceSource::ExamRoom);
+    }
+
+    #[test]
+    fn test_foreign_sessions_do_not_create_subject_based_self_study_students() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            r#"
+            CREATE TABLE latest_student_scores (
+                admission_no TEXT PRIMARY KEY,
+                student_name TEXT NOT NULL,
+                class_name TEXT NOT NULL,
+                grade_name TEXT NOT NULL
+            );
+            CREATE TABLE latest_subject_scores (
+                admission_no TEXT NOT NULL,
+                subject TEXT NOT NULL,
+                is_selected INTEGER NOT NULL,
+                score REAL
+            );
+            "#,
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO latest_student_scores (admission_no, student_name, class_name, grade_name) VALUES ('s1', '张三', '高一1班', '高一')",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO latest_subject_scores (admission_no, subject, is_selected, score) VALUES ('s1', 'english', 0, NULL)",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO latest_subject_scores (admission_no, subject, is_selected, score) VALUES ('s1', 'russian', 1, NULL)",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO latest_subject_scores (admission_no, subject, is_selected, score) VALUES ('s1', 'math', 0, NULL)",
+            [],
+        )
+        .unwrap();
+
+        let english_self_study =
+            load_self_study_students_for_session(&conn, "高一", Subject::English).unwrap();
+        let russian_self_study =
+            load_self_study_students_for_session(&conn, "高一", Subject::Russian).unwrap();
+        let math_self_study =
+            load_self_study_students_for_session(&conn, "高一", Subject::Math).unwrap();
+
+        assert!(english_self_study.is_empty());
+        assert!(russian_self_study.is_empty());
+        assert_eq!(math_self_study.len(), 1);
+        assert_eq!(math_self_study[0].class_name, "高一1班");
     }
 
     #[test]
