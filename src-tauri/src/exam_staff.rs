@@ -8,11 +8,86 @@ use cp_sat::proto::{CpSolverResponse, CpSolverStatus, SatParameters};
 use rusqlite::types::Value;
 use rusqlite::{params, params_from_iter, Connection};
 use serde::{Deserialize, Serialize};
-use tauri::AppHandle;
+use tauri::{AppHandle, Emitter};
 
 use crate::app_log;
 use crate::exam_allocation::{self, SuccessResponse};
 use crate::score::{self, AppError, ListResult, Subject};
+
+const CP_SAT_MAX_SOLVE_MS: i64 = 30 * 60 * 1000;
+const CP_SAT_MAX_SOLVE_LABEL: &str = "30 分钟";
+const CP_SAT_FAST_STAGE_BUDGET_MS: i64 = 30 * 1000;
+const CP_SAT_BALANCE_STAGE_BUDGET_MS: i64 = 90 * 1000;
+const STAFF_ASSIGNMENT_PROGRESS_EVENT: &str = "invigilation_staff_assignment_progress";
+const STAFF_ASSIGNMENT_TOTAL_STEPS: usize = 13;
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct StaffAssignmentProgressPayload {
+    status: &'static str,
+    stage: String,
+    stage_label: String,
+    percent: i64,
+    message: String,
+    completed_steps: i64,
+    total_steps: i64,
+    updated_at: String,
+}
+
+#[derive(Debug, Clone)]
+struct StaffAssignmentProgressReporter {
+    app: AppHandle,
+}
+
+impl StaffAssignmentProgressReporter {
+    fn new(app: AppHandle) -> Self {
+        Self { app }
+    }
+
+    fn emit_running(&self, step: usize, stage: &str, stage_label: &str, message: String) {
+        let safe_step = step.clamp(1, STAFF_ASSIGNMENT_TOTAL_STEPS);
+        self.emit_payload(StaffAssignmentProgressPayload {
+            status: "running",
+            stage: stage.to_string(),
+            stage_label: stage_label.to_string(),
+            percent: ((safe_step.saturating_sub(1) * 100) / STAFF_ASSIGNMENT_TOTAL_STEPS) as i64,
+            message,
+            completed_steps: safe_step.saturating_sub(1) as i64,
+            total_steps: STAFF_ASSIGNMENT_TOTAL_STEPS as i64,
+            updated_at: Utc::now().to_rfc3339(),
+        });
+    }
+
+    fn emit_completed(&self, message: String) {
+        self.emit_payload(StaffAssignmentProgressPayload {
+            status: "completed",
+            stage: "completed".to_string(),
+            stage_label: "分配完成".to_string(),
+            percent: 100,
+            message,
+            completed_steps: STAFF_ASSIGNMENT_TOTAL_STEPS as i64,
+            total_steps: STAFF_ASSIGNMENT_TOTAL_STEPS as i64,
+            updated_at: Utc::now().to_rfc3339(),
+        });
+    }
+
+    fn emit_error(&self, stage: &str, stage_label: &str, message: String) {
+        self.emit_payload(StaffAssignmentProgressPayload {
+            status: "error",
+            stage: stage.to_string(),
+            stage_label: stage_label.to_string(),
+            percent: 0,
+            message,
+            completed_steps: 0,
+            total_steps: STAFF_ASSIGNMENT_TOTAL_STEPS as i64,
+            updated_at: Utc::now().to_rfc3339(),
+        });
+    }
+
+    fn emit_payload(&self, payload: StaffAssignmentProgressPayload) {
+        let _ = self.app.emit(STAFF_ASSIGNMENT_PROGRESS_EVENT, payload);
+    }
+}
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -92,7 +167,7 @@ impl StaffTaskSource {
     }
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
 #[serde(rename_all = "snake_case")]
 pub enum AssignmentTier {
     Primary,
@@ -436,7 +511,8 @@ struct TeacherRuntimeState {
     indoor_minutes: i64,
     outdoor_minutes: i64,
     total_minutes: i64,
-    weighted_minutes: i64,
+    invigilation_minutes: i64,
+    self_study_minutes: i64,
     task_count: i64,
     exam_room_task_count: i64,
     self_study_task_count: i64,
@@ -495,7 +571,8 @@ struct PlanMetrics {
     unassigned_count: i64,
     fallback_pool_assignments: i64,
     homeroom_assignments: i64,
-    weighted_load_gap: i64,
+    invigilation_minutes_gap: i64,
+    self_study_minutes_gap: i64,
     cross_half_day_penalty: i64,
     imbalance_minutes: i64,
     warning_count: i64,
@@ -620,14 +697,6 @@ fn role_priority(role: StaffRole) -> i32 {
         StaffRole::ExamRoomInvigilator => 1,
         StaffRole::SelfStudySupervisor => 2,
         StaffRole::FloorRover => 3,
-    }
-}
-
-fn role_effort_weight(role: StaffRole) -> i64 {
-    match role {
-        StaffRole::ExamRoomInvigilator => 3,
-        StaffRole::FloorRover => 2,
-        StaffRole::SelfStudySupervisor => 1,
     }
 }
 
@@ -1033,10 +1102,6 @@ fn load_exam_room_requirement(default_count: i64) -> Result<i64, AppError> {
     Ok(default_count.max(1))
 }
 
-fn overlap(a_start: i64, a_end: i64, b_start: i64, b_end: i64) -> bool {
-    a_start < b_end && b_start < a_end
-}
-
 fn build_priority_subject_chain(
     current: &SessionTimeRuntime,
     class_name: &str,
@@ -1159,6 +1224,47 @@ fn build_task_candidate_summary(
     }
 }
 
+fn build_teacher_symmetry_groups(
+    teachers: &[TeacherInfo],
+    candidate_summaries: &[TaskCandidateSummary],
+) -> Vec<Vec<i64>> {
+    let mut signatures = HashMap::<i64, Vec<(usize, Option<AssignmentTier>)>>::new();
+    for teacher in teachers {
+        signatures.insert(teacher.id, Vec::new());
+    }
+    for (task_index, summary) in candidate_summaries.iter().enumerate() {
+        for candidate in &summary.candidates {
+            signatures
+                .entry(candidate.teacher_id)
+                .or_default()
+                .push((task_index, candidate.assignment_tier));
+        }
+    }
+
+    let mut grouped = HashMap::<Vec<(usize, Option<AssignmentTier>)>, Vec<i64>>::new();
+    for teacher in teachers {
+        let mut signature = signatures.remove(&teacher.id).unwrap_or_default();
+        signature.sort_unstable_by(|left, right| {
+            left.0
+                .cmp(&right.0)
+                .then(left.1.as_ref().map(|tier| tier.as_key()).cmp(
+                    &right.1.as_ref().map(|tier| tier.as_key()),
+                ))
+        });
+        grouped.entry(signature).or_default().push(teacher.id);
+    }
+
+    let mut groups: Vec<Vec<i64>> = grouped
+        .into_values()
+        .filter(|group| group.len() > 1)
+        .collect();
+    for group in &mut groups {
+        group.sort_unstable();
+    }
+    groups.sort_by_key(|group| group[0]);
+    groups
+}
+
 fn clear_latest_staff_plan(tx: &rusqlite::Transaction<'_>) -> Result<(), AppError> {
     tx.execute("DELETE FROM latest_exam_staff_assignments", [])?;
     tx.execute("DELETE FROM latest_exam_staff_tasks", [])?;
@@ -1218,19 +1324,21 @@ fn apply_assignment_to_runtime(state: &mut TeacherRuntimeState, task: &TaskBuild
     match task.role {
         StaffRole::ExamRoomInvigilator => {
             state.indoor_minutes += task.duration_minutes;
+            state.invigilation_minutes += task.duration_minutes;
             state.exam_room_task_count += 1;
         }
         StaffRole::SelfStudySupervisor => {
             state.indoor_minutes += task.duration_minutes;
+            state.self_study_minutes += task.duration_minutes;
             state.self_study_task_count += 1;
         }
         StaffRole::FloorRover => {
             state.outdoor_minutes += task.duration_minutes;
+            state.invigilation_minutes += task.duration_minutes;
             state.floor_rover_task_count += 1;
         }
     }
     state.total_minutes += task.duration_minutes;
-    state.weighted_minutes += task.duration_minutes * role_effort_weight(task.role);
     state.task_count += 1;
     state.busy_ranges.push((task.start_ts, task.end_ts));
     state
@@ -1274,24 +1382,33 @@ fn compute_plan_metrics(
 
     let mut max_total = 0_i64;
     let mut min_total = i64::MAX;
-    let mut max_weighted = 0_i64;
-    let mut min_weighted = i64::MAX;
+    let mut max_invigilation = 0_i64;
+    let mut min_invigilation = i64::MAX;
+    let mut max_self_study = 0_i64;
+    let mut min_self_study = i64::MAX;
     for teacher in teachers {
         let state = runtime.get(&teacher.id).cloned().unwrap_or_default();
         max_total = max_total.max(state.total_minutes);
         min_total = min_total.min(state.total_minutes);
-        max_weighted = max_weighted.max(state.weighted_minutes);
-        min_weighted = min_weighted.min(state.weighted_minutes);
+        max_invigilation = max_invigilation.max(state.invigilation_minutes);
+        min_invigilation = min_invigilation.min(state.invigilation_minutes);
+        max_self_study = max_self_study.max(state.self_study_minutes);
+        min_self_study = min_self_study.min(state.self_study_minutes);
     }
     let imbalance_minutes = if teachers.is_empty() {
         0
     } else {
         max_total.saturating_sub(min_total)
     };
-    let weighted_load_gap = if teachers.is_empty() {
+    let invigilation_minutes_gap = if teachers.is_empty() {
         0
     } else {
-        max_weighted.saturating_sub(min_weighted)
+        max_invigilation.saturating_sub(min_invigilation)
+    };
+    let self_study_minutes_gap = if teachers.is_empty() {
+        0
+    } else {
+        max_self_study.saturating_sub(min_self_study)
     };
     let warning_count = unassigned_count + if imbalance_minutes > 90 { 1 } else { 0 };
 
@@ -1300,7 +1417,8 @@ fn compute_plan_metrics(
         unassigned_count,
         fallback_pool_assignments,
         homeroom_assignments,
-        weighted_load_gap,
+        invigilation_minutes_gap,
+        self_study_minutes_gap,
         cross_half_day_penalty: cross_half_day_penalty(runtime),
         imbalance_minutes,
         warning_count,
@@ -1532,7 +1650,171 @@ fn cp_sat_time_limit_params(remaining_ms: i64) -> SatParameters {
     params.max_time_in_seconds = Some((remaining_ms.max(1) as f64) / 1000.0);
     params.num_search_workers = Some(8);
     params.log_search_progress = Some(false);
+    params.repair_hint = Some(true);
+    params.hint_conflict_limit = Some(1_000);
     params
+}
+
+fn cp_sat_stage_time_budget_ms(stage_name: &str, remaining_ms: i64) -> i64 {
+    let preferred_budget_ms = match stage_name {
+        "unassigned_count" | "fallback_pool_assignments" | "homeroom_assignments" => {
+            CP_SAT_FAST_STAGE_BUDGET_MS
+        }
+        "total_minutes_gap" | "invigilation_minutes_gap" | "self_study_minutes_gap" => {
+            CP_SAT_BALANCE_STAGE_BUDGET_MS
+        }
+        "cross_half_day_penalty" => CP_SAT_FAST_STAGE_BUDGET_MS,
+        _ => remaining_ms,
+    };
+    remaining_ms.min(preferred_budget_ms).max(1)
+}
+
+fn add_load_gap_var(
+    model: &mut CpModelBuilder,
+    load_vars: &[IntVar],
+    capacity: i64,
+    prefix: &str,
+) -> IntVar {
+    let gap_var = model.new_int_var_with_name([(0, capacity)], format!("{prefix}_gap"));
+
+    if load_vars.len() <= 1 {
+        model.add_eq(gap_var, 0);
+        return gap_var;
+    }
+
+    for (left_index, left_var) in load_vars.iter().enumerate() {
+        for right_var in load_vars.iter().skip(left_index + 1) {
+            model.add_le(LinearExpr::from(*left_var) - *right_var, gap_var);
+            model.add_le(LinearExpr::from(*right_var) - *left_var, gap_var);
+        }
+    }
+
+    gap_var
+}
+
+fn add_teacher_timepoint_non_overlap_constraints(
+    model: &mut CpModelBuilder,
+    tasks: &[TaskBuild],
+    teacher_assignment_vars: &HashMap<i64, Vec<(usize, BoolVar)>>,
+) {
+    for teacher_vars in teacher_assignment_vars.values() {
+        if teacher_vars.len() <= 1 {
+            continue;
+        }
+        let mut time_points: Vec<i64> = teacher_vars
+            .iter()
+            .map(|(task_index, _)| tasks[*task_index].start_ts)
+            .collect();
+        time_points.sort_unstable();
+        time_points.dedup();
+
+        let mut seen_groups = HashSet::<Vec<usize>>::new();
+        for time_point in time_points {
+            let mut active_group = Vec::<(usize, BoolVar)>::new();
+            for (task_index, assignment_var) in teacher_vars {
+                let task = &tasks[*task_index];
+                if task.start_ts <= time_point && time_point < task.end_ts {
+                    active_group.push((*task_index, *assignment_var));
+                }
+            }
+            if active_group.len() <= 1 {
+                continue;
+            }
+
+            let mut group_key: Vec<usize> =
+                active_group.iter().map(|(task_index, _)| *task_index).collect();
+            group_key.sort_unstable();
+            if !seen_groups.insert(group_key) {
+                continue;
+            }
+
+            model.add_at_most_one(
+                active_group
+                    .into_iter()
+                    .map(|(_, assignment_var)| assignment_var),
+            );
+        }
+    }
+}
+
+fn add_solution_hints(
+    model: &mut CpModelBuilder,
+    response: &CpSolverResponse,
+    bool_vars: &[BoolVar],
+    int_vars: &[IntVar],
+) {
+    if response.solution.is_empty() {
+        return;
+    }
+
+    for bool_var in bool_vars {
+        model.add_hint(*bool_var, if bool_var.solution_value(response) { 1 } else { 0 });
+    }
+    for int_var in int_vars {
+        model.add_hint(*int_var, int_var.solution_value(response));
+    }
+}
+
+fn add_manual_bool_hints(model: &mut CpModelBuilder, bool_hints: &[(BoolVar, i64)]) {
+    for (bool_var, value) in bool_hints {
+        model.add_hint(*bool_var, *value);
+    }
+}
+
+fn build_teacher_load_rank_expr(
+    total_load_var: IntVar,
+    invigilation_load_var: IntVar,
+    self_study_load_var: IntVar,
+    invigilation_minutes_capacity: i64,
+    self_study_minutes_capacity: i64,
+) -> Option<LinearExpr> {
+    let invigilation_multiplier = self_study_minutes_capacity.checked_add(1)?;
+    let total_multiplier = invigilation_minutes_capacity
+        .checked_add(1)?
+        .checked_mul(invigilation_multiplier)?;
+    let mut expr = LinearExpr::default();
+    expr += (total_multiplier, total_load_var);
+    expr += (invigilation_multiplier, invigilation_load_var);
+    expr += self_study_load_var;
+    Some(expr)
+}
+
+fn add_teacher_symmetry_breaking_constraints(
+    model: &mut CpModelBuilder,
+    symmetry_groups: &[Vec<i64>],
+    teacher_load_vars: &HashMap<i64, (IntVar, IntVar, IntVar)>,
+    invigilation_minutes_capacity: i64,
+    self_study_minutes_capacity: i64,
+) {
+    for group in symmetry_groups {
+        for teacher_window in group.windows(2) {
+            let Some(left_vars) = teacher_load_vars.get(&teacher_window[0]).copied() else {
+                continue;
+            };
+            let Some(right_vars) = teacher_load_vars.get(&teacher_window[1]).copied() else {
+                continue;
+            };
+            let Some(left_rank_expr) = build_teacher_load_rank_expr(
+                left_vars.0,
+                left_vars.1,
+                left_vars.2,
+                invigilation_minutes_capacity,
+                self_study_minutes_capacity,
+            ) else {
+                continue;
+            };
+            let Some(right_rank_expr) = build_teacher_load_rank_expr(
+                right_vars.0,
+                right_vars.1,
+                right_vars.2,
+                invigilation_minutes_capacity,
+                self_study_minutes_capacity,
+            ) else {
+                continue;
+            };
+            model.add_ge(left_rank_expr, right_rank_expr);
+        }
+    }
 }
 
 fn solve_cp_sat_stage(
@@ -1540,11 +1822,19 @@ fn solve_cp_sat_stage(
     fixed_objectives: &[(LinearExpr, i64)],
     objective: LinearExpr,
     remaining_ms: i64,
+    hint_response: Option<&CpSolverResponse>,
+    hint_bool_vars: &[BoolVar],
+    hint_int_vars: &[IntVar],
+    manual_bool_hints: &[(BoolVar, i64)],
 ) -> CpSolverResponse {
     let mut builder = CpModelBuilder::from_proto(base_proto.clone());
     for (expr, value) in fixed_objectives {
         builder.add_eq(expr.clone(), *value);
     }
+    if let Some(response) = hint_response {
+        add_solution_hints(&mut builder, response, hint_bool_vars, hint_int_vars);
+    }
+    add_manual_bool_hints(&mut builder, manual_bool_hints);
     builder.minimize(objective);
     builder.solve_with_parameters(&cp_sat_time_limit_params(remaining_ms))
 }
@@ -1558,7 +1848,7 @@ fn cp_sat_response_kind(
         CpSolverStatus::Feasible => Ok(OptimalityStatus::Feasible),
         CpSolverStatus::Infeasible => Err(FallbackReason::Infeasible),
         CpSolverStatus::Unknown => {
-            if elapsed_ms >= 60_000 {
+            if elapsed_ms >= CP_SAT_MAX_SOLVE_MS {
                 Err(FallbackReason::Timeout)
             } else if !response.solution_info.trim().is_empty() {
                 Err(FallbackReason::Error)
@@ -1653,6 +1943,7 @@ fn solve_with_cp_sat(
     teachers: &[TeacherInfo],
     exclusion_pairs: &HashSet<(i64, i64)>,
     invigilation_config: &RuntimeInvigilationConfig,
+    progress: Option<&StaffAssignmentProgressReporter>,
 ) -> CpSatAttempt {
     let started_at = Instant::now();
     let candidate_summaries: Vec<TaskCandidateSummary> = tasks
@@ -1661,22 +1952,36 @@ fn solve_with_cp_sat(
             build_task_candidate_summary(task, teachers, exclusion_pairs, invigilation_config)
         })
         .collect();
+    let teacher_symmetry_groups = build_teacher_symmetry_groups(teachers, &candidate_summaries);
 
     let mut model = CpModelBuilder::default();
     let mut candidate_bindings = Vec::<Vec<(BoolVar, TaskCandidate)>>::new();
     let mut unassigned_vars = Vec::<BoolVar>::new();
     let mut teacher_assignment_vars = HashMap::<i64, Vec<(usize, BoolVar)>>::new();
     let mut teacher_day_half_vars = HashMap::<(i64, String, HalfDay), Vec<BoolVar>>::new();
+    let mut teacher_load_vars = HashMap::<i64, (IntVar, IntVar, IntVar)>::new();
 
-    let total_weighted_capacity = tasks
+    let total_minutes_capacity = tasks.iter().map(|task| task.duration_minutes).sum::<i64>().max(1);
+    let invigilation_minutes_capacity = tasks
         .iter()
-        .map(|task| task.duration_minutes * role_effort_weight(task.role))
+        .filter(|task| task.role != StaffRole::SelfStudySupervisor)
+        .map(|task| task.duration_minutes)
+        .sum::<i64>()
+        .max(1);
+    let self_study_minutes_capacity = tasks
+        .iter()
+        .filter(|task| task.role == StaffRole::SelfStudySupervisor)
+        .map(|task| task.duration_minutes)
         .sum::<i64>()
         .max(1);
 
     let mut unassigned_expr = LinearExpr::default();
     let mut fallback_expr = LinearExpr::default();
     let mut homeroom_expr = LinearExpr::default();
+    let self_study_task_capacity = tasks
+        .iter()
+        .filter(|task| task.role == StaffRole::SelfStudySupervisor)
+        .count() as i64;
 
     for (task_index, task) in tasks.iter().enumerate() {
         let summary = &candidate_summaries[task_index];
@@ -1714,138 +2019,248 @@ fn solve_with_cp_sat(
         candidate_bindings.push(bindings_for_task);
     }
 
-    for teacher_vars in teacher_assignment_vars.values() {
-        for left_index in 0..teacher_vars.len() {
-            let (left_task_index, left_var) = teacher_vars[left_index];
-            for (right_task_index, right_var) in teacher_vars.iter().skip(left_index + 1) {
-                let left_task = &tasks[left_task_index];
-                let right_task = &tasks[*right_task_index];
-                if overlap(
-                    left_task.start_ts,
-                    left_task.end_ts,
-                    right_task.start_ts,
-                    right_task.end_ts,
-                ) {
-                    model.add_at_most_one([left_var, *right_var]);
-                }
-            }
-        }
-    }
+    add_teacher_timepoint_non_overlap_constraints(&mut model, tasks, &teacher_assignment_vars);
 
-    let mut load_vars = Vec::<IntVar>::new();
+    let mut total_load_vars = Vec::<IntVar>::new();
+    let mut invigilation_load_vars = Vec::<IntVar>::new();
+    let mut self_study_load_vars = Vec::<IntVar>::new();
     for teacher in teachers {
-        let load_var = model.new_int_var_with_name(
-            [(0, total_weighted_capacity)],
-            format!("weighted_load_{}", teacher.id),
+        let total_load_var = model.new_int_var_with_name(
+            [(0, total_minutes_capacity)],
+            format!("total_minutes_{}", teacher.id),
         );
-        let weighted_expr: LinearExpr = teacher_assignment_vars
+        let total_expr: LinearExpr = teacher_assignment_vars
             .get(&teacher.id)
             .into_iter()
             .flat_map(|items| items.iter())
-            .map(|(task_index, var)| {
-                (
-                    tasks[*task_index].duration_minutes
-                        * role_effort_weight(tasks[*task_index].role),
-                    *var,
-                )
-            })
+            .map(|(task_index, var)| (tasks[*task_index].duration_minutes, *var))
             .collect();
-        model.add_eq(load_var, weighted_expr);
-        load_vars.push(load_var);
+        model.add_eq(total_load_var, total_expr);
+        total_load_vars.push(total_load_var);
+
+        let invigilation_load_var = model.new_int_var_with_name(
+            [(0, invigilation_minutes_capacity)],
+            format!("invigilation_minutes_{}", teacher.id),
+        );
+        let invigilation_expr: LinearExpr = teacher_assignment_vars
+            .get(&teacher.id)
+            .into_iter()
+            .flat_map(|items| items.iter())
+            .filter(|(task_index, _)| tasks[*task_index].role != StaffRole::SelfStudySupervisor)
+            .map(|(task_index, var)| (tasks[*task_index].duration_minutes, *var))
+            .collect();
+        model.add_eq(invigilation_load_var, invigilation_expr);
+        invigilation_load_vars.push(invigilation_load_var);
+
+        let self_study_load_var = model.new_int_var_with_name(
+            [(0, self_study_minutes_capacity)],
+            format!("self_study_minutes_{}", teacher.id),
+        );
+        let self_study_expr: LinearExpr = teacher_assignment_vars
+            .get(&teacher.id)
+            .into_iter()
+            .flat_map(|items| items.iter())
+            .filter(|(task_index, _)| tasks[*task_index].role == StaffRole::SelfStudySupervisor)
+            .map(|(task_index, var)| (tasks[*task_index].duration_minutes, *var))
+            .collect();
+        model.add_eq(self_study_load_var, self_study_expr);
+        model.add_eq(
+            total_load_var,
+            LinearExpr::from(invigilation_load_var) + self_study_load_var,
+        );
+        teacher_load_vars.insert(
+            teacher.id,
+            (total_load_var, invigilation_load_var, self_study_load_var),
+        );
+        self_study_load_vars.push(self_study_load_var);
     }
 
-    let max_weighted_load =
-        model.new_int_var_with_name([(0, total_weighted_capacity)], "max_weighted_load");
-    let min_weighted_load =
-        model.new_int_var_with_name([(0, total_weighted_capacity)], "min_weighted_load");
-    model.add_max_eq(max_weighted_load, load_vars.iter().copied());
-    model.add_min_eq(min_weighted_load, load_vars.iter().copied());
-    let weighted_gap =
-        model.new_int_var_with_name([(0, total_weighted_capacity)], "weighted_load_gap");
-    model.add_eq(
-        weighted_gap,
-        LinearExpr::from(max_weighted_load) - min_weighted_load,
+    add_teacher_symmetry_breaking_constraints(
+        &mut model,
+        &teacher_symmetry_groups,
+        &teacher_load_vars,
+        invigilation_minutes_capacity,
+        self_study_minutes_capacity,
     );
 
-    let mut cross_penalty_expr = LinearExpr::default();
-    let mut teacher_days = HashSet::<(i64, String)>::new();
-    for (teacher_id, day_key, _) in teacher_day_half_vars.keys() {
-        teacher_days.insert((*teacher_id, day_key.clone()));
+    let total_minutes_gap_var = add_load_gap_var(
+        &mut model,
+        &total_load_vars,
+        total_minutes_capacity,
+        "total_minutes",
+    );
+    let invigilation_minutes_gap_var = add_load_gap_var(
+        &mut model,
+        &invigilation_load_vars,
+        invigilation_minutes_capacity,
+        "invigilation_minutes",
+    );
+    let self_study_minutes_gap_var = add_load_gap_var(
+        &mut model,
+        &self_study_load_vars,
+        self_study_minutes_capacity,
+        "self_study_minutes",
+    );
+
+    let mut total_assigned_minutes_expr = LinearExpr::default();
+    for total_load_var in &total_load_vars {
+        total_assigned_minutes_expr += *total_load_var;
     }
-    for (teacher_id, day_key) in teacher_days {
-        let morning_vars = teacher_day_half_vars
-            .get(&(teacher_id, day_key.clone(), HalfDay::Morning))
-            .cloned()
-            .unwrap_or_default();
-        let afternoon_vars = teacher_day_half_vars
-            .get(&(teacher_id, day_key.clone(), HalfDay::Afternoon))
-            .cloned()
-            .unwrap_or_default();
-
-        let morning_present =
-            model.new_bool_var_with_name(format!("dayhalf_morning_{}_{}", teacher_id, day_key));
-        let afternoon_present =
-            model.new_bool_var_with_name(format!("dayhalf_afternoon_{}_{}", teacher_id, day_key));
-
-        if morning_vars.is_empty() {
-            model.add_eq(morning_present, 0);
-        } else {
-            let morning_expr: LinearExpr = morning_vars.iter().copied().collect();
-            model.add_ge(morning_expr.clone(), morning_present);
-            model.add_le(morning_expr, ((morning_vars.len() as i64), morning_present));
-        }
-
-        if afternoon_vars.is_empty() {
-            model.add_eq(afternoon_present, 0);
-        } else {
-            let afternoon_expr: LinearExpr = afternoon_vars.iter().copied().collect();
-            model.add_ge(afternoon_expr.clone(), afternoon_present);
-            model.add_le(
-                afternoon_expr,
-                ((afternoon_vars.len() as i64), afternoon_present),
-            );
-        }
-
-        let cross_var = model.new_bool_var_with_name(format!("cross_{}_{}", teacher_id, day_key));
-        model.add_le(cross_var, morning_present);
-        model.add_le(cross_var, afternoon_present);
-        model.add_ge(
-            cross_var,
-            LinearExpr::from(morning_present) + afternoon_present - 1,
-        );
-        cross_penalty_expr += cross_var;
+    let mut total_unassigned_minutes_expr = LinearExpr::default();
+    for (task_index, unassigned_var) in unassigned_vars.iter().enumerate() {
+        total_unassigned_minutes_expr += (tasks[task_index].duration_minutes, *unassigned_var);
     }
+    model.add_eq(
+        total_assigned_minutes_expr + total_unassigned_minutes_expr,
+        tasks.iter().map(|task| task.duration_minutes).sum::<i64>(),
+    );
 
-    let base_proto = model.into_proto();
+    let mut invigilation_assigned_minutes_expr = LinearExpr::default();
+    for invigilation_load_var in &invigilation_load_vars {
+        invigilation_assigned_minutes_expr += *invigilation_load_var;
+    }
+    let mut invigilation_unassigned_minutes_expr = LinearExpr::default();
+    for (task_index, unassigned_var) in unassigned_vars.iter().enumerate() {
+        let task = &tasks[task_index];
+        if task.role != StaffRole::SelfStudySupervisor {
+            invigilation_unassigned_minutes_expr += (task.duration_minutes, *unassigned_var);
+        }
+    }
+    model.add_eq(
+        invigilation_assigned_minutes_expr + invigilation_unassigned_minutes_expr,
+        tasks.iter()
+            .filter(|task| task.role != StaffRole::SelfStudySupervisor)
+            .map(|task| task.duration_minutes)
+            .sum::<i64>(),
+    );
+
+    let mut self_study_assigned_minutes_expr = LinearExpr::default();
+    for self_study_load_var in &self_study_load_vars {
+        self_study_assigned_minutes_expr += *self_study_load_var;
+    }
+    let mut self_study_unassigned_minutes_expr = LinearExpr::default();
+    for (task_index, unassigned_var) in unassigned_vars.iter().enumerate() {
+        let task = &tasks[task_index];
+        if task.role == StaffRole::SelfStudySupervisor {
+            self_study_unassigned_minutes_expr += (task.duration_minutes, *unassigned_var);
+        }
+    }
+    model.add_eq(
+        self_study_assigned_minutes_expr + self_study_unassigned_minutes_expr,
+        tasks.iter()
+            .filter(|task| task.role == StaffRole::SelfStudySupervisor)
+            .map(|task| task.duration_minutes)
+            .sum::<i64>(),
+    );
+
+    let unassigned_count_var = model.new_int_var_with_name(
+        [(0, tasks.len() as i64)],
+        "unassigned_count",
+    );
+    model.add_eq(unassigned_count_var, unassigned_expr.clone());
+
+    let fallback_count_var = model.new_int_var_with_name(
+        [(0, self_study_task_capacity)],
+        "fallback_pool_assignments",
+    );
+    model.add_eq(fallback_count_var, fallback_expr.clone());
+
+    let homeroom_count_var = model.new_int_var_with_name(
+        [(0, self_study_task_capacity)],
+        "homeroom_assignments",
+    );
+    model.add_eq(homeroom_count_var, homeroom_expr.clone());
+
+    let pre_cross_proto = model.into_proto();
     let mut fixed_objectives = Vec::<(LinearExpr, i64)>::new();
+    let mut hint_bool_vars: Vec<BoolVar> = candidate_bindings
+        .iter()
+        .flat_map(|bindings| bindings.iter().map(|(assignment_var, _)| *assignment_var))
+        .collect();
+    hint_bool_vars.extend(unassigned_vars.iter().copied());
+    let hint_int_vars: Vec<IntVar> = total_load_vars
+        .iter()
+        .copied()
+        .chain([unassigned_count_var, fallback_count_var, homeroom_count_var])
+        .chain(invigilation_load_vars.iter().copied())
+        .chain(self_study_load_vars.iter().copied())
+        .chain([
+            total_minutes_gap_var,
+            invigilation_minutes_gap_var,
+            self_study_minutes_gap_var,
+        ])
+        .collect();
     let stage_objectives = vec![
-        ("unassigned_count", unassigned_expr.clone()),
-        ("fallback_pool_assignments", fallback_expr.clone()),
-        ("homeroom_assignments", homeroom_expr.clone()),
-        ("weighted_load_gap", LinearExpr::from(weighted_gap)),
-        ("cross_half_day_penalty", cross_penalty_expr.clone()),
+        (
+            "unassigned_count",
+            "最小化未分配任务",
+            LinearExpr::from(unassigned_count_var),
+        ),
+        (
+            "fallback_pool_assignments",
+            "减少其他老师兜底",
+            LinearExpr::from(fallback_count_var),
+        ),
+        (
+            "homeroom_assignments",
+            "减少班主任兜底",
+            LinearExpr::from(homeroom_count_var),
+        ),
+        (
+            "total_minutes_gap",
+            "平衡总工作量",
+            LinearExpr::from(total_minutes_gap_var),
+        ),
+        (
+            "invigilation_minutes_gap",
+            "平衡监考工作量",
+            LinearExpr::from(invigilation_minutes_gap_var),
+        ),
+        (
+            "self_study_minutes_gap",
+            "平衡看班工作量",
+            LinearExpr::from(self_study_minutes_gap_var),
+        ),
     ];
 
     let mut last_successful: Option<(CpSolverResponse, OptimalityStatus)> = None;
-    for (stage_index, (stage_name, objective)) in stage_objectives.into_iter().enumerate() {
+    for (stage_index, (stage_name, stage_label, objective)) in stage_objectives.iter().enumerate()
+    {
+        if let Some(progress) = progress {
+            let step = 6 + stage_index;
+            progress.emit_running(
+                step,
+                stage_name,
+                stage_label,
+                format!(
+                    "正在执行第 {}/{} 步：{}。",
+                    step, STAFF_ASSIGNMENT_TOTAL_STEPS, stage_label
+                ),
+            );
+        }
         let elapsed_ms = started_at.elapsed().as_millis() as i64;
-        if elapsed_ms >= 60_000 {
+        if elapsed_ms >= CP_SAT_MAX_SOLVE_MS {
             return CpSatAttempt {
                 plan: None,
                 fallback_reason: Some(FallbackReason::Timeout),
                 diagnostic_message: Some(format!(
-                    "CP-SAT 在第 {} 阶段（{}）达到 60000ms 时限",
+                    "CP-SAT 在第 {} 阶段（{}）达到 {}时限",
                     stage_index + 1,
-                    stage_name
+                    stage_label,
+                    CP_SAT_MAX_SOLVE_LABEL
                 )),
                 solve_duration_ms: elapsed_ms,
             };
         }
         let response = solve_cp_sat_stage(
-            &base_proto,
+            &pre_cross_proto,
             &fixed_objectives,
             objective.clone(),
-            60_000 - elapsed_ms,
+            cp_sat_stage_time_budget_ms(stage_name, CP_SAT_MAX_SOLVE_MS - elapsed_ms),
+            last_successful.as_ref().map(|(response, _)| response),
+            &hint_bool_vars,
+            &hint_int_vars,
+            &[],
         );
         let stage_elapsed_ms = started_at.elapsed().as_millis() as i64;
         let Ok(optimality_status) = cp_sat_response_kind(&response, stage_elapsed_ms) else {
@@ -1854,7 +2269,7 @@ fn solve_with_cp_sat(
                 format!(
                     "CP-SAT 第 {} 阶段（{}）失败：{}",
                     stage_index + 1,
-                    stage_name,
+                    stage_label,
                     detail
                 )
             });
@@ -1884,35 +2299,193 @@ fn solve_with_cp_sat(
             };
         };
         let objective_value = response.objective_value.round() as i64;
-        fixed_objectives.push((objective, objective_value));
+        fixed_objectives.push((objective.clone(), objective_value));
         last_successful = Some((response, optimality_status));
     }
 
+    let Some((pre_cross_response, pre_cross_status)) = last_successful else {
+        let elapsed_ms = started_at.elapsed().as_millis() as i64;
+        return CpSatAttempt {
+            plan: None,
+            fallback_reason: Some(FallbackReason::Unknown),
+            diagnostic_message: Some("CP-SAT 未返回可用结果".to_string()),
+            solve_duration_ms: elapsed_ms,
+        };
+    };
+
+    let final_stage_number = stage_objectives.len() + 1;
+    let final_step = 6 + stage_objectives.len();
+    if let Some(progress) = progress {
+        progress.emit_running(
+            final_step,
+            "cross_half_day_penalty",
+            "尽量集中到同一晌",
+            format!(
+                "正在执行第 {}/{} 步：尽量集中到同一晌。",
+                final_step, STAFF_ASSIGNMENT_TOTAL_STEPS
+            ),
+        );
+    }
+
     let elapsed_ms = started_at.elapsed().as_millis() as i64;
-    if let Some((response, optimality_status)) = last_successful {
+    if elapsed_ms >= CP_SAT_MAX_SOLVE_MS {
         let plan = build_cp_sat_plan_from_response(
             tasks,
             teachers,
             invigilation_config,
             &candidate_bindings,
             &unassigned_vars,
-            &response,
-            optimality_status,
+            &pre_cross_response,
+            pre_cross_status,
             elapsed_ms,
         );
         return CpSatAttempt {
             plan: Some(plan),
-            fallback_reason: None,
-            diagnostic_message: None,
+            fallback_reason: Some(FallbackReason::Timeout),
+            diagnostic_message: Some(format!(
+                "CP-SAT 在第 {} 阶段（尽量集中到同一晌）达到 {}时限",
+                final_stage_number, CP_SAT_MAX_SOLVE_LABEL
+            )),
             solve_duration_ms: elapsed_ms,
         };
     }
 
+    let mut cross_builder = CpModelBuilder::from_proto(pre_cross_proto.clone());
+    let mut cross_penalty_expr = LinearExpr::default();
+    let mut teacher_days = HashSet::<(i64, String)>::new();
+    for (teacher_id, day_key, _) in teacher_day_half_vars.keys() {
+        teacher_days.insert((*teacher_id, day_key.clone()));
+    }
+    let mut cross_stage_hint_bools = Vec::<(BoolVar, i64)>::new();
+    for (teacher_id, day_key) in teacher_days {
+        let morning_vars = teacher_day_half_vars
+            .get(&(teacher_id, day_key.clone(), HalfDay::Morning))
+            .cloned()
+            .unwrap_or_default();
+        let afternoon_vars = teacher_day_half_vars
+            .get(&(teacher_id, day_key.clone(), HalfDay::Afternoon))
+            .cloned()
+            .unwrap_or_default();
+
+        let morning_present = cross_builder
+            .new_bool_var_with_name(format!("dayhalf_morning_{}_{}", teacher_id, day_key));
+        let afternoon_present = cross_builder
+            .new_bool_var_with_name(format!("dayhalf_afternoon_{}_{}", teacher_id, day_key));
+
+        let morning_value = if morning_vars.is_empty() {
+            cross_builder.add_eq(morning_present, 0);
+            0
+        } else {
+            let morning_expr: LinearExpr = morning_vars.iter().copied().collect();
+            cross_builder.add_ge(morning_expr.clone(), morning_present);
+            cross_builder.add_le(
+                morning_expr,
+                ((morning_vars.len() as i64), morning_present),
+            );
+            if morning_vars
+                .iter()
+                .any(|var| var.solution_value(&pre_cross_response))
+            {
+                1
+            } else {
+                0
+            }
+        };
+        cross_stage_hint_bools.push((morning_present, morning_value));
+
+        let afternoon_value = if afternoon_vars.is_empty() {
+            cross_builder.add_eq(afternoon_present, 0);
+            0
+        } else {
+            let afternoon_expr: LinearExpr = afternoon_vars.iter().copied().collect();
+            cross_builder.add_ge(afternoon_expr.clone(), afternoon_present);
+            cross_builder.add_le(
+                afternoon_expr,
+                ((afternoon_vars.len() as i64), afternoon_present),
+            );
+            if afternoon_vars
+                .iter()
+                .any(|var| var.solution_value(&pre_cross_response))
+            {
+                1
+            } else {
+                0
+            }
+        };
+        cross_stage_hint_bools.push((afternoon_present, afternoon_value));
+
+        let cross_var =
+            cross_builder.new_bool_var_with_name(format!("cross_{}_{}", teacher_id, day_key));
+        cross_builder.add_le(cross_var, morning_present);
+        cross_builder.add_le(cross_var, afternoon_present);
+        cross_builder.add_ge(
+            cross_var,
+            LinearExpr::from(morning_present) + afternoon_present - 1,
+        );
+        cross_penalty_expr += cross_var;
+        cross_stage_hint_bools.push((
+            cross_var,
+            if morning_value == 1 && afternoon_value == 1 {
+                1
+            } else {
+                0
+            },
+        ));
+    }
+
+    let cross_proto = cross_builder.into_proto();
+    let cross_response = solve_cp_sat_stage(
+        &cross_proto,
+        &fixed_objectives,
+        cross_penalty_expr.clone(),
+        cp_sat_stage_time_budget_ms("cross_half_day_penalty", CP_SAT_MAX_SOLVE_MS - elapsed_ms),
+        Some(&pre_cross_response),
+        &hint_bool_vars,
+        &hint_int_vars,
+        &cross_stage_hint_bools,
+    );
+    let final_elapsed_ms = started_at.elapsed().as_millis() as i64;
+    let Ok(final_status) = cp_sat_response_kind(&cross_response, final_elapsed_ms) else {
+        let fallback_reason = cp_sat_response_kind(&cross_response, final_elapsed_ms).err();
+        let diagnostic_message = cp_sat_diagnostic_message(&cross_response).map(|detail| {
+            format!(
+                "CP-SAT 第 {} 阶段（尽量集中到同一晌）失败：{}",
+                final_stage_number, detail
+            )
+        });
+        let plan = build_cp_sat_plan_from_response(
+            tasks,
+            teachers,
+            invigilation_config,
+            &candidate_bindings,
+            &unassigned_vars,
+            &pre_cross_response,
+            pre_cross_status,
+            final_elapsed_ms,
+        );
+        return CpSatAttempt {
+            plan: Some(plan),
+            fallback_reason,
+            diagnostic_message,
+            solve_duration_ms: final_elapsed_ms,
+        };
+    };
+
+    let plan = build_cp_sat_plan_from_response(
+        tasks,
+        teachers,
+        invigilation_config,
+        &candidate_bindings,
+        &unassigned_vars,
+        &cross_response,
+        final_status,
+        final_elapsed_ms,
+    );
     CpSatAttempt {
-        plan: None,
-        fallback_reason: Some(FallbackReason::Unknown),
-        diagnostic_message: Some("CP-SAT 未返回可用结果".to_string()),
-        solve_duration_ms: elapsed_ms,
+        plan: Some(plan),
+        fallback_reason: None,
+        diagnostic_message: None,
+        solve_duration_ms: final_elapsed_ms,
     }
 }
 
@@ -2035,14 +2608,15 @@ fn persist_solved_plan(
 
 fn format_metrics_for_log(metrics: &PlanMetrics) -> String {
     format!(
-        "assigned={}, unassigned={}, fallback_pool={}, homeroom={}, weighted_gap={}, cross_half_day={}, imbalance={}",
+        "assigned={}, unassigned={}, fallback_pool={}, homeroom={}, total_gap={}, invigilation_gap={}, self_study_gap={}, cross_half_day={}",
         metrics.assigned_count,
         metrics.unassigned_count,
         metrics.fallback_pool_assignments,
         metrics.homeroom_assignments,
-        metrics.weighted_load_gap,
+        metrics.imbalance_minutes,
+        metrics.invigilation_minutes_gap,
+        metrics.self_study_minutes_gap,
         metrics.cross_half_day_penalty,
-        metrics.imbalance_minutes
     )
 }
 
@@ -2107,11 +2681,67 @@ fn generate_latest_exam_staff_plan_internal(
     invigilation_config: RuntimeInvigilationConfig,
     exclusion_pairs: HashSet<(i64, i64)>,
     log_path: Option<&Path>,
+    progress: Option<&StaffAssignmentProgressReporter>,
 ) -> Result<GenerateLatestExamStaffPlanResult, AppError> {
+    if let Some(progress) = progress {
+        progress.emit_running(
+            1,
+            "load_session_times",
+            "读取考试时间",
+            format!(
+                "正在执行第 1/{} 步：读取考试场次与时间模板。",
+                STAFF_ASSIGNMENT_TOTAL_STEPS
+            ),
+        );
+    }
     let session_times = load_session_times_runtime(conn)?;
+    if let Some(progress) = progress {
+        progress.emit_running(
+            2,
+            "load_teacher_pool",
+            "读取教师池",
+            format!(
+                "正在执行第 2/{} 步：读取教师信息与任教关系。",
+                STAFF_ASSIGNMENT_TOTAL_STEPS
+            ),
+        );
+    }
     let teachers = load_teacher_pool(conn)?;
+    if let Some(progress) = progress {
+        progress.emit_running(
+            3,
+            "load_class_subject_map",
+            "读取班级科目配置",
+            format!(
+                "正在执行第 3/{} 步：读取班级选科和自习科目配置。",
+                STAFF_ASSIGNMENT_TOTAL_STEPS
+            ),
+        );
+    }
     let class_subject_map = load_class_subject_map(conn)?;
+    if let Some(progress) = progress {
+        progress.emit_running(
+            4,
+            "load_teaching_classes",
+            "读取教学班",
+            format!(
+                "正在执行第 4/{} 步：读取教学班与场地信息。",
+                STAFF_ASSIGNMENT_TOTAL_STEPS
+            ),
+        );
+    }
     let teaching_classes = load_teaching_classes(conn)?;
+    if let Some(progress) = progress {
+        progress.emit_running(
+            5,
+            "build_staff_tasks",
+            "构建监考任务",
+            format!(
+                "正在执行第 5/{} 步：生成任务和候选老师池。",
+                STAFF_ASSIGNMENT_TOTAL_STEPS
+            ),
+        );
+    }
     let tasks = build_staff_tasks(
         conn,
         &session_times,
@@ -2125,6 +2755,7 @@ fn generate_latest_exam_staff_plan_internal(
         &teachers,
         &exclusion_pairs,
         &invigilation_config,
+        progress,
     );
 
     let Some(mut final_plan) = cp_sat_attempt.plan.clone() else {
@@ -2146,7 +2777,25 @@ fn generate_latest_exam_staff_plan_internal(
 
     log_solver_outcome(log_path, &cp_sat_attempt, Some(&final_plan));
 
-    persist_solved_plan(conn, session_times.len() as i64, &teachers, &final_plan)
+    if let Some(progress) = progress {
+        progress.emit_running(
+            13,
+            "persist_result",
+            "写入分配结果",
+            format!(
+                "正在执行第 13/{} 步：保存分配结果。",
+                STAFF_ASSIGNMENT_TOTAL_STEPS
+            ),
+        );
+    }
+    let result = persist_solved_plan(conn, session_times.len() as i64, &teachers, &final_plan)?;
+    if let Some(progress) = progress {
+        progress.emit_completed(format!(
+            "监考分配完成：已分配 {} 项，未分配 {} 项。",
+            result.assigned_count, result.unassigned_count
+        ));
+    }
+    Ok(result)
 }
 
 pub fn list_exam_session_times(app: AppHandle) -> Result<Vec<ExamSessionTime>, String> {
@@ -2248,6 +2897,7 @@ pub fn generate_latest_exam_staff_plan(
     app: AppHandle,
     payload: GenerateExamStaffPlanPayload,
 ) -> Result<GenerateLatestExamStaffPlanResult, String> {
+    let progress = StaffAssignmentProgressReporter::new(app.clone());
     let result = (|| -> Result<GenerateLatestExamStaffPlanResult, AppError> {
         let mut conn = score::open_connection(&app)?;
         exam_allocation::ensure_schema(&conn)?;
@@ -2266,9 +2916,16 @@ pub fn generate_latest_exam_staff_plan(
             config,
             exclusion_pairs,
             log_path.as_deref(),
+            Some(&progress),
         )
     })();
-    result.map_err(|error| error.to_string())
+    match result {
+        Ok(result) => Ok(result),
+        Err(error) => {
+            progress.emit_error("error", "分配失败", error.to_string());
+            Err(error.to_string())
+        }
+    }
 }
 
 pub fn list_invigilation_exclusion_session_options(
@@ -3095,11 +3752,126 @@ mod tests {
             &teachers,
             &HashSet::new(),
             &test_runtime_config(),
+            None,
         );
         let cp_sat_plan = cp_sat_attempt.plan.expect("cp-sat should produce a plan");
         assert_eq!(cp_sat_plan.metrics.unassigned_count, 0);
         assert_eq!(cp_sat_plan.metrics.fallback_pool_assignments, 0);
         assert_eq!(cp_sat_plan.solver_engine, SolverEngine::CpSat);
+    }
+
+    #[test]
+    fn test_cp_sat_balances_total_and_task_type_minutes() {
+        let teachers = vec![
+            TeacherInfo {
+                id: 1,
+                name: "老师甲".to_string(),
+                subjects: HashSet::from([Subject::Chinese]),
+                class_names: HashSet::new(),
+                homeroom_classes: HashSet::new(),
+                is_middle_manager: false,
+            },
+            TeacherInfo {
+                id: 2,
+                name: "老师乙".to_string(),
+                subjects: HashSet::from([Subject::Chinese]),
+                class_names: HashSet::new(),
+                homeroom_classes: HashSet::new(),
+                is_middle_manager: false,
+            },
+        ];
+        let tasks = vec![
+            TaskBuild {
+                session_id: Some(1),
+                space_id: Some(1),
+                task_source: StaffTaskSource::Exam,
+                role: StaffRole::ExamRoomInvigilator,
+                grade_name: "高二".to_string(),
+                subject: Subject::Math,
+                space_name: "高二1场".to_string(),
+                floor: "4层".to_string(),
+                start_at: "2026-03-24T08:00".to_string(),
+                end_at: "2026-03-24T09:00".to_string(),
+                start_ts: 1_000,
+                end_ts: 2_000,
+                duration_minutes: 60,
+                recommended_subject: None,
+                priority_subject_chain: Vec::new(),
+                day_key: "2026-03-24".to_string(),
+                half_day: HalfDay::Morning,
+            },
+            TaskBuild {
+                session_id: Some(2),
+                space_id: Some(2),
+                task_source: StaffTaskSource::ExamLinkedSelfStudy,
+                role: StaffRole::SelfStudySupervisor,
+                grade_name: "高二".to_string(),
+                subject: Subject::Biology,
+                space_name: "高二1班".to_string(),
+                floor: "4层".to_string(),
+                start_at: "2026-03-24T09:00".to_string(),
+                end_at: "2026-03-24T10:00".to_string(),
+                start_ts: 2_000,
+                end_ts: 3_000,
+                duration_minutes: 60,
+                recommended_subject: None,
+                priority_subject_chain: Vec::new(),
+                day_key: "2026-03-24".to_string(),
+                half_day: HalfDay::Morning,
+            },
+            TaskBuild {
+                session_id: Some(3),
+                space_id: Some(3),
+                task_source: StaffTaskSource::Exam,
+                role: StaffRole::FloorRover,
+                grade_name: "高二".to_string(),
+                subject: Subject::Physics,
+                space_name: "4层 楼层流动".to_string(),
+                floor: "4层".to_string(),
+                start_at: "2026-03-24T10:00".to_string(),
+                end_at: "2026-03-24T11:00".to_string(),
+                start_ts: 3_000,
+                end_ts: 4_000,
+                duration_minutes: 60,
+                recommended_subject: None,
+                priority_subject_chain: Vec::new(),
+                day_key: "2026-03-24".to_string(),
+                half_day: HalfDay::Morning,
+            },
+            TaskBuild {
+                session_id: Some(4),
+                space_id: Some(4),
+                task_source: StaffTaskSource::FullSelfStudy,
+                role: StaffRole::SelfStudySupervisor,
+                grade_name: "高二".to_string(),
+                subject: Subject::English,
+                space_name: "高二2班".to_string(),
+                floor: "4层".to_string(),
+                start_at: "2026-03-24T11:00".to_string(),
+                end_at: "2026-03-24T12:00".to_string(),
+                start_ts: 4_000,
+                end_ts: 5_000,
+                duration_minutes: 60,
+                recommended_subject: None,
+                priority_subject_chain: Vec::new(),
+                day_key: "2026-03-24".to_string(),
+                half_day: HalfDay::Morning,
+            },
+        ];
+
+        let cp_sat_attempt = solve_with_cp_sat(
+            &tasks,
+            &teachers,
+            &HashSet::new(),
+            &test_runtime_config(),
+            None,
+        );
+        let cp_sat_plan = cp_sat_attempt.plan.expect("cp-sat should produce a plan");
+
+        assert_eq!(cp_sat_plan.metrics.unassigned_count, 0);
+        assert_eq!(cp_sat_plan.metrics.imbalance_minutes, 0);
+        assert_eq!(cp_sat_plan.metrics.invigilation_minutes_gap, 0);
+        assert_eq!(cp_sat_plan.metrics.self_study_minutes_gap, 0);
     }
 
 
@@ -3156,6 +3928,7 @@ mod tests {
             config,
             exclusion_pairs,
             Some(log_path.as_path()),
+            None,
         )
         .expect("generate staff plan on real db");
 

@@ -68,7 +68,7 @@ export function createTeacherStore(service: TeacherService = teacherService) {
       const result = await service.importExcel(filePath);
       state.lastImportResult = result;
       state.importStatus = "success";
-      state.importMessage = `导入成功，共 ${result.rowCount} 条，耗时 ${result.durationMs}ms`;
+      state.importMessage = `共 ${result.rowCount} 条，耗时 ${result.durationMs}ms`;
       await load();
     } catch (error) {
       state.importStatus = "error";

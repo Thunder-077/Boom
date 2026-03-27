@@ -72,11 +72,15 @@ pub fn save_persisted_self_study_class_subjects(
 }
 
 #[tauri::command]
-pub fn generate_latest_exam_staff_plan(
+pub async fn generate_latest_exam_staff_plan(
     app: AppHandle,
     payload: GenerateExamStaffPlanPayload,
 ) -> Result<GenerateLatestExamStaffPlanResult, String> {
-    exam_staff::generate_latest_exam_staff_plan(app, payload)
+    tauri::async_runtime::spawn_blocking(move || {
+        exam_staff::generate_latest_exam_staff_plan(app, payload)
+    })
+    .await
+    .map_err(|error| format!("监考分配任务执行失败: {error}"))?
 }
 
 #[tauri::command]

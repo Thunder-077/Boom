@@ -141,6 +141,17 @@ export interface GenerateLatestExamStaffPlanResult {
   fallbackPoolAssignments: number;
 }
 
+export interface ExamStaffAssignmentProgress {
+  status: "running" | "completed" | "error";
+  stage: string;
+  stageLabel: string;
+  percent: number;
+  message: string;
+  completedSteps: number;
+  totalSteps: number;
+  updatedAt: string;
+}
+
 export interface ExamStaffPlanOverview {
   generatedAt: string | null;
   sessionCount: number;
