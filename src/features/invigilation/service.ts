@@ -9,6 +9,7 @@ import type {
   ExamStaffTask,
   ExamStaffTaskQuery,
   TeacherDutyStat,
+  ExportLatestInvigilationScheduleResult,
 } from "../../entities/exam-plan/model";
 import type { ListResult } from "../../shared/types/api";
 import type { TeacherRow } from "../../entities/teacher/model";
@@ -22,6 +23,7 @@ export interface InvigilationService {
   listTeacherDutyStats(params?: { keyword?: string; page?: number; pageSize?: number }): Promise<ListResult<TeacherDutyStat>>;
   listInvigilationExclusionSessionOptions(): Promise<InvigilationExclusionSessionOption[]>;
   listTeachers(params?: { nameKeyword?: string; page?: number; pageSize?: number }): Promise<ListResult<TeacherRow>>;
+  exportLatestInvigilationSchedule(): Promise<ExportLatestInvigilationScheduleResult>;
 }
 
 export const invigilationService: InvigilationService = {
@@ -48,5 +50,8 @@ export const invigilationService: InvigilationService = {
   },
   listTeachers(params = {}) {
     return invoke<ListResult<TeacherRow>>("list_latest_teachers", { params });
+  },
+  exportLatestInvigilationSchedule() {
+    return invoke<ExportLatestInvigilationScheduleResult>("export_latest_invigilation_schedule");
   },
 };

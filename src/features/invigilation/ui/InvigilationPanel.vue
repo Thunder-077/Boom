@@ -155,6 +155,14 @@
           </span>
           <div class="assignment-notice-body">
             <span class="assignment-notice-text">{{ assignmentNoticeText }}</span>
+            <button
+              v-if="assignmentNoticeLinkPath && !isAssignmentProgressVisible"
+              class="assignment-notice-link"
+              type="button"
+              @click="openInvigilationExportFolder"
+            >
+              {{ assignmentNoticeLinkLabel }}
+            </button>
             <div v-if="isAssignmentProgressVisible && assignmentProgress" class="assignment-progress">
               <div class="assignment-progress-meta">
                 <span>{{ assignmentProgress.stageLabel }}</span>
@@ -168,7 +176,14 @@
         </div>
         <div class="action-buttons">
           <button class="primary-btn action-btn" type="button" :disabled="store.viewState.assigning" @click="assignTeachers">{{ store.viewState.assigning ? "分配中..." : "分配监考老师" }}</button>
-          <button class="secondary-btn action-btn" type="button" :disabled="!store.viewState.staffOverview.generatedAt">导出监考表</button>
+          <button
+            class="secondary-btn action-btn"
+            type="button"
+            :disabled="!store.viewState.staffOverview.generatedAt || store.viewState.exportingInvigilation"
+            @click="exportInvigilationSchedule"
+          >
+            {{ store.viewState.exportingInvigilation ? "导出中..." : "导出监考表" }}
+          </button>
         </div>
       </div>
     </ConfigCard>
@@ -388,6 +403,7 @@ import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import type { ExamStaffAssignmentProgress, InvigilationConfig } from "../../../entities/exam-plan/model";
 import type { Subject } from "../../../entities/score/model";
 import { Subject as SubjectEnum } from "../../../entities/score/model";
+import { revealInExplorer } from "../../../shared/utils/appLog";
 import ConfigCard from "../../../widgets/common/ConfigCard.vue";
 import FluentSelect from "../../../widgets/common/FluentSelect.vue";
 import { classConfigService } from "../../classes/service";
@@ -403,6 +419,8 @@ interface SelfStudyClassRow {
 interface AssignmentNotice {
   type: "success" | "error";
   text: string;
+  linkPath?: string;
+  linkLabel?: string;
 }
 
 const gradeRankMap: Record<string, number> = { 高一: 1, 高二: 2, 高三: 3 };
@@ -570,6 +588,8 @@ const assignmentNoticeText = computed(() => {
   }
   return assignmentNotice.value?.text || "";
 });
+const assignmentNoticeLinkPath = computed(() => assignmentNotice.value?.linkPath || "");
+const assignmentNoticeLinkLabel = computed(() => assignmentNotice.value?.linkLabel || "");
 
 watch(
   () => store.viewState.invigilationConfig,
@@ -942,13 +962,18 @@ async function removeExclusion(teacherId: number, sessionId: number) {
   await store.removeStaffExclusion(teacherId, sessionId);
 }
 
-async function showAssignmentNotice(type: AssignmentNotice["type"], text: string) {
-  assignmentNotice.value = { type, text };
+async function showAssignmentNotice(type: AssignmentNotice["type"], text: string, options?: Partial<AssignmentNotice>) {
+  assignmentNotice.value = { type, text, ...options };
   await nextTick();
   assignmentNoticeEl.value?.scrollIntoView({
     behavior: "smooth",
     block: "nearest",
   });
+}
+
+function exportFileName(path: string) {
+  const matched = path.match(/[^\\/]+$/);
+  return matched?.[0] ?? path;
 }
 
 async function assignTeachers() {
@@ -1010,6 +1035,30 @@ async function assignTeachers() {
       "分配失败，请检查配置后重试。";
     await showAssignmentNotice("error", `分配失败：${message}`);
   }
+}
+
+async function exportInvigilationSchedule() {
+  try {
+    const result = await store.exportLatestInvigilationSchedule();
+    await showAssignmentNotice("success", "监考表已导出，点击下方链接打开文件所在位置。", {
+      linkPath: result.filePath,
+      linkLabel: exportFileName(result.filePath),
+    });
+  } catch (error) {
+    const message =
+      store.viewState.errorMessage ||
+      (error instanceof Error ? error.message : String(error)) ||
+      "导出失败，请稍后重试。";
+    await showAssignmentNotice("error", `导出失败：${message}`);
+  }
+}
+
+async function openInvigilationExportFolder() {
+  const target = assignmentNoticeLinkPath.value || store.viewState.lastInvigilationExportPath;
+  if (!target) {
+    return;
+  }
+  await revealInExplorer(target);
 }
 
 function handleGlobalPointerDown(event: MouseEvent) {

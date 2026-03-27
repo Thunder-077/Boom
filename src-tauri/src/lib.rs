@@ -4,6 +4,7 @@ mod exam_allocation;
 mod exam_plan;
 mod exam_staff;
 mod export_bundle;
+mod export_invigilation;
 mod invigilation;
 mod schema;
 mod score;
@@ -56,6 +57,7 @@ pub fn run() {
             invigilation::get_latest_exam_staff_plan_overview,
             invigilation::list_latest_exam_staff_tasks,
             invigilation::list_latest_teacher_duty_stats,
+            invigilation::export_latest_invigilation_schedule,
             teacher::import_teachers_from_excel,
             teacher::list_latest_teachers,
             teacher::get_latest_teacher_summary

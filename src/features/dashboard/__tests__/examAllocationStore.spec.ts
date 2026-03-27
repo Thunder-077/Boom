@@ -201,6 +201,12 @@ const fakeService: ExamAllocationService = {
       exportedAt: "2026-03-24T10:00:00Z",
     };
   },
+  async exportLatestInvigilationSchedule() {
+    return {
+      filePath: "D:/exports/监考表-20260324-100000.xlsx",
+      exportedAt: "2026-03-24T10:00:00Z",
+    };
+  },
 };
 
 describe("exam allocation store", () => {
