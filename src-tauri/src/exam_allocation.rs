@@ -209,11 +209,46 @@ pub struct ExamPlanSpace {
     subject: Subject,
     space_name: String,
     original_class_name: Option<String>,
-    self_study_subject: Option<Subject>,
+    self_study_topic: Option<SelfStudyTopic>,
     building: String,
     floor: String,
     capacity: Option<i64>,
     sort_index: i64,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum SelfStudyTopicKind {
+    Subject,
+    ForeignGroup,
+    FreeStudy,
+}
+
+impl SelfStudyTopicKind {
+    pub fn as_key(self) -> &'static str {
+        match self {
+            Self::Subject => "subject",
+            Self::ForeignGroup => "foreign_group",
+            Self::FreeStudy => "free_study",
+        }
+    }
+
+    pub fn from_key(key: &str) -> Option<Self> {
+        match key {
+            "subject" => Some(Self::Subject),
+            "foreign_group" => Some(Self::ForeignGroup),
+            "free_study" => Some(Self::FreeStudy),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct SelfStudyTopic {
+    pub kind: SelfStudyTopicKind,
+    pub subjects: Vec<Subject>,
+    pub label: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -346,12 +381,20 @@ struct SessionBuildResult {
 }
 
 #[derive(Debug, Clone)]
+pub struct SelfStudyScheduleSession {
+    pub subject: Subject,
+    pub start_ts: i64,
+    pub order_key: i64,
+    pub is_foreign_group: bool,
+}
+
+#[derive(Debug, Clone)]
 struct SpaceCandidate {
     space_type: ExamPlanSpaceType,
     space_source: ExamPlanSpaceSource,
     space_name: String,
     original_class_name: Option<String>,
-    self_study_subject: Option<Subject>,
+    self_study_topic: Option<SelfStudyTopic>,
     building: String,
     floor: String,
     capacity: Option<i64>,
@@ -429,31 +472,207 @@ fn load_subject_schedule_order(conn: &Connection) -> Result<HashMap<Subject, i64
     Ok(order_map)
 }
 
-fn next_subject_for_self_study(
-    current_subject: Subject,
-    class_name: &str,
-    class_subjects: &HashMap<String, HashSet<Subject>>,
-    subject_schedule_order: &HashMap<Subject, i64>,
-) -> Option<Subject> {
-    let subjects = class_subjects.get(class_name)?;
-    let current_order = subject_schedule_order
-        .get(&current_subject)
-        .copied()
-        .unwrap_or_else(|| subject_order(current_subject) as i64);
+pub fn subject_label(subject: Subject) -> &'static str {
+    match subject {
+        Subject::Chinese => "语文",
+        Subject::Math => "数学",
+        Subject::English => "英语",
+        Subject::Physics => "物理",
+        Subject::Chemistry => "化学",
+        Subject::Biology => "生物",
+        Subject::Politics => "政治",
+        Subject::History => "历史",
+        Subject::Geography => "地理",
+        Subject::Russian => "俄语",
+        Subject::Japanese => "日语",
+    }
+}
 
-    subjects
+pub fn build_subject_self_study_topic(subject: Subject) -> SelfStudyTopic {
+    SelfStudyTopic {
+        kind: SelfStudyTopicKind::Subject,
+        subjects: vec![subject],
+        label: format!("{}自习", subject_label(subject)),
+    }
+}
+
+pub fn build_free_study_topic() -> SelfStudyTopic {
+    SelfStudyTopic {
+        kind: SelfStudyTopicKind::FreeStudy,
+        subjects: Vec::new(),
+        label: "自由自习".to_string(),
+    }
+}
+
+fn foreign_self_study_short_label(subject: Subject) -> &'static str {
+    match subject {
+        Subject::English => "英",
+        Subject::Russian => "俄",
+        Subject::Japanese => "日",
+        _ => subject_label(subject),
+    }
+}
+
+pub fn is_foreign_subject(subject: Subject) -> bool {
+    matches!(
+        subject,
+        Subject::English | Subject::Russian | Subject::Japanese
+    )
+}
+
+fn sort_subjects_for_topic(subjects: &mut Vec<Subject>) {
+    subjects.sort_by_key(|subject| {
+        if let Some(order) = foreign_order(*subject) {
+            (0_i32, order as i32)
+        } else {
+            (1_i32, subject_order(*subject))
+        }
+    });
+    subjects.dedup();
+}
+
+pub fn build_foreign_group_self_study_topic(subjects: Vec<Subject>) -> SelfStudyTopic {
+    let mut subjects = subjects;
+    sort_subjects_for_topic(&mut subjects);
+    let names = subjects
         .iter()
-        .copied()
-        .filter(|subject| *subject != current_subject)
-        .filter_map(|subject| {
-            let order = subject_schedule_order
-                .get(&subject)
-                .copied()
-                .unwrap_or_else(|| subject_order(subject) as i64);
-            (order > current_order).then_some((order, subject))
-        })
-        .min_by_key(|(order, _)| *order)
-        .map(|(_, subject)| subject)
+        .map(|subject| foreign_self_study_short_label(*subject))
+        .collect::<Vec<_>>()
+        .join("、");
+    SelfStudyTopic {
+        kind: SelfStudyTopicKind::ForeignGroup,
+        subjects,
+        label: format!("外语自习（{}）", names),
+    }
+}
+
+#[derive(Debug, Clone)]
+struct SelfStudyFutureSlot {
+    start_ts: i64,
+    order_key: i64,
+    is_foreign_group: bool,
+    subjects: Vec<Subject>,
+}
+
+fn resolve_class_topic_for_slot(
+    slot: &SelfStudyFutureSlot,
+    subjects_for_class: &HashSet<Subject>,
+) -> Option<SelfStudyTopic> {
+    if slot.is_foreign_group {
+        let mut matched = slot
+            .subjects
+            .iter()
+            .copied()
+            .filter(|subject| subjects_for_class.contains(subject))
+            .collect::<Vec<_>>();
+        sort_subjects_for_topic(&mut matched);
+        return match matched.len() {
+            0 => None,
+            1 => Some(build_subject_self_study_topic(matched[0])),
+            _ => Some(build_foreign_group_self_study_topic(matched)),
+        };
+    }
+
+    let subject = slot.subjects[0];
+    subjects_for_class
+        .contains(&subject)
+        .then_some(build_subject_self_study_topic(subject))
+}
+
+pub fn build_self_study_topic_chain(
+    current_start_ts: i64,
+    class_name: &str,
+    grade_sessions: &[SelfStudyScheduleSession],
+    class_subjects: &HashMap<String, HashSet<Subject>>,
+) -> Vec<SelfStudyTopic> {
+    let Some(subjects_for_class) = class_subjects.get(class_name) else {
+        return vec![build_free_study_topic()];
+    };
+
+    let mut ordered_sessions = grade_sessions.to_vec();
+    ordered_sessions.sort_by(|a, b| {
+        a.start_ts
+            .cmp(&b.start_ts)
+            .then(a.order_key.cmp(&b.order_key))
+            .then(subject_order(a.subject).cmp(&subject_order(b.subject)))
+    });
+
+    let mut slots = Vec::<SelfStudyFutureSlot>::new();
+    for session in ordered_sessions {
+        if session.is_foreign_group {
+            if let Some(last) = slots.last_mut() {
+                if last.is_foreign_group && last.start_ts == session.start_ts {
+                    last.subjects.push(session.subject);
+                    continue;
+                }
+            }
+        }
+        slots.push(SelfStudyFutureSlot {
+            start_ts: session.start_ts,
+            order_key: session.order_key,
+            is_foreign_group: session.is_foreign_group,
+            subjects: vec![session.subject],
+        });
+    }
+    slots.sort_by(|a, b| a.start_ts.cmp(&b.start_ts).then(a.order_key.cmp(&b.order_key)));
+
+    let mut consumed_future_topics = 0_usize;
+    for slot in &slots {
+        if slot.start_ts >= current_start_ts {
+            break;
+        }
+        if resolve_class_topic_for_slot(slot, subjects_for_class).is_some() {
+            consumed_future_topics = 0;
+        } else {
+            consumed_future_topics += 1;
+        }
+    }
+
+    let mut future_topics = Vec::<SelfStudyTopic>::new();
+    for slot in &slots {
+        if slot.start_ts <= current_start_ts {
+            continue;
+        }
+        if let Some(topic) = resolve_class_topic_for_slot(slot, subjects_for_class) {
+            future_topics.push(topic);
+        }
+    }
+
+    let mut chain = if consumed_future_topics < future_topics.len() {
+        future_topics
+            .into_iter()
+            .skip(consumed_future_topics)
+            .collect::<Vec<_>>()
+    } else {
+        Vec::new()
+    };
+
+    if chain.is_empty() {
+        chain.push(build_free_study_topic());
+    }
+    chain
+}
+
+fn deserialize_self_study_topic(
+    kind_key: Option<String>,
+    subjects_json: Option<String>,
+    label: Option<String>,
+) -> Result<Option<SelfStudyTopic>, AppError> {
+    let Some(kind_key) = kind_key else {
+        return Ok(None);
+    };
+    let kind = SelfStudyTopicKind::from_key(&kind_key)
+        .ok_or_else(|| AppError::new(format!("无效的考试期间自习主题类型: {kind_key}")))?;
+    let subjects = match subjects_json {
+        Some(value) if !value.trim().is_empty() => serde_json::from_str::<Vec<Subject>>(&value)
+            .map_err(|e| AppError::new(format!("考试期间自习主题科目解析失败: {e}")))?,
+        _ => Vec::new(),
+    };
+    Ok(Some(SelfStudyTopic {
+        kind,
+        subjects,
+        label: label.unwrap_or_default(),
+    }))
 }
 
 fn validate_capacity(default_capacity: i64, max_capacity: i64) -> Result<(), AppError> {
@@ -467,13 +686,6 @@ fn validate_capacity(default_capacity: i64, max_capacity: i64) -> Result<(), App
         return Err(AppError::new("最大容量超过合理范围"));
     }
     Ok(())
-}
-
-fn is_foreign_subject(subject: Subject) -> bool {
-    matches!(
-        subject,
-        Subject::English | Subject::Russian | Subject::Japanese
-    )
 }
 
 fn foreign_order(subject: Subject) -> Option<i64> {
@@ -794,7 +1006,8 @@ fn build_session(
     grade_name: &str,
     subject: Subject,
     grade_ctx: &GradeContext,
-    subject_schedule_order: &HashMap<Subject, i64>,
+    grade_schedule_sessions: &[SelfStudyScheduleSession],
+    current_start_ts: i64,
     default_capacity: i64,
     max_capacity: i64,
     foreign_occupied_classes: &mut HashSet<String>,
@@ -861,7 +1074,7 @@ fn build_session(
             space_source: ExamPlanSpaceSource::TeachingClass,
             space_name: class_to_exam_room_name(&classroom.class_name),
             original_class_name: Some(classroom.class_name),
-            self_study_subject: None,
+            self_study_topic: None,
             building: classroom.building,
             floor: classroom.floor,
             capacity: None,
@@ -877,7 +1090,7 @@ fn build_session(
             space_source: ExamPlanSpaceSource::ExamRoom,
             space_name: room.room_name.clone(),
             original_class_name: None,
-            self_study_subject: None,
+            self_study_topic: None,
             building: room.building.clone(),
             floor: room.floor.clone(),
             capacity: None,
@@ -891,7 +1104,7 @@ fn build_session(
             space_source: ExamPlanSpaceSource::VirtualBackup,
             space_name: format!("{grade_name}{virtual_index}场"),
             original_class_name: None,
-            self_study_subject: None,
+            self_study_topic: None,
             building: "备用考场".to_string(),
             floor: "临时".to_string(),
             capacity: None,
@@ -915,11 +1128,16 @@ fn build_session(
             space_source: ExamPlanSpaceSource::TeachingClass,
             space_name: classroom.class_name.clone(),
             original_class_name: Some(classroom.class_name.clone()),
-            self_study_subject: next_subject_for_self_study(
-                subject,
-                &classroom.class_name,
-                &grade_ctx.class_subjects,
-                subject_schedule_order,
+            self_study_topic: Some(
+                build_self_study_topic_chain(
+                    current_start_ts,
+                    &classroom.class_name,
+                    grade_schedule_sessions,
+                    &grade_ctx.class_subjects,
+                )
+                .into_iter()
+                .next()
+                .unwrap_or_else(build_free_study_topic),
             ),
             building: classroom.building.clone(),
             floor: classroom.floor.clone(),
@@ -952,8 +1170,8 @@ fn build_session(
         tx.execute(
             r#"
             INSERT INTO latest_exam_plan_spaces
-            (session_id, space_type, space_source, grade_name, subject, space_name, original_class_name, self_study_subject, building, floor, capacity, sort_index)
-            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)
+            (session_id, space_type, space_source, grade_name, subject, space_name, original_class_name, self_study_topic_kind, self_study_topic_subjects_json, self_study_topic_label, building, floor, capacity, sort_index)
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)
             "#,
             params![
                 session_id,
@@ -963,7 +1181,14 @@ fn build_session(
                 subject.as_key(),
                 space.space_name,
                 space.original_class_name,
-                space.self_study_subject.map(|value| value.as_key().to_string()),
+                space.self_study_topic.as_ref().map(|value| value.kind.as_key().to_string()),
+                space
+                    .self_study_topic
+                    .as_ref()
+                    .map(|value| serde_json::to_string(&value.subjects))
+                    .transpose()
+                    .map_err(|e| AppError::new(format!("考试期间自习主题科目序列化失败: {e}")))?,
+                space.self_study_topic.as_ref().map(|value| value.label.clone()),
                 space.building,
                 space.floor,
                 space.capacity,
@@ -979,8 +1204,8 @@ fn build_session(
         tx.execute(
             r#"
             INSERT INTO latest_exam_plan_spaces
-            (session_id, space_type, space_source, grade_name, subject, space_name, original_class_name, self_study_subject, building, floor, capacity, sort_index)
-            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)
+            (session_id, space_type, space_source, grade_name, subject, space_name, original_class_name, self_study_topic_kind, self_study_topic_subjects_json, self_study_topic_label, building, floor, capacity, sort_index)
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)
             "#,
             params![
                 session_id,
@@ -990,7 +1215,14 @@ fn build_session(
                 subject.as_key(),
                 space.space_name,
                 space.original_class_name,
-                space.self_study_subject.map(|value| value.as_key().to_string()),
+                space.self_study_topic.as_ref().map(|value| value.kind.as_key().to_string()),
+                space
+                    .self_study_topic
+                    .as_ref()
+                    .map(|value| serde_json::to_string(&value.subjects))
+                    .transpose()
+                    .map_err(|e| AppError::new(format!("考试期间自习主题科目序列化失败: {e}")))?,
+                space.self_study_topic.as_ref().map(|value| value.label.clone()),
                 space.building,
                 space.floor,
                 Option::<i64>::None,
@@ -1242,15 +1474,33 @@ fn generate_latest_exam_plan_internal(
         }
         let mut subjects: Vec<Subject> = subject_set.into_iter().collect();
         subjects.sort_by_key(|s| subject_order(*s));
+        let grade_schedule_sessions = subjects
+            .iter()
+            .enumerate()
+            .map(|(index, subject)| SelfStudyScheduleSession {
+                subject: *subject,
+                start_ts: subject_schedule_order
+                    .get(subject)
+                    .copied()
+                    .unwrap_or_else(|| subject_order(*subject) as i64),
+                order_key: index as i64,
+                is_foreign_group: is_foreign_subject(*subject),
+            })
+            .collect::<Vec<_>>();
 
         let mut foreign_occupied = HashSet::new();
         for subject in subjects {
+            let current_start_ts = subject_schedule_order
+                .get(&subject)
+                .copied()
+                .unwrap_or_else(|| subject_order(subject) as i64);
             let built = build_session(
                 &tx,
                 grade_name,
                 subject,
                 grade_ctx,
-                &subject_schedule_order,
+                &grade_schedule_sessions,
+                current_start_ts,
                 default_capacity,
                 max_capacity,
                 &mut foreign_occupied,
@@ -1562,7 +1812,7 @@ pub fn get_latest_exam_plan_session_detail(
         let session = get_session_by_id(&conn, session_id)?;
 
         let mut spaces_stmt = conn.prepare(
-            "SELECT id, session_id, space_type, space_source, grade_name, subject, space_name, original_class_name, self_study_subject, building, floor, capacity, sort_index FROM latest_exam_plan_spaces WHERE session_id = ?1 ORDER BY sort_index ASC, id ASC",
+            "SELECT id, session_id, space_type, space_source, grade_name, subject, space_name, original_class_name, self_study_topic_kind, self_study_topic_subjects_json, self_study_topic_label, building, floor, capacity, sort_index FROM latest_exam_plan_spaces WHERE session_id = ?1 ORDER BY sort_index ASC, id ASC",
         )?;
         let space_rows = spaces_stmt.query_map(params![session_id], |row| {
             let space_type_key: String = row.get(2)?;
@@ -1590,9 +1840,21 @@ pub fn get_latest_exam_plan_session_detail(
                     rusqlite::types::Type::Text,
                 )
             })?;
-            let self_study_subject = row
-                .get::<_, Option<String>>(8)?
-                .and_then(|value| Subject::from_key(&value));
+            let self_study_topic = deserialize_self_study_topic(
+                row.get::<_, Option<String>>(8)?,
+                row.get::<_, Option<String>>(9)?,
+                row.get::<_, Option<String>>(10)?,
+            )
+            .map_err(|e| {
+                rusqlite::Error::FromSqlConversionFailure(
+                    8,
+                    rusqlite::types::Type::Text,
+                    Box::new(std::io::Error::new(
+                        std::io::ErrorKind::InvalidData,
+                        e.to_string(),
+                    )),
+                )
+            })?;
             Ok(ExamPlanSpace {
                 id: row.get(0)?,
                 session_id: row.get(1)?,
@@ -1602,11 +1864,11 @@ pub fn get_latest_exam_plan_session_detail(
                 subject,
                 space_name: row.get(6)?,
                 original_class_name: row.get(7)?,
-                self_study_subject,
-                building: row.get(9)?,
-                floor: row.get(10)?,
-                capacity: row.get(11)?,
-                sort_index: row.get(12)?,
+                self_study_topic,
+                building: row.get(11)?,
+                floor: row.get(12)?,
+                capacity: row.get(13)?,
+                sort_index: row.get(14)?,
             })
         })?;
         let mut spaces = Vec::new();
@@ -1712,5 +1974,158 @@ mod tests {
         ]);
         let ids: Vec<String> = ordered.into_iter().map(|p| p.admission_no).collect();
         assert_eq!(ids, vec!["1", "3", "2"]);
+    }
+
+    #[test]
+    fn test_self_study_topic_chain_supports_single_foreign_subject() {
+        let sessions = vec![
+            SelfStudyScheduleSession {
+                subject: Subject::English,
+                start_ts: 2_000,
+                order_key: 1,
+                is_foreign_group: true,
+            },
+            SelfStudyScheduleSession {
+                subject: Subject::Russian,
+                start_ts: 2_000,
+                order_key: 2,
+                is_foreign_group: true,
+            },
+        ];
+        let class_subjects = HashMap::from([(
+            "高二1班".to_string(),
+            HashSet::from([Subject::English]),
+        )]);
+        let chain = build_self_study_topic_chain(1_000, "高二1班", &sessions, &class_subjects);
+        assert_eq!(chain, vec![build_subject_self_study_topic(Subject::English)]);
+    }
+
+    #[test]
+    fn test_self_study_topic_chain_supports_foreign_group_topic() {
+        let sessions = vec![
+            SelfStudyScheduleSession {
+                subject: Subject::English,
+                start_ts: 2_000,
+                order_key: 1,
+                is_foreign_group: true,
+            },
+            SelfStudyScheduleSession {
+                subject: Subject::Russian,
+                start_ts: 2_000,
+                order_key: 2,
+                is_foreign_group: true,
+            },
+            SelfStudyScheduleSession {
+                subject: Subject::Japanese,
+                start_ts: 2_000,
+                order_key: 3,
+                is_foreign_group: true,
+            },
+        ];
+        let class_subjects = HashMap::from([(
+            "高二8班".to_string(),
+            HashSet::from([Subject::English, Subject::Russian]),
+        )]);
+        let chain = build_self_study_topic_chain(1_000, "高二8班", &sessions, &class_subjects);
+        assert_eq!(
+            chain,
+            vec![build_foreign_group_self_study_topic(vec![
+                Subject::English,
+                Subject::Russian,
+            ])]
+        );
+    }
+
+    #[test]
+    fn test_foreign_group_self_study_topic_uses_short_label() {
+        let topic =
+            build_foreign_group_self_study_topic(vec![Subject::English, Subject::Russian]);
+        assert_eq!(topic.label, "外语自习（英、俄）");
+    }
+
+    #[test]
+    fn test_self_study_topic_chain_advances_for_consecutive_self_study() {
+        let sessions = vec![
+            SelfStudyScheduleSession {
+                subject: Subject::Math,
+                start_ts: 1_000,
+                order_key: 0,
+                is_foreign_group: false,
+            },
+            SelfStudyScheduleSession {
+                subject: Subject::Biology,
+                start_ts: 2_000,
+                order_key: 1,
+                is_foreign_group: false,
+            },
+            SelfStudyScheduleSession {
+                subject: Subject::Physics,
+                start_ts: 3_000,
+                order_key: 2,
+                is_foreign_group: false,
+            },
+            SelfStudyScheduleSession {
+                subject: Subject::Russian,
+                start_ts: 4_000,
+                order_key: 3,
+                is_foreign_group: true,
+            },
+            SelfStudyScheduleSession {
+                subject: Subject::History,
+                start_ts: 5_000,
+                order_key: 4,
+                is_foreign_group: false,
+            },
+            SelfStudyScheduleSession {
+                subject: Subject::Politics,
+                start_ts: 6_000,
+                order_key: 5,
+                is_foreign_group: false,
+            },
+        ];
+        let class_subjects = HashMap::from([(
+            "高二7班".to_string(),
+            HashSet::from([
+                Subject::Math,
+                Subject::Russian,
+                Subject::History,
+                Subject::Politics,
+            ]),
+        )]);
+        let first_chain =
+            build_self_study_topic_chain(2_000, "高二7班", &sessions, &class_subjects);
+        let second_chain =
+            build_self_study_topic_chain(3_000, "高二7班", &sessions, &class_subjects);
+        assert_eq!(
+            first_chain,
+            vec![
+                build_subject_self_study_topic(Subject::Russian),
+                build_subject_self_study_topic(Subject::History),
+                build_subject_self_study_topic(Subject::Politics),
+            ]
+        );
+        assert_eq!(
+            second_chain,
+            vec![
+                build_subject_self_study_topic(Subject::History),
+                build_subject_self_study_topic(Subject::Politics),
+            ]
+        );
+    }
+
+    #[test]
+    fn test_self_study_topic_chain_falls_back_to_free_study() {
+        let sessions = vec![SelfStudyScheduleSession {
+            subject: Subject::Physics,
+            start_ts: 1_000,
+            order_key: 1,
+            is_foreign_group: false,
+        }];
+        let class_subjects = HashMap::from([(
+            "高二5班".to_string(),
+            HashSet::from([Subject::Physics]),
+        )]);
+        let chain = build_self_study_topic_chain(2_000, "高二5班", &sessions, &class_subjects);
+        assert_eq!(chain, vec![build_free_study_topic()]);
     }
 }

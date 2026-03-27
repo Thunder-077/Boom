@@ -53,6 +53,13 @@ export interface ExamPlanSession {
 export type ExamPlanSpaceType = "exam_room" | "self_study_room";
 export type ExamPlanSpaceSource = "teaching_class" | "exam_room" | "virtual_backup";
 export type ExamAllocationType = "exam" | "self_study";
+export type SelfStudyTopicKind = "subject" | "foreign_group" | "free_study";
+
+export interface SelfStudyTopic {
+  kind: SelfStudyTopicKind;
+  subjects: Subject[];
+  label: string;
+}
 
 export interface ExamPlanSpace {
   id: number;
@@ -63,6 +70,7 @@ export interface ExamPlanSpace {
   subject: Subject;
   spaceName: string;
   originalClassName: string | null;
+  selfStudyTopic: SelfStudyTopic | null;
   building: string;
   floor: string;
   capacity: number | null;
@@ -180,8 +188,8 @@ export interface ExamStaffTask {
   startAt: string;
   endAt: string;
   durationMinutes: number;
-  recommendedSubject: Subject | null;
-  prioritySubjectChain: Subject[];
+  recommendedSelfStudyTopic: SelfStudyTopic | null;
+  prioritySelfStudyChain: SelfStudyTopic[];
   assignmentTier: AssignmentTier | null;
   status: TaskStatus;
   reason: string | null;

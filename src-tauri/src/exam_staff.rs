@@ -342,8 +342,8 @@ pub struct ExamStaffTask {
     start_at: String,
     end_at: String,
     duration_minutes: i64,
-    recommended_subject: Option<Subject>,
-    priority_subject_chain: Vec<Subject>,
+    recommended_self_study_topic: Option<exam_allocation::SelfStudyTopic>,
+    priority_self_study_chain: Vec<exam_allocation::SelfStudyTopic>,
     assignment_tier: Option<AssignmentTier>,
     status: TaskStatus,
     reason: Option<String>,
@@ -539,8 +539,8 @@ struct TaskBuild {
     start_ts: i64,
     end_ts: i64,
     duration_minutes: i64,
-    recommended_subject: Option<Subject>,
-    priority_subject_chain: Vec<Subject>,
+    recommended_self_study_topic: Option<exam_allocation::SelfStudyTopic>,
+    priority_self_study_chain: Vec<exam_allocation::SelfStudyTopic>,
     day_key: String,
     half_day: HalfDay,
 }
@@ -700,19 +700,38 @@ fn role_priority(role: StaffRole) -> i32 {
     }
 }
 
-fn subject_chain_to_text(chain: &[Subject]) -> String {
-    chain
-        .iter()
-        .map(|subject| subject.as_key())
-        .collect::<Vec<_>>()
-        .join(",")
+fn self_study_topic_chain_to_text(
+    chain: &[exam_allocation::SelfStudyTopic],
+) -> Result<String, AppError> {
+    serde_json::to_string(chain).map_err(|e| AppError::new(format!("自习主题链序列化失败: {e}")))
 }
 
-fn subject_chain_from_text(value: &str) -> Vec<Subject> {
-    value
-        .split(',')
-        .filter_map(|item| Subject::from_key(item.trim()))
-        .collect()
+fn self_study_topic_chain_from_text(
+    value: &str,
+) -> Result<Vec<exam_allocation::SelfStudyTopic>, AppError> {
+    serde_json::from_str(value).map_err(|e| AppError::new(format!("自习主题链解析失败: {e}")))
+}
+
+fn self_study_topic_from_parts(
+    kind_key: Option<String>,
+    subjects_json: Option<String>,
+    label: Option<String>,
+) -> Result<Option<exam_allocation::SelfStudyTopic>, AppError> {
+    let Some(kind_key) = kind_key else {
+        return Ok(None);
+    };
+    let kind = exam_allocation::SelfStudyTopicKind::from_key(&kind_key)
+        .ok_or_else(|| AppError::new(format!("无效的自习主题类型: {kind_key}")))?;
+    let subjects = match subjects_json {
+        Some(value) if !value.trim().is_empty() => serde_json::from_str::<Vec<Subject>>(&value)
+            .map_err(|e| AppError::new(format!("自习主题科目解析失败: {e}")))?,
+        _ => Vec::new(),
+    };
+    Ok(Some(exam_allocation::SelfStudyTopic {
+        kind,
+        subjects,
+        label: label.unwrap_or_default(),
+    }))
 }
 
 fn round_to_two(value: f64) -> f64 {
@@ -1102,37 +1121,6 @@ fn load_exam_room_requirement(default_count: i64) -> Result<i64, AppError> {
     Ok(default_count.max(1))
 }
 
-fn build_priority_subject_chain(
-    current: &SessionTimeRuntime,
-    class_name: &str,
-    sessions_by_grade: &HashMap<String, Vec<SessionTimeRuntime>>,
-    class_subject_map: &HashMap<(String, String), HashSet<Subject>>,
-) -> Vec<Subject> {
-    let mut chain = Vec::new();
-    let Some(class_subjects) =
-        class_subject_map.get(&(current.grade_name.clone(), class_name.to_string()))
-    else {
-        return chain;
-    };
-    let Some(grade_sessions) = sessions_by_grade.get(&current.grade_name) else {
-        return chain;
-    };
-    let mut seen = HashSet::new();
-    for session in grade_sessions {
-        if session.start_ts <= current.start_ts {
-            continue;
-        }
-        if !class_subjects.contains(&session.subject) {
-            continue;
-        }
-        if seen.insert(session.subject.as_key()) {
-            chain.push(session.subject);
-            break;
-        }
-    }
-    chain
-}
-
 fn build_task_candidate_summary(
     task: &TaskBuild,
     teachers: &[TeacherInfo],
@@ -1173,16 +1161,35 @@ fn build_task_candidate_summary(
 
     if task.role == StaffRole::SelfStudySupervisor {
         let class_name = task.space_name.as_str();
-        let next_subject = task
-            .recommended_subject
-            .or_else(|| task.priority_subject_chain.first().copied());
         let mut seen = HashSet::<i64>::new();
         let mut candidates = Vec::<TaskCandidate>::new();
 
-        if let Some(subject) = next_subject {
+        if let Some(topic) = task
+            .recommended_self_study_topic
+            .as_ref()
+            .or_else(|| task.priority_self_study_chain.first())
+        {
             for teacher in &active_teachers {
-                if teacher.class_names.contains(class_name) && teacher.subjects.contains(&subject) {
-                    seen.insert(teacher.id);
+                let matches_primary = match topic.kind {
+                    exam_allocation::SelfStudyTopicKind::Subject => topic
+                        .subjects
+                        .first()
+                        .is_some_and(|subject| {
+                            teacher.class_names.contains(class_name)
+                                && teacher.subjects.contains(subject)
+                        }),
+                    exam_allocation::SelfStudyTopicKind::ForeignGroup => {
+                        teacher.class_names.contains(class_name)
+                            && topic
+                                .subjects
+                                .iter()
+                                .any(|subject| teacher.subjects.contains(subject))
+                    }
+                    exam_allocation::SelfStudyTopicKind::FreeStudy => {
+                        teacher.class_names.contains(class_name)
+                    }
+                };
+                if matches_primary && seen.insert(teacher.id) {
                     candidates.push(TaskCandidate {
                         teacher_id: teacher.id,
                         assignment_tier: Some(AssignmentTier::Primary),
@@ -1282,13 +1289,13 @@ fn load_spaces_for_session(
         SpaceType,
         String,
         Option<String>,
-        Option<Subject>,
+        Option<exam_allocation::SelfStudyTopic>,
         String,
     )>,
     AppError,
 > {
     let mut stmt = conn.prepare(
-        "SELECT id, space_type, space_name, original_class_name, self_study_subject, floor FROM latest_exam_plan_spaces WHERE session_id = ?1 ORDER BY sort_index ASC, id ASC",
+        "SELECT id, space_type, space_name, original_class_name, self_study_topic_kind, self_study_topic_subjects_json, self_study_topic_label, floor FROM latest_exam_plan_spaces WHERE session_id = ?1 ORDER BY sort_index ASC, id ASC",
     )?;
     let rows = stmt.query_map(params![session_id], |row| {
         let space_type_key: String = row.get(1)?;
@@ -1303,14 +1310,28 @@ fn load_spaces_for_session(
                 ))
             }
         };
+        let self_study_topic = self_study_topic_from_parts(
+            row.get::<_, Option<String>>(4)?,
+            row.get::<_, Option<String>>(5)?,
+            row.get::<_, Option<String>>(6)?,
+        )
+        .map_err(|e| {
+            rusqlite::Error::FromSqlConversionFailure(
+                4,
+                rusqlite::types::Type::Text,
+                Box::new(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    e.to_string(),
+                )),
+            )
+        })?;
         Ok((
             row.get::<_, i64>(0)?,
             space_type,
             row.get::<_, String>(2)?,
             row.get::<_, Option<String>>(3)?,
-            row.get::<_, Option<String>>(4)?
-                .and_then(|value| Subject::from_key(&value)),
-            row.get::<_, String>(5)?,
+            self_study_topic,
+            row.get::<_, String>(7)?,
         ))
     })?;
     let mut out = Vec::new();
@@ -1432,19 +1453,32 @@ fn build_staff_tasks(
     class_subject_map: &HashMap<(String, String), HashSet<Subject>>,
     teaching_classes: &[TeachingClassRuntime],
 ) -> Result<Vec<TaskBuild>, AppError> {
-    let mut sessions_by_grade: HashMap<String, Vec<SessionTimeRuntime>> = HashMap::new();
+    let mut sessions_by_grade: HashMap<String, Vec<exam_allocation::SelfStudyScheduleSession>> =
+        HashMap::new();
     for session in session_times {
         sessions_by_grade
             .entry(session.grade_name.clone())
             .or_default()
-            .push(session.clone());
+            .push(exam_allocation::SelfStudyScheduleSession {
+                subject: session.subject,
+                start_ts: session.start_ts,
+                order_key: session.session_id,
+                is_foreign_group: exam_allocation::is_foreign_subject(session.subject),
+            });
     }
     for session_list in sessions_by_grade.values_mut() {
         session_list.sort_by(|a, b| {
             a.start_ts
                 .cmp(&b.start_ts)
-                .then(a.session_id.cmp(&b.session_id))
+                .then(a.order_key.cmp(&b.order_key))
         });
+    }
+    let mut class_subjects_by_grade = HashMap::<String, HashMap<String, HashSet<Subject>>>::new();
+    for ((grade_name, class_name), subjects) in class_subject_map {
+        class_subjects_by_grade
+            .entry(grade_name.clone())
+            .or_default()
+            .insert(class_name.clone(), subjects.clone());
     }
 
     let mut tasks = Vec::<TaskBuild>::new();
@@ -1459,8 +1493,15 @@ fn build_staff_tasks(
 
         let mut floors = HashSet::<String>::new();
         let (day_key, half_day) = parse_day_slot(&session.start_at)?;
-        for (space_id, space_type, space_name, original_class_name, self_study_subject, floor) in
-            &spaces
+        let grade_sessions = sessions_by_grade
+            .get(&session.grade_name)
+            .map(Vec::as_slice)
+            .unwrap_or(&[]);
+        let grade_class_subjects = class_subjects_by_grade
+            .get(&session.grade_name)
+            .cloned()
+            .unwrap_or_default();
+        for (space_id, space_type, space_name, original_class_name, self_study_topic, floor) in &spaces
         {
             if floor.trim().is_empty() {
                 return Err(AppError::new(format!(
@@ -1489,8 +1530,8 @@ fn build_staff_tasks(
                             start_ts: session.start_ts,
                             end_ts: session.end_ts,
                             duration_minutes: duration_minutes(session.start_ts, session.end_ts)?,
-                            recommended_subject: None,
-                            priority_subject_chain: Vec::new(),
+                            recommended_self_study_topic: None,
+                            priority_self_study_chain: Vec::new(),
                             day_key: day_key.clone(),
                             half_day,
                         });
@@ -1500,18 +1541,27 @@ fn build_staff_tasks(
                     let class_name = original_class_name
                         .clone()
                         .unwrap_or_else(|| space_name.clone());
-                    let (recommended_subject, chain) =
-                        if let Some(saved_subject) = self_study_subject {
-                            (Some(*saved_subject), vec![*saved_subject])
+                    let computed_chain = exam_allocation::build_self_study_topic_chain(
+                        session.start_ts,
+                        &class_name,
+                        grade_sessions,
+                        &grade_class_subjects,
+                    );
+                    let recommended_self_study_topic = self_study_topic
+                        .clone()
+                        .or_else(|| computed_chain.first().cloned());
+                    let priority_self_study_chain =
+                        if let Some(saved_topic) = recommended_self_study_topic.clone() {
+                            let mut chain = Vec::with_capacity(computed_chain.len().max(1));
+                            chain.push(saved_topic.clone());
+                            for topic in computed_chain {
+                                if topic != saved_topic {
+                                    chain.push(topic);
+                                }
+                            }
+                            chain
                         } else {
-                            let chain = build_priority_subject_chain(
-                                session,
-                                &class_name,
-                                &sessions_by_grade,
-                                class_subject_map,
-                            );
-                            let recommended_subject = chain.first().copied();
-                            (recommended_subject, chain)
+                            computed_chain
                         };
                     tasks.push(TaskBuild {
                         session_id: Some(session.session_id),
@@ -1527,8 +1577,8 @@ fn build_staff_tasks(
                         start_ts: session.start_ts,
                         end_ts: session.end_ts,
                         duration_minutes: duration_minutes(session.start_ts, session.end_ts)?,
-                        recommended_subject,
-                        priority_subject_chain: chain,
+                        recommended_self_study_topic,
+                        priority_self_study_chain,
                         day_key: day_key.clone(),
                         half_day,
                     });
@@ -1553,8 +1603,8 @@ fn build_staff_tasks(
                 start_ts: session.start_ts,
                 end_ts: session.end_ts,
                 duration_minutes: duration_minutes(session.start_ts, session.end_ts)?,
-                recommended_subject: None,
-                priority_subject_chain: Vec::new(),
+                recommended_self_study_topic: None,
+                priority_self_study_chain: Vec::new(),
                 day_key: day_key.clone(),
                 half_day,
             });
@@ -1600,8 +1650,12 @@ fn build_staff_tasks(
                 start_ts,
                 end_ts,
                 duration_minutes: duration,
-                recommended_subject: Some(subject),
-                priority_subject_chain: vec![subject],
+                recommended_self_study_topic: Some(
+                    exam_allocation::build_subject_self_study_topic(subject),
+                ),
+                priority_self_study_chain: vec![
+                    exam_allocation::build_subject_self_study_topic(subject),
+                ],
                 day_key: day_key.clone(),
                 half_day,
             });
@@ -2513,8 +2567,8 @@ fn persist_solved_plan(
         tx.execute(
             r#"
             INSERT INTO latest_exam_staff_tasks
-            (session_id, space_id, task_source, role, grade_name, subject, space_name, floor, start_at, end_at, duration_minutes, recommended_subject, priority_subject_chain, assignment_tier, status, reason, allowance_amount)
-            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)
+            (session_id, space_id, task_source, role, grade_name, subject, space_name, floor, start_at, end_at, duration_minutes, recommended_self_study_topic_kind, recommended_self_study_topic_subjects_json, recommended_self_study_topic_label, priority_self_study_chain_json, assignment_tier, status, reason, allowance_amount)
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19)
             "#,
             params![
                 record.task.session_id,
@@ -2530,9 +2584,22 @@ fn persist_solved_plan(
                 record.task.duration_minutes,
                 record
                     .task
-                    .recommended_subject
-                    .map(|subject| subject.as_key().to_string()),
-                subject_chain_to_text(&record.task.priority_subject_chain),
+                    .recommended_self_study_topic
+                    .as_ref()
+                    .map(|topic| topic.kind.as_key().to_string()),
+                record
+                    .task
+                    .recommended_self_study_topic
+                    .as_ref()
+                    .map(|topic| serde_json::to_string(&topic.subjects))
+                    .transpose()
+                    .map_err(|e| AppError::new(format!("推荐自习主题科目序列化失败: {e}")))?,
+                record
+                    .task
+                    .recommended_self_study_topic
+                    .as_ref()
+                    .map(|topic| topic.label.clone()),
+                self_study_topic_chain_to_text(&record.task.priority_self_study_chain)?,
                 record.assignment_tier.map(|tier| tier.as_key().to_string()),
                 status.as_key(),
                 record.reason,
@@ -3302,7 +3369,7 @@ pub fn list_latest_exam_staff_tasks(
             r#"
             SELECT
               t.id, t.session_id, t.space_id, t.task_source, t.role, t.grade_name, t.subject, t.space_name, t.floor,
-              t.start_at, t.end_at, t.duration_minutes, t.recommended_subject, t.priority_subject_chain, t.assignment_tier, t.status, t.reason, t.allowance_amount,
+              t.start_at, t.end_at, t.duration_minutes, t.recommended_self_study_topic_kind, t.recommended_self_study_topic_subjects_json, t.recommended_self_study_topic_label, t.priority_self_study_chain_json, t.assignment_tier, t.status, t.reason, t.allowance_amount,
               a.teacher_id, a.teacher_name
             FROM latest_exam_staff_tasks t
             LEFT JOIN latest_exam_staff_assignments a ON a.task_id = t.id
@@ -3316,7 +3383,7 @@ pub fn list_latest_exam_staff_tasks(
             let task_source_key: String = row.get(3)?;
             let role_key: String = row.get(4)?;
             let subject_key: String = row.get(6)?;
-            let status_key: String = row.get(15)?;
+            let status_key: String = row.get(17)?;
             let task_source = StaffTaskSource::from_key(&task_source_key).ok_or_else(|| {
                 rusqlite::Error::InvalidColumnType(
                     3,
@@ -3340,18 +3407,29 @@ pub fn list_latest_exam_staff_tasks(
             })?;
             let status = TaskStatus::from_key(&status_key).ok_or_else(|| {
                 rusqlite::Error::InvalidColumnType(
-                    15,
+                    17,
                     "status".to_string(),
                     rusqlite::types::Type::Text,
                 )
             })?;
-            let recommended_subject = row
-                .get::<_, Option<String>>(12)?
-                .as_deref()
-                .and_then(Subject::from_key);
-            let chain_text: Option<String> = row.get(13)?;
+            let recommended_self_study_topic = self_study_topic_from_parts(
+                row.get::<_, Option<String>>(12)?,
+                row.get::<_, Option<String>>(13)?,
+                row.get::<_, Option<String>>(14)?,
+            )
+            .map_err(|e| {
+                rusqlite::Error::FromSqlConversionFailure(
+                    12,
+                    rusqlite::types::Type::Text,
+                    Box::new(std::io::Error::new(
+                        std::io::ErrorKind::InvalidData,
+                        e.to_string(),
+                    )),
+                )
+            })?;
+            let chain_text: String = row.get(15)?;
             let assignment_tier = row
-                .get::<_, Option<String>>(14)?
+                .get::<_, Option<String>>(16)?
                 .as_deref()
                 .and_then(AssignmentTier::from_key);
             Ok(ExamStaffTask {
@@ -3367,17 +3445,25 @@ pub fn list_latest_exam_staff_tasks(
                 start_at: row.get(9)?,
                 end_at: row.get(10)?,
                 duration_minutes: row.get(11)?,
-                recommended_subject,
-                priority_subject_chain: chain_text
-                    .as_deref()
-                    .map(subject_chain_from_text)
-                    .unwrap_or_default(),
+                recommended_self_study_topic,
+                priority_self_study_chain: self_study_topic_chain_from_text(&chain_text).map_err(
+                    |e| {
+                        rusqlite::Error::FromSqlConversionFailure(
+                            15,
+                            rusqlite::types::Type::Text,
+                            Box::new(std::io::Error::new(
+                                std::io::ErrorKind::InvalidData,
+                                e.to_string(),
+                            )),
+                        )
+                    },
+                )?,
                 assignment_tier,
                 status,
-                reason: row.get(16)?,
-                allowance_amount: row.get(17)?,
-                teacher_id: row.get(18)?,
-                teacher_name: row.get(19)?,
+                reason: row.get(18)?,
+                allowance_amount: row.get(19)?,
+                teacher_id: row.get(20)?,
+                teacher_name: row.get(21)?,
             })
         })?;
         let mut items = Vec::new();
@@ -3457,6 +3543,10 @@ pub fn list_latest_teacher_duty_stats(
 mod tests {
     use super::*;
 
+    fn topic_subject(subject: Subject) -> exam_allocation::SelfStudyTopic {
+        exam_allocation::build_subject_self_study_topic(subject)
+    }
+
     fn test_runtime_config() -> RuntimeInvigilationConfig {
         RuntimeInvigilationConfig {
             default_exam_room_required_count: 1,
@@ -3486,8 +3576,8 @@ mod tests {
             start_ts: 1_000,
             end_ts: 2_000,
             duration_minutes: 120,
-            recommended_subject: None,
-            priority_subject_chain: Vec::new(),
+            recommended_self_study_topic: None,
+            priority_self_study_chain: Vec::new(),
             day_key: "2026-03-24".to_string(),
             half_day: HalfDay::Morning,
         }
@@ -3516,8 +3606,11 @@ mod tests {
             start_ts: 1_000,
             end_ts: 2_000,
             duration_minutes: 120,
-            recommended_subject: Some(Subject::Physics),
-            priority_subject_chain: vec![Subject::Physics, Subject::English],
+            recommended_self_study_topic: Some(topic_subject(Subject::Physics)),
+            priority_self_study_chain: vec![
+                topic_subject(Subject::Physics),
+                topic_subject(Subject::English),
+            ],
             day_key: "2026-03-24".to_string(),
             half_day: HalfDay::Morning,
         }
@@ -3673,6 +3766,84 @@ mod tests {
     }
 
     #[test]
+    fn test_candidate_summary_supports_foreign_group_and_free_study_topics() {
+        let teachers = vec![
+            TeacherInfo {
+                id: 1,
+                name: "英语老师".to_string(),
+                subjects: HashSet::from([Subject::English]),
+                class_names: HashSet::from(["高二3班".to_string()]),
+                homeroom_classes: HashSet::new(),
+                is_middle_manager: false,
+            },
+            TeacherInfo {
+                id: 2,
+                name: "俄语老师".to_string(),
+                subjects: HashSet::from([Subject::Russian]),
+                class_names: HashSet::from(["高二3班".to_string()]),
+                homeroom_classes: HashSet::new(),
+                is_middle_manager: false,
+            },
+            TeacherInfo {
+                id: 3,
+                name: "历史老师".to_string(),
+                subjects: HashSet::from([Subject::History]),
+                class_names: HashSet::from(["高二3班".to_string()]),
+                homeroom_classes: HashSet::new(),
+                is_middle_manager: false,
+            },
+        ];
+        let mut foreign_task = sample_self_study_task(StaffTaskSource::ExamLinkedSelfStudy);
+        foreign_task.recommended_self_study_topic = Some(
+            exam_allocation::build_foreign_group_self_study_topic(vec![
+                Subject::English,
+                Subject::Russian,
+            ]),
+        );
+        foreign_task.priority_self_study_chain = vec![
+            exam_allocation::build_foreign_group_self_study_topic(vec![
+                Subject::English,
+                Subject::Russian,
+            ]),
+        ];
+        let foreign_summary = build_task_candidate_summary(
+            &foreign_task,
+            &teachers,
+            &HashSet::new(),
+            &test_runtime_config(),
+        );
+        assert_eq!(
+            foreign_summary
+                .candidates
+                .iter()
+                .take(2)
+                .map(|item| (item.teacher_id, item.assignment_tier))
+                .collect::<Vec<_>>(),
+            vec![
+                (1, Some(AssignmentTier::Primary)),
+                (2, Some(AssignmentTier::Primary)),
+            ]
+        );
+
+        let mut free_task = sample_self_study_task(StaffTaskSource::ExamLinkedSelfStudy);
+        free_task.recommended_self_study_topic = Some(exam_allocation::build_free_study_topic());
+        free_task.priority_self_study_chain = vec![exam_allocation::build_free_study_topic()];
+        let free_summary = build_task_candidate_summary(
+            &free_task,
+            &teachers,
+            &HashSet::new(),
+            &test_runtime_config(),
+        );
+        assert_eq!(free_summary.candidates[0].teacher_id, 1);
+        assert_eq!(free_summary.candidates[1].teacher_id, 2);
+        assert_eq!(free_summary.candidates[2].teacher_id, 3);
+        assert!(free_summary
+            .candidates
+            .iter()
+            .all(|item| item.assignment_tier == Some(AssignmentTier::Primary)));
+    }
+
+    #[test]
     fn test_allowance_rate_mapping() {
         let config = test_runtime_config();
         assert_eq!(
@@ -3722,8 +3893,8 @@ mod tests {
                 start_ts: 1_000,
                 end_ts: 2_000,
                 duration_minutes: 120,
-                recommended_subject: None,
-                priority_subject_chain: Vec::new(),
+                recommended_self_study_topic: None,
+                priority_self_study_chain: Vec::new(),
                 day_key: "2026-03-24".to_string(),
                 half_day: HalfDay::Morning,
             },
@@ -3741,8 +3912,8 @@ mod tests {
                 start_ts: 1_000,
                 end_ts: 2_000,
                 duration_minutes: 120,
-                recommended_subject: Some(Subject::English),
-                priority_subject_chain: vec![Subject::English],
+                recommended_self_study_topic: Some(topic_subject(Subject::English)),
+                priority_self_study_chain: vec![topic_subject(Subject::English)],
                 day_key: "2026-03-24".to_string(),
                 half_day: HalfDay::Morning,
             },
@@ -3795,8 +3966,8 @@ mod tests {
                 start_ts: 1_000,
                 end_ts: 2_000,
                 duration_minutes: 60,
-                recommended_subject: None,
-                priority_subject_chain: Vec::new(),
+                recommended_self_study_topic: None,
+                priority_self_study_chain: Vec::new(),
                 day_key: "2026-03-24".to_string(),
                 half_day: HalfDay::Morning,
             },
@@ -3814,8 +3985,8 @@ mod tests {
                 start_ts: 2_000,
                 end_ts: 3_000,
                 duration_minutes: 60,
-                recommended_subject: None,
-                priority_subject_chain: Vec::new(),
+                recommended_self_study_topic: None,
+                priority_self_study_chain: Vec::new(),
                 day_key: "2026-03-24".to_string(),
                 half_day: HalfDay::Morning,
             },
@@ -3833,8 +4004,8 @@ mod tests {
                 start_ts: 3_000,
                 end_ts: 4_000,
                 duration_minutes: 60,
-                recommended_subject: None,
-                priority_subject_chain: Vec::new(),
+                recommended_self_study_topic: None,
+                priority_self_study_chain: Vec::new(),
                 day_key: "2026-03-24".to_string(),
                 half_day: HalfDay::Morning,
             },
@@ -3852,8 +4023,8 @@ mod tests {
                 start_ts: 4_000,
                 end_ts: 5_000,
                 duration_minutes: 60,
-                recommended_subject: None,
-                priority_subject_chain: Vec::new(),
+                recommended_self_study_topic: Some(topic_subject(Subject::English)),
+                priority_self_study_chain: vec![topic_subject(Subject::English)],
                 day_key: "2026-03-24".to_string(),
                 half_day: HalfDay::Morning,
             },
