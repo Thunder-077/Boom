@@ -147,12 +147,12 @@
         <div class="complete-meta">
           <div class="complete-summary">
             <span class="metric-label">结果摘要</span>
-            <strong v-if="!store.viewState.lastExportZipPath">{{ completeSummary }}</strong>
+            <strong v-if="!store.viewState.lastExportFolderPath">{{ completeSummary }}</strong>
             <button v-else class="export-link" type="button" @click="openExportFolder">{{ exportFileName }}</button>
           </div>
           <div class="complete-action">
             <button class="primary-btn export-btn" :disabled="store.viewState.exporting || !store.viewState.overview.generatedAt" @click="exportBundle">
-              {{ store.viewState.exporting ? "打包中..." : "导出分配结果" }}
+              {{ store.viewState.exporting ? "导出中..." : "导出分配结果" }}
             </button>
           </div>
         </div>
@@ -249,7 +249,7 @@ const progressStepText = computed(() => {
     return progress.message ? `${stepPrefix}：${progress.message}` : stepPrefix;
   }
   if (store.viewState.overview.generatedAt) {
-    return "已生成考场与导出文件，可按需打包 ZIP。";
+    return "考场分配完成，点击导出打开结果目录。";
   }
   return "等待开始，系统将按当前配置自动排考场。";
 });
@@ -284,19 +284,14 @@ const completeDescription = computed(() => {
   return `完成 ${store.viewState.overview.examRoomCount} 个考场与 ${store.viewState.overview.studentAllocationCount} 名考生自动分配。`;
 });
 
-const completeSummary = computed(() => {
-  if (store.viewState.lastExportZipPath) {
-    return "考场安排.zip";
-  }
-  return "尚未导出分配文件";
-});
+const completeSummary = computed(() => "尚未导出分配文件");
 const exportFileName = computed(() => {
-  const raw = store.viewState.lastExportZipPath;
+  const raw = store.viewState.lastExportFolderPath;
   if (!raw) {
     return "";
   }
   const matched = raw.match(/[^\\/]+$/);
-  return matched?.[0] ?? "考场安排.zip";
+  return matched?.[0] ?? "考场安排";
 });
 
 const isCompletePending = computed(() => store.viewState.generating || !store.viewState.overview.generatedAt);
@@ -503,7 +498,7 @@ async function exportBundle() {
 }
 
 async function openExportFolder() {
-  const target = store.viewState.lastExportZipPath;
+  const target = store.viewState.lastExportFolderPath;
   if (!target) {
     return;
   }
@@ -567,6 +562,7 @@ onUnmounted(() => {
   text-decoration: underline;
   cursor: pointer;
 }
+
 
 .left-col,
 .right-col {

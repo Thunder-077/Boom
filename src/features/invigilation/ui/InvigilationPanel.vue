@@ -35,43 +35,21 @@
       </ConfigCard>
     </div>
 
-    <ConfigCard title="考试禁排设置" description="选择老师不参与某场考试的监考，系统在分配时自动跳过。">
+    <ConfigCard class="exclude-card" title="考试禁排设置" description="选择老师不参与某场考试的监考，系统在分配时自动跳过。">
       <div class="exclude-toolbar">
-        <div class="fluent-combo" :class="{ open: showTeacherMenu }" @focusin="showTeacherMenu = true" @focusout="hideTeacherMenu">
-          <input class="fluent-input select-field" v-model="teacherKeyword" placeholder="选择教师" />
-          <span class="material-symbols-rounded combo-icon">keyboard_arrow_down</span>
-          <div v-if="showTeacherMenu" class="fluent-menu">
-            <button
-              v-for="teacher in teacherOptions"
-              :key="teacher.id"
-              type="button"
-              class="fluent-option"
-              :class="{ selected: teacher.id === selectedTeacherId }"
-              @mousedown.prevent="pickTeacher(teacher.id, teacher.teacherName)"
-            >
-              {{ teacher.teacherName }}
-            </button>
-            <div v-if="teacherOptions.length === 0" class="menu-empty">未找到匹配教师</div>
-          </div>
-        </div>
+        <FluentSelect
+          :model-value="selectedTeacherId ?? ''"
+          :options="teacherSelectOptions"
+          @update:model-value="pickTeacher"
+          style="width: 220px;"
+        />
 
-        <div class="fluent-combo" :class="{ open: showSessionMenu }" @focusin="showSessionMenu = true" @focusout="hideSessionMenu">
-          <input class="fluent-input select-field" v-model="sessionKeyword" placeholder="选择考试场次" />
-          <span class="material-symbols-rounded combo-icon">keyboard_arrow_down</span>
-          <div v-if="showSessionMenu" class="fluent-menu">
-            <button
-              v-for="session in sessionOptions"
-              :key="session.sessionId"
-              type="button"
-              class="fluent-option"
-              :class="{ selected: session.sessionId === selectedSessionId }"
-              @mousedown.prevent="pickSession(session.sessionId, session.label)"
-            >
-              {{ session.label }}
-            </button>
-            <div v-if="sessionOptions.length === 0" class="menu-empty">未找到匹配场次</div>
-          </div>
-        </div>
+        <FluentSelect
+          :model-value="selectedSessionId ?? ''"
+          :options="sessionSelectOptions"
+          @update:model-value="pickSession"
+          style="width: 260px;"
+        />
       </div>
 
       <div v-if="store.viewState.staffExclusions.length === 0" class="empty-box">
@@ -143,7 +121,7 @@
           <p v-if="store.viewState.staffOverview.generatedAt" class="solver-summary">{{ staffSolverSummary }}</p>
         </div>
         <div
-          v-if="assignmentNotice || isAssignmentProgressVisible"
+          v-if="displayedAssignmentNotice || isAssignmentProgressVisible"
           ref="assignmentNoticeEl"
           class="assignment-notice inline"
           role="status"
@@ -434,12 +412,8 @@ const selfStudyMonthDay = ref(new Date().toISOString().slice(5, 10));
 const selfStudyStartTime = ref("12:10");
 const selfStudyEndTime = ref("13:40");
 const selfStudyValidationError = ref("");
-const teacherKeyword = ref("");
-const sessionKeyword = ref("");
 const selectedTeacherId = ref<number | null>(null);
 const selectedSessionId = ref<number | null>(null);
-const showTeacherMenu = ref(false);
-const showSessionMenu = ref(false);
 const selfStudyDrawerOpen = ref(false);
 const middleManagerDrawerOpen = ref(false);
 const selfStudyLoading = ref(false);
@@ -461,7 +435,6 @@ const selfStudyClasses = ref<SelfStudyClassRow[]>([]);
 const middleManagerPageSize = 3;
 const assignmentNotice = ref<AssignmentNotice | null>(null);
 const assignmentNoticeEl = ref<HTMLElement | null>(null);
-const assignmentProgress = ref<ExamStaffAssignmentProgress | null>(null);
 let removeAssignmentProgressListener: UnlistenFn | null = null;
 
 const subjectLabelMap: Record<Subject, string> = {
@@ -495,8 +468,11 @@ const selectableSubjects: Subject[] = [
 const activeDrawer = computed(() => (selfStudyDrawerOpen.value ? "selfStudy" : middleManagerDrawerOpen.value ? "middleManager" : null));
 const middleManagerDefaultEnabled = computed(() => store.viewState.invigilationConfig.middleManagerDefaultEnabled);
 const middleManagerExceptionCount = computed(() => store.viewState.invigilationConfig.middleManagerExceptionTeacherIds.length);
-const teacherOptions = computed(() => store.viewState.teachers.filter((item) => (teacherKeyword.value.trim() ? item.teacherName.includes(teacherKeyword.value.trim()) : true)));
-const sessionOptions = computed(() => store.viewState.exclusionSessionOptions.filter((item) => (sessionKeyword.value.trim() ? item.label.includes(sessionKeyword.value.trim()) : true)));
+const teacherSelectOptions = computed(() => [{ label: "选择教师", value: "" }, ...store.viewState.teachers.map((item) => ({ label: item.teacherName, value: item.id }))]);
+const sessionSelectOptions = computed(() => [
+  { label: "选择考试场次", value: "" },
+  ...store.viewState.exclusionSessionOptions.map((item) => ({ label: item.label, value: item.sessionId })),
+]);
 const middleManagerTeachers = computed(() => [...store.viewState.teachers].filter((item) => item.isMiddleManager).sort((a, b) => a.teacherName.localeCompare(b.teacherName, "zh-CN")));
 const filteredClasses = computed(() => (gradeFilter.value === "all" ? selfStudyClasses.value : selfStudyClasses.value.filter((item) => item.gradeName === gradeFilter.value)));
 const totalPages = computed(() => Math.max(1, Math.ceil(filteredClasses.value.length / pageSize)));
@@ -555,9 +531,9 @@ const staffSolverSummary = computed(() => {
           : "求解失败";
   const fallbackSummary =
     overview.fallbackPoolAssignments > 0
-      ? `，fallback_pool ${overview.fallbackPoolAssignments} 项`
+      ? `，其他老师补位 ${overview.fallbackPoolAssignments} 项`
       : "";
-  return `CP-SAT，${statusLabel}，耗时 ${overview.solveDurationMs} ms${fallbackSummary}`;
+  return `CP-SAT，${statusLabel}，耗时 ${formatSolveDuration(overview.solveDurationMs)}${fallbackSummary}`;
 });
 const filteredMiddleManagerTeachers = computed(() => {
   const keyword = middleManagerKeyword.value.trim();
@@ -578,18 +554,32 @@ const middleManagerVisiblePages = computed(() =>
 );
 const subjectMenuSelectedSubject = computed(() => (subjectMenu.value.open && subjectMenu.value.mode === "single" && subjectMenu.value.rowId !== null ? selfStudyClasses.value.find((item) => item.id === subjectMenu.value.rowId)?.subject ?? null : null));
 const isAssignmentProgressVisible = computed(() => Boolean(store.viewState.assigning));
+const persistedInvigilationExportNotice = computed<AssignmentNotice | null>(() => {
+  const path = store.viewState.lastInvigilationExportPath;
+  if (!path) {
+    return null;
+  }
+  return {
+    type: "success",
+    text: "监考表已导出，点击下方链接打开文件所在位置。",
+    linkPath: path,
+    linkLabel: exportFileName(path),
+  };
+});
+const displayedAssignmentNotice = computed(() => assignmentNotice.value ?? persistedInvigilationExportNotice.value);
+const assignmentProgress = computed(() => store.viewState.assignmentProgress);
 const assignmentNoticeIcon = computed(() => {
   if (isAssignmentProgressVisible.value) return "hourglass_top";
-  return assignmentNotice.value?.type === "success" ? "check_circle" : "info";
+  return displayedAssignmentNotice.value?.type === "success" ? "check_circle" : "info";
 });
 const assignmentNoticeText = computed(() => {
   if (isAssignmentProgressVisible.value) {
     return assignmentProgress.value?.message || "正在准备监考分配...";
   }
-  return assignmentNotice.value?.text || "";
+  return displayedAssignmentNotice.value?.text || "";
 });
-const assignmentNoticeLinkPath = computed(() => assignmentNotice.value?.linkPath || "");
-const assignmentNoticeLinkLabel = computed(() => assignmentNotice.value?.linkLabel || "");
+const assignmentNoticeLinkPath = computed(() => displayedAssignmentNotice.value?.linkPath || "");
+const assignmentNoticeLinkLabel = computed(() => displayedAssignmentNotice.value?.linkLabel || "");
 
 watch(
   () => store.viewState.invigilationConfig,
@@ -640,18 +630,6 @@ watch(showOnlyMiddleManagerExceptions, () => {
 watch(middleManagerKeyword, () => {
   middleManagerPage.value = 1;
 });
-
-function hideTeacherMenu() {
-  window.setTimeout(() => {
-    showTeacherMenu.value = false;
-  }, 80);
-}
-
-function hideSessionMenu() {
-  window.setTimeout(() => {
-    showSessionMenu.value = false;
-  }, 80);
-}
 
 function mapClassRowToSelfStudyRow(row: ClassConfigRow): SelfStudyClassRow {
   const persisted = store.viewState.selfStudyClassSubjects.find((item) => item.classId === row.id);
@@ -778,17 +756,13 @@ function closeActiveDrawer() {
   if (middleManagerDrawerOpen.value) closeMiddleManagerDrawer();
 }
 
-function pickTeacher(id: number, name: string) {
-  selectedTeacherId.value = id;
-  teacherKeyword.value = name;
-  showTeacherMenu.value = false;
+function pickTeacher(id: number | "") {
+  selectedTeacherId.value = typeof id === "number" ? id : null;
   void maybeAddExclusion();
 }
 
-function pickSession(sessionId: number, label: string) {
-  selectedSessionId.value = sessionId;
-  sessionKeyword.value = label;
-  showSessionMenu.value = false;
+function pickSession(sessionId: number | "") {
+  selectedSessionId.value = typeof sessionId === "number" ? sessionId : null;
   void maybeAddExclusion();
 }
 
@@ -796,8 +770,6 @@ async function maybeAddExclusion() {
   if (!selectedTeacherId.value || !selectedSessionId.value) return;
   const added = await store.addStaffExclusion(selectedTeacherId.value, selectedSessionId.value);
   if (!added) return;
-  teacherKeyword.value = "";
-  sessionKeyword.value = "";
   selectedTeacherId.value = null;
   selectedSessionId.value = null;
 }
@@ -976,9 +948,22 @@ function exportFileName(path: string) {
   return matched?.[0] ?? path;
 }
 
+function formatSolveDuration(durationMs: number) {
+  const totalSeconds = Math.max(0, Math.round(durationMs / 1000));
+  if (totalSeconds < 60) {
+    return `${totalSeconds} 秒`;
+  }
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  if (seconds === 0) {
+    return `${minutes} 分钟`;
+  }
+  return `${minutes} 分 ${seconds} 秒`;
+}
+
 async function assignTeachers() {
   assignmentNotice.value = null;
-  assignmentProgress.value = {
+  store.setAssignmentProgress({
     status: "running",
     stage: "preparing",
     stageLabel: "准备开始",
@@ -987,7 +972,7 @@ async function assignTeachers() {
     completedSteps: 0,
     totalSteps: 13,
     updatedAt: new Date().toISOString(),
-  };
+  });
   await nextTick();
   assignmentNoticeEl.value?.scrollIntoView({
     behavior: "smooth",
@@ -995,7 +980,7 @@ async function assignTeachers() {
   });
   try {
     const result = await store.assignTeachers();
-    assignmentProgress.value = {
+    store.setAssignmentProgress({
       status: "completed",
       stage: "completed",
       stageLabel: "分配完成",
@@ -1004,7 +989,7 @@ async function assignTeachers() {
       completedSteps: 13,
       totalSteps: 13,
       updatedAt: new Date().toISOString(),
-    };
+    });
     const summary =
       result.optimalityStatus === "optimal"
         ? "CP-SAT 求解完成，已证明最优"
@@ -1021,14 +1006,14 @@ async function assignTeachers() {
             : "求解失败";
     const fallbackPart =
       result.fallbackPoolAssignments > 0
-        ? `，fallback_pool ${result.fallbackPoolAssignments} 项`
+        ? `，其他老师补位 ${result.fallbackPoolAssignments} 项`
         : "";
     await showAssignmentNotice(
       "success",
-      `${summary}：已分配 ${result.assignedCount} 项，未分配 ${result.unassignedCount} 项，${optimality}，耗时 ${result.solveDurationMs} ms${fallbackPart}。`,
+      `${summary}：已分配 ${result.assignedCount} 项，未分配 ${result.unassignedCount} 项，${optimality}，耗时 ${formatSolveDuration(result.solveDurationMs)}${fallbackPart}。`,
     );
   } catch (error) {
-    assignmentProgress.value = null;
+    store.setAssignmentProgress(null);
     const message =
       store.viewState.errorMessage ||
       (error instanceof Error ? error.message : String(error)) ||
@@ -1071,7 +1056,7 @@ function handleGlobalPointerDown(event: MouseEvent) {
 onMounted(async () => {
   document.addEventListener("mousedown", handleGlobalPointerDown);
   removeAssignmentProgressListener = await listen<ExamStaffAssignmentProgress>(staffAssignmentProgressEvent, (event) => {
-    assignmentProgress.value = event.payload;
+    store.setAssignmentProgress(event.payload);
   });
   await store.loadAll();
   await loadSelfStudyClassData();
@@ -1178,6 +1163,21 @@ onBeforeUnmount(() => {
 
 .self-study-card :deep(.body) {
   gap: 12px;
+}
+
+.exclude-card :deep(.config-card) {
+  position: relative;
+  z-index: 80;
+  overflow: visible;
+}
+
+.exclude-card :deep(.body) {
+  overflow: visible;
+}
+
+.exclude-card {
+  position: relative;
+  z-index: 80;
 }
 
 .self-study-card .card-stack {
@@ -1432,6 +1432,8 @@ onBeforeUnmount(() => {
 .exclude-toolbar {
   flex-direction: row;
   flex-wrap: wrap;
+  position: relative;
+  z-index: 90;
 }
 
 .empty-box {
@@ -1500,6 +1502,10 @@ onBeforeUnmount(() => {
   width: 220px;
 }
 
+.fluent-combo.open {
+  z-index: 120;
+}
+
 .fluent-input,
 .toolbar-filter,
 .search-bar {
@@ -1535,7 +1541,7 @@ onBeforeUnmount(() => {
   border-radius: 14px;
   background: rgba(255, 255, 255, 0.98);
   box-shadow: 0 18px 40px rgba(35, 52, 78, 0.16);
-  z-index: 24;
+  z-index: 140;
 }
 
 .fluent-menu {
@@ -1897,6 +1903,19 @@ onBeforeUnmount(() => {
 .assignment-notice-text {
   min-width: 0;
   overflow-wrap: anywhere;
+}
+
+.assignment-notice-link {
+  align-self: flex-start;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--color-brand);
+  font: inherit;
+  font-weight: 700;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
 }
 
 .assignment-progress {

@@ -6,6 +6,7 @@ import type {
   ExamPlanOverview,
   ExamPlanSession,
   ExamPlanSessionDetail,
+  ExamStaffAssignmentProgress,
   ExamSessionTime,
   ExamStaffPlanOverview,
   ExamStaffTask,
@@ -64,6 +65,17 @@ const emptyGenerationProgress: ExamGenerationProgress = {
   updatedAt: "",
 };
 
+const emptyStaffAssignmentProgress: ExamStaffAssignmentProgress = {
+  status: "running",
+  stage: "preparing",
+  stageLabel: "准备开始",
+  percent: 0,
+  message: "正在准备监考分配...",
+  completedSteps: 0,
+  totalSteps: 13,
+  updatedAt: "",
+};
+
 const defaultInvigilationConfig: InvigilationConfig = {
   defaultExamRoomRequiredCount: 1,
   indoorAllowancePerMinute: 0.5,
@@ -112,9 +124,10 @@ export function createExamAllocationStore(service: ExamAllocationService = examA
     selfStudyClassSubjects: [] as Array<{ classId: number; subject: Subject | null }>,
     exclusionSessionOptions: [] as InvigilationExclusionSessionOption[],
     teachers: [] as TeacherRow[],
-    lastExportZipPath: "",
+    lastExportFolderPath: "",
     lastInvigilationExportPath: "",
     generationProgress: { ...emptyGenerationProgress } as ExamGenerationProgress,
+    assignmentProgress: null as ExamStaffAssignmentProgress | null,
   });
   let progressPollTimer: number | null = null;
 
@@ -247,7 +260,7 @@ export function createExamAllocationStore(service: ExamAllocationService = examA
     state.errorMessage = "";
     try {
       const result = await service.exportLatestExamAllocationBundle();
-      state.lastExportZipPath = result.zipPath;
+      state.lastExportFolderPath = result.folderPath;
       return result;
     } catch (error) {
       state.errorMessage = error instanceof Error ? error.message : String(error);
@@ -278,7 +291,7 @@ export function createExamAllocationStore(service: ExamAllocationService = examA
   async function generate() {
     state.generating = true;
     state.errorMessage = "";
-    state.lastExportZipPath = "";
+    state.lastExportFolderPath = "";
     try {
       await refreshGenerationProgress();
       startProgressPolling();
@@ -453,6 +466,10 @@ export function createExamAllocationStore(service: ExamAllocationService = examA
     }
   }
 
+  function setAssignmentProgress(progress: ExamStaffAssignmentProgress | null) {
+    state.assignmentProgress = progress;
+  }
+
   async function saveInvigilationConfig(payload?: Partial<InvigilationConfig>) {
     const next = { ...state.invigilationConfig, ...payload };
     state.invigilationConfig = {
@@ -550,9 +567,10 @@ export function createExamAllocationStore(service: ExamAllocationService = examA
         label: item.label,
       })),
       teachers: state.teachers,
-      lastExportZipPath: state.lastExportZipPath,
+      lastExportFolderPath: state.lastExportFolderPath,
       lastInvigilationExportPath: state.lastInvigilationExportPath,
       generationProgress: state.generationProgress,
+      assignmentProgress: state.assignmentProgress,
     })),
   );
 
@@ -573,6 +591,7 @@ export function createExamAllocationStore(service: ExamAllocationService = examA
     removeStaffExclusion,
     saveSelfStudyClassSubjects,
     refreshGenerationProgress,
+    setAssignmentProgress,
     get viewState() {
       return viewState.value;
     },

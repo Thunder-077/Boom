@@ -2075,7 +2075,7 @@ mod tests {
             space_name: "高一1场".to_string(),
             original_class_name: Some("高一1班".to_string()),
             self_study_topic: None,
-            building: "教学楼A".to_string(),
+            building: "向远楼".to_string(),
             floor: "3层".to_string(),
             capacity: None,
             sort_index: 1,
@@ -2083,12 +2083,12 @@ mod tests {
         let exam_rooms = vec![
             ExamRoomResource {
                 room_name: "高一5场".to_string(),
-                building: "教学楼A".to_string(),
+                building: "向远楼".to_string(),
                 floor: "5层".to_string(),
             },
             ExamRoomResource {
                 room_name: "高一6场".to_string(),
-                building: "教学楼A".to_string(),
+                building: "向远楼".to_string(),
                 floor: "5层".to_string(),
             },
         ];
@@ -2126,14 +2126,14 @@ mod tests {
             space_name: "高一1场".to_string(),
             original_class_name: Some("高一1班".to_string()),
             self_study_topic: None,
-            building: "教学楼A".to_string(),
+            building: "向远楼".to_string(),
             floor: "3层".to_string(),
             capacity: None,
             sort_index: 1,
         }];
         let exam_rooms = vec![ExamRoomResource {
             room_name: "高一5场".to_string(),
-            building: "教学楼A".to_string(),
+            building: "向远楼".to_string(),
             floor: "5层".to_string(),
         }];
 
