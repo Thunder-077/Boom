@@ -513,22 +513,19 @@ const selfStudySummaryText = computed(() => {
 const staffSolverSummary = computed(() => {
   const overview = store.viewState.staffOverview;
   if (!overview.generatedAt) return "";
-  const solverLabel = overview.solverEngine === "cp_sat" ? "CP-SAT 已接管" : "使用基线分配";
   const statusLabel =
     overview.optimalityStatus === "optimal"
       ? "已证明最优"
       : overview.optimalityStatus === "feasible"
-        ? "更优可行解"
+        ? "当前可行解"
         : overview.optimalityStatus === "infeasible"
-          ? "求解不可行，已回退"
-          : overview.optimalityStatus === "error"
-            ? "求解异常，已回退"
-            : "未优于基线";
+          ? "模型不可行"
+          : "求解失败";
   const fallbackSummary =
     overview.fallbackPoolAssignments > 0
       ? `，fallback_pool ${overview.fallbackPoolAssignments} 项`
       : "";
-  return `${solverLabel}，${statusLabel}，耗时 ${overview.solveDurationMs} ms${fallbackSummary}`;
+  return `CP-SAT，${statusLabel}，耗时 ${overview.solveDurationMs} ms${fallbackSummary}`;
 });
 const filteredMiddleManagerTeachers = computed(() => {
   const keyword = middleManagerKeyword.value.trim();
@@ -934,15 +931,19 @@ async function assignTeachers() {
   try {
     const result = await store.assignTeachers();
     const summary =
-      result.solverEngine === "cp_sat" && result.baselineDominated
-        ? "CP-SAT 求解完成，并优于基线"
-        : "CP-SAT 未优于基线，已采用快速分配结果";
+      result.optimalityStatus === "optimal"
+        ? "CP-SAT 求解完成，已证明最优"
+        : result.fallbackReason
+          ? "CP-SAT 提前结束，已保留当前最好可行解"
+          : "CP-SAT 求解完成，已生成可行解";
     const optimality =
       result.optimalityStatus === "optimal"
         ? "已证明最优"
-        : result.solverEngine === "cp_sat"
-          ? "当前为可行更优解"
-          : "基线结果";
+        : result.optimalityStatus === "feasible"
+          ? "当前可行解"
+          : result.optimalityStatus === "infeasible"
+            ? "模型不可行"
+            : "求解失败";
     const fallbackPart =
       result.fallbackPoolAssignments > 0
         ? `，fallback_pool ${result.fallbackPoolAssignments} 项`

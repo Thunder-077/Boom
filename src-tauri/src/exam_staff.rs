@@ -1,5 +1,5 @@
-use std::cmp::{Ordering, Reverse};
 use std::collections::{HashMap, HashSet};
+use std::path::Path;
 use std::time::Instant;
 
 use chrono::{DateTime, NaiveDateTime, Timelike, Utc};
@@ -10,6 +10,7 @@ use rusqlite::{params, params_from_iter, Connection};
 use serde::{Deserialize, Serialize};
 use tauri::AppHandle;
 
+use crate::app_log;
 use crate::exam_allocation::{self, SuccessResponse};
 use crate::score::{self, AppError, ListResult, Subject};
 
@@ -122,21 +123,18 @@ impl AssignmentTier {
 #[serde(rename_all = "snake_case")]
 pub enum SolverEngine {
     CpSat,
-    Greedy,
 }
 
 impl SolverEngine {
     fn as_key(self) -> &'static str {
         match self {
             Self::CpSat => "cp_sat",
-            Self::Greedy => "greedy",
         }
     }
 
     fn from_key(key: &str) -> Option<Self> {
         match key {
             "cp_sat" => Some(Self::CpSat),
-            "greedy" => Some(Self::Greedy),
             _ => None,
         }
     }
@@ -147,7 +145,6 @@ impl SolverEngine {
 pub enum OptimalityStatus {
     Optimal,
     Feasible,
-    Fallback,
     Infeasible,
     Error,
 }
@@ -157,7 +154,6 @@ impl OptimalityStatus {
         match self {
             Self::Optimal => "optimal",
             Self::Feasible => "feasible",
-            Self::Fallback => "fallback",
             Self::Infeasible => "infeasible",
             Self::Error => "error",
         }
@@ -167,7 +163,6 @@ impl OptimalityStatus {
         match key {
             "optimal" => Some(Self::Optimal),
             "feasible" => Some(Self::Feasible),
-            "fallback" => Some(Self::Fallback),
             "infeasible" => Some(Self::Infeasible),
             "error" => Some(Self::Error),
             _ => None,
@@ -182,7 +177,6 @@ pub enum FallbackReason {
     Unknown,
     Infeasible,
     Error,
-    NotBetterThanBaseline,
 }
 
 impl FallbackReason {
@@ -192,7 +186,6 @@ impl FallbackReason {
             Self::Unknown => "unknown",
             Self::Infeasible => "infeasible",
             Self::Error => "error",
-            Self::NotBetterThanBaseline => "not_better_than_baseline",
         }
     }
 
@@ -202,7 +195,6 @@ impl FallbackReason {
             "unknown" => Some(Self::Unknown),
             "infeasible" => Some(Self::Infeasible),
             "error" => Some(Self::Error),
-            "not_better_than_baseline" => Some(Self::NotBetterThanBaseline),
             _ => None,
         }
     }
@@ -241,7 +233,6 @@ pub struct GenerateLatestExamStaffPlanResult {
     solve_duration_ms: i64,
     fallback_reason: Option<FallbackReason>,
     fallback_pool_assignments: i64,
-    baseline_dominated: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -259,7 +250,6 @@ pub struct ExamStaffPlanOverview {
     solve_duration_ms: i64,
     fallback_reason: Option<FallbackReason>,
     fallback_pool_assignments: i64,
-    baseline_dominated: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -433,20 +423,6 @@ struct DayHalfLoad {
 }
 
 impl DayHalfLoad {
-    fn same_period_count(&self, half_day: HalfDay) -> i64 {
-        match half_day {
-            HalfDay::Morning => self.morning_tasks,
-            HalfDay::Afternoon => self.afternoon_tasks,
-        }
-    }
-
-    fn other_period_count(&self, half_day: HalfDay) -> i64 {
-        match half_day {
-            HalfDay::Morning => self.afternoon_tasks,
-            HalfDay::Afternoon => self.morning_tasks,
-        }
-    }
-
     fn add_task(&mut self, half_day: HalfDay) {
         match half_day {
             HalfDay::Morning => self.morning_tasks += 1,
@@ -502,14 +478,6 @@ struct TaskCandidate {
 #[derive(Debug, Clone)]
 struct TaskCandidateSummary {
     candidates: Vec<TaskCandidate>,
-    empty_reason: Option<String>,
-}
-
-#[derive(Debug, Clone)]
-struct TaskDecision {
-    teacher_id: Option<i64>,
-    reason: Option<String>,
-    assignment_tier: Option<AssignmentTier>,
 }
 
 #[derive(Debug, Clone)]
@@ -533,25 +501,6 @@ struct PlanMetrics {
     warning_count: i64,
 }
 
-impl PlanMetrics {
-    fn cmp_lex(&self, other: &Self) -> Ordering {
-        (
-            self.unassigned_count,
-            self.fallback_pool_assignments,
-            self.homeroom_assignments,
-            self.weighted_load_gap,
-            self.cross_half_day_penalty,
-        )
-            .cmp(&(
-                other.unassigned_count,
-                other.fallback_pool_assignments,
-                other.homeroom_assignments,
-                other.weighted_load_gap,
-                other.cross_half_day_penalty,
-            ))
-    }
-}
-
 #[derive(Debug, Clone)]
 struct SolvedPlan {
     records: Vec<SolvedTaskRecord>,
@@ -561,13 +510,13 @@ struct SolvedPlan {
     optimality_status: OptimalityStatus,
     solve_duration_ms: i64,
     fallback_reason: Option<FallbackReason>,
-    baseline_dominated: bool,
 }
 
 #[derive(Debug, Clone)]
 struct CpSatAttempt {
     plan: Option<SolvedPlan>,
     fallback_reason: Option<FallbackReason>,
+    diagnostic_message: Option<String>,
     solve_duration_ms: i64,
 }
 
@@ -1088,13 +1037,6 @@ fn overlap(a_start: i64, a_end: i64, b_start: i64, b_end: i64) -> bool {
     a_start < b_end && b_start < a_end
 }
 
-fn is_teacher_available(state: &TeacherRuntimeState, start_ts: i64, end_ts: i64) -> bool {
-    !state
-        .busy_ranges
-        .iter()
-        .any(|(busy_start, busy_end)| overlap(*busy_start, *busy_end, start_ts, end_ts))
-}
-
 fn build_priority_subject_chain(
     current: &SessionTimeRuntime,
     class_name: &str,
@@ -1126,128 +1068,6 @@ fn build_priority_subject_chain(
     chain
 }
 
-fn current_self_study_surplus(state: &TeacherRuntimeState) -> i64 {
-    state.self_study_task_count - (state.exam_room_task_count + state.floor_rover_task_count)
-}
-
-fn projected_self_study_surplus(state: &TeacherRuntimeState, role: StaffRole) -> i64 {
-    match role {
-        StaffRole::SelfStudySupervisor => {
-            state.self_study_task_count + 1
-                - (state.exam_room_task_count + state.floor_rover_task_count)
-        }
-        StaffRole::ExamRoomInvigilator => {
-            state.self_study_task_count
-                - (state.exam_room_task_count + 1 + state.floor_rover_task_count)
-        }
-        StaffRole::FloorRover => {
-            state.self_study_task_count
-                - (state.exam_room_task_count + state.floor_rover_task_count + 1)
-        }
-    }
-}
-
-fn projected_weighted_minutes(state: &TeacherRuntimeState, task: &TaskBuild) -> i64 {
-    state.weighted_minutes + task.duration_minutes * role_effort_weight(task.role)
-}
-
-fn projected_total_minutes(state: &TeacherRuntimeState, task: &TaskBuild) -> i64 {
-    state.total_minutes + task.duration_minutes
-}
-
-fn period_spread_penalty(state: &TeacherRuntimeState, task: &TaskBuild) -> i32 {
-    let Some(day_load) = state.day_half_loads.get(&task.day_key) else {
-        return 0;
-    };
-    if day_load.same_period_count(task.half_day) == 0
-        && day_load.other_period_count(task.half_day) > 0
-    {
-        1
-    } else {
-        0
-    }
-}
-
-fn same_period_task_count(state: &TeacherRuntimeState, task: &TaskBuild) -> i64 {
-    state
-        .day_half_loads
-        .get(&task.day_key)
-        .map(|day_load| day_load.same_period_count(task.half_day))
-        .unwrap_or(0)
-}
-
-fn choose_teacher_from_candidates(
-    task: &TaskBuild,
-    teachers: &[TeacherInfo],
-    candidate_ids: &[i64],
-    runtime: &HashMap<i64, TeacherRuntimeState>,
-) -> Option<i64> {
-    let teacher_by_id: HashMap<i64, &TeacherInfo> = teachers
-        .iter()
-        .map(|teacher| (teacher.id, teacher))
-        .collect();
-    let mut sorted = candidate_ids.to_vec();
-    sorted.sort_by(|a, b| {
-        let a_state = runtime.get(a).cloned().unwrap_or_default();
-        let b_state = runtime.get(b).cloned().unwrap_or_default();
-        match task.role {
-            StaffRole::SelfStudySupervisor => (
-                period_spread_penalty(&a_state, task),
-                Reverse(same_period_task_count(&a_state, task)),
-                projected_self_study_surplus(&a_state, task.role).max(0),
-                projected_weighted_minutes(&a_state, task),
-                projected_total_minutes(&a_state, task),
-                a_state.self_study_task_count,
-                a_state.task_count,
-                *a,
-            )
-                .cmp(&(
-                    period_spread_penalty(&b_state, task),
-                    Reverse(same_period_task_count(&b_state, task)),
-                    projected_self_study_surplus(&b_state, task.role).max(0),
-                    projected_weighted_minutes(&b_state, task),
-                    projected_total_minutes(&b_state, task),
-                    b_state.self_study_task_count,
-                    b_state.task_count,
-                    *b,
-                )),
-            StaffRole::ExamRoomInvigilator | StaffRole::FloorRover => (
-                period_spread_penalty(&a_state, task),
-                if current_self_study_surplus(&a_state) > 0 {
-                    0
-                } else {
-                    1
-                },
-                Reverse(current_self_study_surplus(&a_state).max(0)),
-                Reverse(same_period_task_count(&a_state, task)),
-                projected_weighted_minutes(&a_state, task),
-                projected_total_minutes(&a_state, task),
-                a_state.exam_room_task_count + a_state.floor_rover_task_count,
-                a_state.task_count,
-                *a,
-            )
-                .cmp(&(
-                    period_spread_penalty(&b_state, task),
-                    if current_self_study_surplus(&b_state) > 0 {
-                        0
-                    } else {
-                        1
-                    },
-                    Reverse(current_self_study_surplus(&b_state).max(0)),
-                    Reverse(same_period_task_count(&b_state, task)),
-                    projected_weighted_minutes(&b_state, task),
-                    projected_total_minutes(&b_state, task),
-                    b_state.exam_room_task_count + b_state.floor_rover_task_count,
-                    b_state.task_count,
-                    *b,
-                )),
-        }
-    });
-    sorted
-        .into_iter()
-        .find(|teacher_id| teacher_by_id.contains_key(teacher_id))
-}
-
 fn build_task_candidate_summary(
     task: &TaskBuild,
     teachers: &[TeacherInfo],
@@ -1269,7 +1089,6 @@ fn build_task_candidate_summary(
     if active_teachers.is_empty() {
         return TaskCandidateSummary {
             candidates: Vec::new(),
-            empty_reason: Some("no_available_teacher".to_string()),
         };
     }
 
@@ -1284,7 +1103,6 @@ fn build_task_candidate_summary(
             .collect();
         return TaskCandidateSummary {
             candidates,
-            empty_reason: Some("subject_conflict".to_string()),
         };
     }
 
@@ -1327,7 +1145,6 @@ fn build_task_candidate_summary(
         }
         return TaskCandidateSummary {
             candidates,
-            empty_reason: Some("no_available_teacher".to_string()),
         };
     }
 
@@ -1339,101 +1156,7 @@ fn build_task_candidate_summary(
                 assignment_tier: None,
             })
             .collect(),
-        empty_reason: Some("no_available_teacher".to_string()),
     }
-}
-
-fn choose_teacher_decision_for_task(
-    task: &TaskBuild,
-    teachers: &[TeacherInfo],
-    runtime: &HashMap<i64, TeacherRuntimeState>,
-    exclusion_pairs: &HashSet<(i64, i64)>,
-    config: &RuntimeInvigilationConfig,
-) -> TaskDecision {
-    let summary = build_task_candidate_summary(task, teachers, exclusion_pairs, config);
-    if summary.candidates.is_empty() {
-        return TaskDecision {
-            teacher_id: None,
-            reason: summary.empty_reason,
-            assignment_tier: None,
-        };
-    }
-
-    let available_candidates: Vec<&TaskCandidate> = summary
-        .candidates
-        .iter()
-        .filter(|candidate| {
-            let state = runtime
-                .get(&candidate.teacher_id)
-                .cloned()
-                .unwrap_or_default();
-            is_teacher_available(&state, task.start_ts, task.end_ts)
-        })
-        .collect();
-    if available_candidates.is_empty() {
-        return TaskDecision {
-            teacher_id: None,
-            reason: Some("time_conflict".to_string()),
-            assignment_tier: None,
-        };
-    }
-
-    if task.role == StaffRole::SelfStudySupervisor {
-        for tier in [
-            AssignmentTier::Primary,
-            AssignmentTier::Homeroom,
-            AssignmentTier::FallbackPool,
-        ] {
-            let candidate_ids: Vec<i64> = available_candidates
-                .iter()
-                .filter(|candidate| candidate.assignment_tier == Some(tier))
-                .map(|candidate| candidate.teacher_id)
-                .collect();
-            if candidate_ids.is_empty() {
-                continue;
-            }
-            let teacher_id =
-                choose_teacher_from_candidates(task, teachers, &candidate_ids, runtime);
-            return TaskDecision {
-                teacher_id,
-                reason: None,
-                assignment_tier: Some(tier),
-            };
-        }
-    }
-
-    let candidate_ids: Vec<i64> = available_candidates
-        .iter()
-        .map(|candidate| candidate.teacher_id)
-        .collect();
-    let teacher_id = choose_teacher_from_candidates(task, teachers, &candidate_ids, runtime);
-    if teacher_id.is_some() {
-        TaskDecision {
-            teacher_id,
-            reason: None,
-            assignment_tier: None,
-        }
-    } else {
-        TaskDecision {
-            teacher_id: None,
-            reason: summary.empty_reason,
-            assignment_tier: None,
-        }
-    }
-}
-
-#[cfg_attr(not(test), allow(dead_code))]
-fn choose_teacher_for_task(
-    task: &TaskBuild,
-    teachers: &[TeacherInfo],
-    runtime: &HashMap<i64, TeacherRuntimeState>,
-    _self_study_class_name: Option<&str>,
-    exclusion_pairs: &HashSet<(i64, i64)>,
-    config: &RuntimeInvigilationConfig,
-) -> (Option<i64>, Option<String>) {
-    let decision =
-        choose_teacher_decision_for_task(task, teachers, runtime, exclusion_pairs, config);
-    (decision.teacher_id, decision.reason)
 }
 
 fn clear_latest_staff_plan(tx: &rusqlite::Transaction<'_>) -> Result<(), AppError> {
@@ -1804,58 +1527,6 @@ fn apply_allowance_totals(
     }
 }
 
-fn solve_greedy_baseline(
-    tasks: &[TaskBuild],
-    teachers: &[TeacherInfo],
-    exclusion_pairs: &HashSet<(i64, i64)>,
-    invigilation_config: &RuntimeInvigilationConfig,
-) -> SolvedPlan {
-    let mut runtime = initial_runtime_by_teacher(teachers);
-    let mut records = Vec::<SolvedTaskRecord>::new();
-
-    for task in tasks {
-        let decision = choose_teacher_decision_for_task(
-            task,
-            teachers,
-            &runtime,
-            exclusion_pairs,
-            invigilation_config,
-        );
-        let allowance_amount = if decision.teacher_id.is_some() {
-            round_to_two(
-                (task.duration_minutes as f64)
-                    * allowance_rate_for_role(invigilation_config, task.role),
-            )
-        } else {
-            0.0
-        };
-        if let Some(teacher_id) = decision.teacher_id {
-            if let Some(state) = runtime.get_mut(&teacher_id) {
-                apply_assignment_to_runtime(state, task);
-                apply_allowance_totals(state, task, allowance_amount);
-            }
-        }
-        records.push(SolvedTaskRecord {
-            task: task.clone(),
-            teacher_id: decision.teacher_id,
-            reason: decision.reason,
-            assignment_tier: decision.assignment_tier,
-            allowance_amount,
-        });
-    }
-
-    SolvedPlan {
-        metrics: compute_plan_metrics(teachers, &runtime, &records),
-        records,
-        runtime,
-        solver_engine: SolverEngine::Greedy,
-        optimality_status: OptimalityStatus::Fallback,
-        solve_duration_ms: 0,
-        fallback_reason: None,
-        baseline_dominated: false,
-    }
-}
-
 fn cp_sat_time_limit_params(remaining_ms: i64) -> SatParameters {
     let mut params = SatParameters::default();
     params.max_time_in_seconds = Some((remaining_ms.max(1) as f64) / 1000.0);
@@ -1897,6 +1568,18 @@ fn cp_sat_response_kind(
         }
         CpSolverStatus::ModelInvalid => Err(FallbackReason::Error),
     }
+}
+
+fn cp_sat_diagnostic_message(response: &CpSolverResponse) -> Option<String> {
+    let info = response.solution_info.trim();
+    if !info.is_empty() {
+        return Some(info.to_string());
+    }
+    let log = response.solve_log.trim();
+    if !log.is_empty() {
+        return Some(log.to_string());
+    }
+    None
 }
 
 fn build_cp_sat_plan_from_response(
@@ -1962,7 +1645,6 @@ fn build_cp_sat_plan_from_response(
         optimality_status,
         solve_duration_ms,
         fallback_reason: None,
-        baseline_dominated: true,
     }
 }
 
@@ -1971,7 +1653,6 @@ fn solve_with_cp_sat(
     teachers: &[TeacherInfo],
     exclusion_pairs: &HashSet<(i64, i64)>,
     invigilation_config: &RuntimeInvigilationConfig,
-    baseline: &SolvedPlan,
 ) -> CpSatAttempt {
     let started_at = Instant::now();
     let candidate_summaries: Vec<TaskCandidateSummary> = tasks
@@ -2022,20 +1703,10 @@ fn solve_with_cp_sat(
             if candidate.assignment_tier == Some(AssignmentTier::Homeroom) {
                 homeroom_expr += var;
             }
-            let is_hint = baseline.records[task_index].teacher_id == Some(candidate.teacher_id);
-            model.add_hint(var, if is_hint { 1 } else { 0 });
             bindings_for_task.push((var, candidate.clone()));
         }
 
         let unassigned = model.new_bool_var_with_name(format!("unassigned_t{task_index}"));
-        model.add_hint(
-            unassigned,
-            if baseline.records[task_index].teacher_id.is_none() {
-                1
-            } else {
-                0
-            },
-        );
         exact_one_vars.push(unassigned);
         model.add_exactly_one(exact_one_vars);
         unassigned_expr += unassigned;
@@ -2148,20 +1819,25 @@ fn solve_with_cp_sat(
     let base_proto = model.into_proto();
     let mut fixed_objectives = Vec::<(LinearExpr, i64)>::new();
     let stage_objectives = vec![
-        unassigned_expr.clone(),
-        fallback_expr.clone(),
-        homeroom_expr.clone(),
-        LinearExpr::from(weighted_gap),
-        cross_penalty_expr.clone(),
+        ("unassigned_count", unassigned_expr.clone()),
+        ("fallback_pool_assignments", fallback_expr.clone()),
+        ("homeroom_assignments", homeroom_expr.clone()),
+        ("weighted_load_gap", LinearExpr::from(weighted_gap)),
+        ("cross_half_day_penalty", cross_penalty_expr.clone()),
     ];
 
     let mut last_successful: Option<(CpSolverResponse, OptimalityStatus)> = None;
-    for objective in stage_objectives {
+    for (stage_index, (stage_name, objective)) in stage_objectives.into_iter().enumerate() {
         let elapsed_ms = started_at.elapsed().as_millis() as i64;
         if elapsed_ms >= 60_000 {
             return CpSatAttempt {
                 plan: None,
                 fallback_reason: Some(FallbackReason::Timeout),
+                diagnostic_message: Some(format!(
+                    "CP-SAT 在第 {} 阶段（{}）达到 60000ms 时限",
+                    stage_index + 1,
+                    stage_name
+                )),
                 solve_duration_ms: elapsed_ms,
             };
         }
@@ -2174,6 +1850,14 @@ fn solve_with_cp_sat(
         let stage_elapsed_ms = started_at.elapsed().as_millis() as i64;
         let Ok(optimality_status) = cp_sat_response_kind(&response, stage_elapsed_ms) else {
             let fallback_reason = cp_sat_response_kind(&response, stage_elapsed_ms).err();
+            let diagnostic_message = cp_sat_diagnostic_message(&response).map(|detail| {
+                format!(
+                    "CP-SAT 第 {} 阶段（{}）失败：{}",
+                    stage_index + 1,
+                    stage_name,
+                    detail
+                )
+            });
             if let Some((best_response, best_status)) = last_successful {
                 let plan = build_cp_sat_plan_from_response(
                     tasks,
@@ -2188,12 +1872,14 @@ fn solve_with_cp_sat(
                 return CpSatAttempt {
                     plan: Some(plan),
                     fallback_reason,
+                    diagnostic_message,
                     solve_duration_ms: stage_elapsed_ms,
                 };
             }
             return CpSatAttempt {
                 plan: None,
                 fallback_reason,
+                diagnostic_message,
                 solve_duration_ms: stage_elapsed_ms,
             };
         };
@@ -2217,6 +1903,7 @@ fn solve_with_cp_sat(
         return CpSatAttempt {
             plan: Some(plan),
             fallback_reason: None,
+            diagnostic_message: None,
             solve_duration_ms: elapsed_ms,
         };
     }
@@ -2224,6 +1911,7 @@ fn solve_with_cp_sat(
     CpSatAttempt {
         plan: None,
         fallback_reason: Some(FallbackReason::Unknown),
+        diagnostic_message: Some("CP-SAT 未返回可用结果".to_string()),
         solve_duration_ms: elapsed_ms,
     }
 }
@@ -2312,7 +2000,7 @@ fn persist_solved_plan(
     }
 
     tx.execute(
-        "INSERT INTO latest_exam_staff_plan_meta (id, generated_at, session_count, task_count, assigned_count, unassigned_count, warning_count, imbalance_minutes, solver_engine, optimality_status, solve_duration_ms, fallback_reason, fallback_pool_assignments, baseline_dominated) VALUES (1, ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
+        "INSERT INTO latest_exam_staff_plan_meta (id, generated_at, session_count, task_count, assigned_count, unassigned_count, warning_count, imbalance_minutes, solver_engine, optimality_status, solve_duration_ms, fallback_reason, fallback_pool_assignments) VALUES (1, ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
         params![
             generated_at,
             session_count,
@@ -2325,8 +2013,7 @@ fn persist_solved_plan(
             plan.optimality_status.as_key(),
             plan.solve_duration_ms,
             plan.fallback_reason.map(|reason| reason.as_key().to_string()),
-            plan.metrics.fallback_pool_assignments,
-            if plan.baseline_dominated { 1_i64 } else { 0_i64 }
+            plan.metrics.fallback_pool_assignments
         ],
     )?;
     tx.commit()?;
@@ -2343,14 +2030,83 @@ fn persist_solved_plan(
         solve_duration_ms: plan.solve_duration_ms,
         fallback_reason: plan.fallback_reason,
         fallback_pool_assignments: plan.metrics.fallback_pool_assignments,
-        baseline_dominated: plan.baseline_dominated,
     })
+}
+
+fn format_metrics_for_log(metrics: &PlanMetrics) -> String {
+    format!(
+        "assigned={}, unassigned={}, fallback_pool={}, homeroom={}, weighted_gap={}, cross_half_day={}, imbalance={}",
+        metrics.assigned_count,
+        metrics.unassigned_count,
+        metrics.fallback_pool_assignments,
+        metrics.homeroom_assignments,
+        metrics.weighted_load_gap,
+        metrics.cross_half_day_penalty,
+        metrics.imbalance_minutes
+    )
+}
+
+fn log_solver_outcome(
+    log_path: Option<&Path>,
+    cp_sat_attempt: &CpSatAttempt,
+    final_plan: Option<&SolvedPlan>,
+) {
+    let Some(log_path) = log_path else {
+        return;
+    };
+
+    let scope = "exam_staff.solve";
+    let diagnostic = cp_sat_attempt
+        .diagnostic_message
+        .as_deref()
+        .unwrap_or("无额外诊断信息");
+
+    if let Some(final_plan) = final_plan {
+        let level = match final_plan.fallback_reason {
+            Some(FallbackReason::Error) => "warn",
+            Some(FallbackReason::Timeout)
+            | Some(FallbackReason::Unknown)
+            | Some(FallbackReason::Infeasible) => "warn",
+            _ => "info",
+        };
+        let reason = final_plan
+            .fallback_reason
+            .map(|item| item.as_key().to_string())
+            .unwrap_or_else(|| "completed".to_string());
+        let message = format!(
+            "采用 CP-SAT 结果。reason={}, solve_duration_ms={}, final={}, detail={}",
+            reason,
+            final_plan.solve_duration_ms,
+            format_metrics_for_log(&final_plan.metrics),
+            diagnostic
+        );
+        let _ = app_log::append_log_to_path(log_path, level, scope, &message);
+        return;
+    }
+
+    let level = match cp_sat_attempt.fallback_reason {
+        Some(FallbackReason::Error) => "error",
+        Some(FallbackReason::Timeout)
+        | Some(FallbackReason::Unknown)
+        | Some(FallbackReason::Infeasible) => "warn",
+        _ => "error",
+    };
+    let reason = cp_sat_attempt
+        .fallback_reason
+        .map(|item| item.as_key().to_string())
+        .unwrap_or_else(|| "unknown".to_string());
+    let message = format!(
+        "CP-SAT 未生成可用结果。reason={}, solve_duration_ms={}, detail={}",
+        reason, cp_sat_attempt.solve_duration_ms, diagnostic
+    );
+    let _ = app_log::append_log_to_path(log_path, level, scope, &message);
 }
 
 fn generate_latest_exam_staff_plan_internal(
     conn: &mut Connection,
     invigilation_config: RuntimeInvigilationConfig,
     exclusion_pairs: HashSet<(i64, i64)>,
+    log_path: Option<&Path>,
 ) -> Result<GenerateLatestExamStaffPlanResult, AppError> {
     let session_times = load_session_times_runtime(conn)?;
     let teachers = load_teacher_pool(conn)?;
@@ -2364,40 +2120,31 @@ fn generate_latest_exam_staff_plan_internal(
         &teaching_classes,
     )?;
 
-    let baseline = solve_greedy_baseline(&tasks, &teachers, &exclusion_pairs, &invigilation_config);
     let cp_sat_attempt = solve_with_cp_sat(
         &tasks,
         &teachers,
         &exclusion_pairs,
         &invigilation_config,
-        &baseline,
     );
 
-    let mut final_plan = baseline.clone();
+    let Some(mut final_plan) = cp_sat_attempt.plan.clone() else {
+        log_solver_outcome(log_path, &cp_sat_attempt, None);
+        return Err(AppError::new(
+            cp_sat_attempt
+                .diagnostic_message
+                .clone()
+                .unwrap_or_else(|| "CP-SAT 未生成可用结果".to_string()),
+        ));
+    };
+
     final_plan.solve_duration_ms = cp_sat_attempt.solve_duration_ms;
-    match cp_sat_attempt.plan {
-        Some(mut cp_sat_plan)
-            if cp_sat_plan.metrics.cmp_lex(&baseline.metrics) == Ordering::Less =>
-        {
-            cp_sat_plan.solve_duration_ms = cp_sat_attempt.solve_duration_ms;
-            cp_sat_plan.fallback_reason = None;
-            cp_sat_plan.baseline_dominated = true;
-            final_plan = cp_sat_plan;
-        }
-        _ => {
-            final_plan.solver_engine = SolverEngine::Greedy;
-            final_plan.optimality_status = match cp_sat_attempt.fallback_reason {
-                Some(FallbackReason::Infeasible) => OptimalityStatus::Infeasible,
-                Some(FallbackReason::Error) => OptimalityStatus::Error,
-                _ => OptimalityStatus::Fallback,
-            };
-            final_plan.fallback_reason = cp_sat_attempt
-                .fallback_reason
-                .or(Some(FallbackReason::NotBetterThanBaseline));
-            final_plan.baseline_dominated = false;
-            final_plan.solve_duration_ms = cp_sat_attempt.solve_duration_ms;
-        }
+    final_plan.solver_engine = SolverEngine::CpSat;
+    final_plan.fallback_reason = cp_sat_attempt.fallback_reason;
+    if final_plan.fallback_reason.is_some() {
+        final_plan.optimality_status = OptimalityStatus::Feasible;
     }
+
+    log_solver_outcome(log_path, &cp_sat_attempt, Some(&final_plan));
 
     persist_solved_plan(conn, session_times.len() as i64, &teachers, &final_plan)
 }
@@ -2504,6 +2251,7 @@ pub fn generate_latest_exam_staff_plan(
     let result = (|| -> Result<GenerateLatestExamStaffPlanResult, AppError> {
         let mut conn = score::open_connection(&app)?;
         exam_allocation::ensure_schema(&conn)?;
+        let log_path = app_log::log_path(&app).ok();
         let mut config = build_config_from_payload(&payload);
         hydrate_runtime_middle_manager_config(&conn, &mut config)?;
         config.self_study_class_subjects = load_self_study_class_subjects(&conn)?;
@@ -2513,7 +2261,12 @@ pub fn generate_latest_exam_staff_plan(
             .filter(|item| item.teacher_id > 0 && item.session_id > 0)
             .map(|item| (item.teacher_id, item.session_id))
             .collect::<HashSet<_>>();
-        generate_latest_exam_staff_plan_internal(&mut conn, config, exclusion_pairs)
+        generate_latest_exam_staff_plan_internal(
+            &mut conn,
+            config,
+            exclusion_pairs,
+            log_path.as_deref(),
+        )
     })();
     result.map_err(|error| error.to_string())
 }
@@ -2801,10 +2554,9 @@ pub fn get_latest_exam_staff_plan_overview(
             i64,
             Option<String>,
             i64,
-            i64,
         )> = conn
             .query_row(
-                "SELECT generated_at, session_count, task_count, assigned_count, unassigned_count, warning_count, imbalance_minutes, solver_engine, optimality_status, solve_duration_ms, fallback_reason, fallback_pool_assignments, baseline_dominated FROM latest_exam_staff_plan_meta WHERE id = 1",
+                "SELECT generated_at, session_count, task_count, assigned_count, unassigned_count, warning_count, imbalance_minutes, solver_engine, optimality_status, solve_duration_ms, fallback_reason, fallback_pool_assignments FROM latest_exam_staff_plan_meta WHERE id = 1",
                 [],
                 |row| {
                     Ok((
@@ -2820,7 +2572,6 @@ pub fn get_latest_exam_staff_plan_overview(
                         row.get(9)?,
                         row.get(10)?,
                         row.get(11)?,
-                        row.get(12)?,
                     ))
                 },
             )
@@ -2836,17 +2587,16 @@ pub fn get_latest_exam_staff_plan_overview(
             solver_engine: meta
                 .as_ref()
                 .and_then(|value| SolverEngine::from_key(&value.7))
-                .unwrap_or(SolverEngine::Greedy),
+                .unwrap_or(SolverEngine::CpSat),
             optimality_status: meta
                 .as_ref()
                 .and_then(|value| OptimalityStatus::from_key(&value.8))
-                .unwrap_or(OptimalityStatus::Fallback),
+                .unwrap_or(OptimalityStatus::Feasible),
             solve_duration_ms: meta.as_ref().map(|value| value.9).unwrap_or(0),
             fallback_reason: meta
                 .as_ref()
                 .and_then(|value| value.10.as_deref().and_then(FallbackReason::from_key)),
             fallback_pool_assignments: meta.as_ref().map(|value| value.11).unwrap_or(0),
-            baseline_dominated: meta.as_ref().map(|value| value.12 == 1).unwrap_or(false),
         })
     })();
     result.map_err(|error| error.to_string())
@@ -3064,8 +2814,60 @@ mod tests {
         }
     }
 
+    fn sample_exam_task(subject: Subject) -> TaskBuild {
+        TaskBuild {
+            session_id: Some(1),
+            space_id: Some(1),
+            task_source: StaffTaskSource::Exam,
+            role: StaffRole::ExamRoomInvigilator,
+            grade_name: "高一".to_string(),
+            subject,
+            space_name: "高一1场".to_string(),
+            floor: "3层".to_string(),
+            start_at: "2026-03-24T08:00".to_string(),
+            end_at: "2026-03-24T10:00".to_string(),
+            start_ts: 1_000,
+            end_ts: 2_000,
+            duration_minutes: 120,
+            recommended_subject: None,
+            priority_subject_chain: Vec::new(),
+            day_key: "2026-03-24".to_string(),
+            half_day: HalfDay::Morning,
+        }
+    }
+
+    fn sample_self_study_task(task_source: StaffTaskSource) -> TaskBuild {
+        TaskBuild {
+            session_id: if task_source == StaffTaskSource::FullSelfStudy {
+                None
+            } else {
+                Some(1)
+            },
+            space_id: if task_source == StaffTaskSource::FullSelfStudy {
+                None
+            } else {
+                Some(1)
+            },
+            task_source,
+            role: StaffRole::SelfStudySupervisor,
+            grade_name: "高二".to_string(),
+            subject: Subject::Biology,
+            space_name: "高二3班".to_string(),
+            floor: "4层".to_string(),
+            start_at: "2026-03-24T08:00".to_string(),
+            end_at: "2026-03-24T10:00".to_string(),
+            start_ts: 1_000,
+            end_ts: 2_000,
+            duration_minutes: 120,
+            recommended_subject: Some(Subject::Physics),
+            priority_subject_chain: vec![Subject::Physics, Subject::English],
+            day_key: "2026-03-24".to_string(),
+            half_day: HalfDay::Morning,
+        }
+    }
+
     #[test]
-    fn test_choose_teacher_exam_room_subject_conflict() {
+    fn test_candidate_summary_exam_room_subject_conflict() {
         let teachers = vec![
             TeacherInfo {
                 id: 1,
@@ -3084,534 +2886,133 @@ mod tests {
                 is_middle_manager: false,
             },
         ];
-        let runtime = HashMap::<i64, TeacherRuntimeState>::new();
-        let task = TaskBuild {
-            session_id: Some(1),
-            space_id: Some(1),
-            task_source: StaffTaskSource::Exam,
-            role: StaffRole::ExamRoomInvigilator,
-            grade_name: "高一".to_string(),
-            subject: Subject::Math,
-            space_name: "高一1场".to_string(),
-            floor: "3层".to_string(),
-            start_at: "2026-03-24T08:00".to_string(),
-            end_at: "2026-03-24T10:00".to_string(),
-            start_ts: 1_000,
-            end_ts: 2_000,
-            duration_minutes: 120,
-            recommended_subject: None,
-            priority_subject_chain: Vec::new(),
-            day_key: "2026-03-24".to_string(),
-            half_day: HalfDay::Morning,
-        };
-        let config = test_runtime_config();
-        let (teacher_id, reason) =
-            choose_teacher_for_task(&task, &teachers, &runtime, None, &HashSet::new(), &config);
-        assert_eq!(teacher_id, Some(2));
-        assert_eq!(reason, None);
+        let summary = build_task_candidate_summary(
+            &sample_exam_task(Subject::Math),
+            &teachers,
+            &HashSet::new(),
+            &test_runtime_config(),
+        );
+        assert_eq!(
+            summary.candidates.iter().map(|item| item.teacher_id).collect::<Vec<_>>(),
+            vec![2]
+        );
     }
 
     #[test]
-    fn test_choose_teacher_self_study_priority_chain() {
+    fn test_candidate_summary_self_study_tier_order() {
         let teachers = vec![
             TeacherInfo {
                 id: 1,
-                name: "英语老师".to_string(),
-                subjects: HashSet::from([Subject::English]),
-                class_names: HashSet::from(["高二3班".to_string()]),
-                homeroom_classes: HashSet::new(),
-                is_middle_manager: false,
-            },
-            TeacherInfo {
-                id: 2,
                 name: "物理老师".to_string(),
                 subjects: HashSet::from([Subject::Physics]),
                 class_names: HashSet::from(["高二3班".to_string()]),
                 homeroom_classes: HashSet::new(),
                 is_middle_manager: false,
             },
-        ];
-        let runtime = HashMap::<i64, TeacherRuntimeState>::new();
-        let task = TaskBuild {
-            session_id: Some(1),
-            space_id: Some(1),
-            task_source: StaffTaskSource::ExamLinkedSelfStudy,
-            role: StaffRole::SelfStudySupervisor,
-            grade_name: "高二".to_string(),
-            subject: Subject::Biology,
-            space_name: "高二3班".to_string(),
-            floor: "4层".to_string(),
-            start_at: "2026-03-24T08:00".to_string(),
-            end_at: "2026-03-24T10:00".to_string(),
-            start_ts: 1_000,
-            end_ts: 2_000,
-            duration_minutes: 120,
-            recommended_subject: Some(Subject::Physics),
-            priority_subject_chain: vec![Subject::Physics, Subject::English],
-            day_key: "2026-03-24".to_string(),
-            half_day: HalfDay::Morning,
-        };
-        let config = test_runtime_config();
-        let (teacher_id, reason) = choose_teacher_for_task(
-            &task,
-            &teachers,
-            &runtime,
-            Some("高二3班"),
-            &HashSet::new(),
-            &config,
-        );
-        assert_eq!(teacher_id, Some(2));
-        assert_eq!(reason, None);
-    }
-
-    #[test]
-    fn test_choose_teacher_self_study_homeroom_fallback() {
-        let teachers = vec![TeacherInfo {
-            id: 1,
-            name: "班主任".to_string(),
-            subjects: HashSet::from([Subject::Chinese]),
-            class_names: HashSet::new(),
-            homeroom_classes: HashSet::from(["高二3班".to_string()]),
-            is_middle_manager: false,
-        }];
-        let runtime = HashMap::<i64, TeacherRuntimeState>::new();
-        let task = TaskBuild {
-            session_id: Some(1),
-            space_id: Some(1),
-            task_source: StaffTaskSource::ExamLinkedSelfStudy,
-            role: StaffRole::SelfStudySupervisor,
-            grade_name: "高二".to_string(),
-            subject: Subject::Biology,
-            space_name: "高二3班".to_string(),
-            floor: "4层".to_string(),
-            start_at: "2026-03-24T08:00".to_string(),
-            end_at: "2026-03-24T10:00".to_string(),
-            start_ts: 1_000,
-            end_ts: 2_000,
-            duration_minutes: 120,
-            recommended_subject: Some(Subject::Physics),
-            priority_subject_chain: vec![Subject::Physics],
-            day_key: "2026-03-24".to_string(),
-            half_day: HalfDay::Morning,
-        };
-        let config = test_runtime_config();
-        let (teacher_id, reason) = choose_teacher_for_task(
-            &task,
-            &teachers,
-            &runtime,
-            Some("高二3班"),
-            &HashSet::new(),
-            &config,
-        );
-        assert_eq!(teacher_id, Some(1));
-        assert_eq!(reason, None);
-    }
-
-    #[test]
-    fn test_choose_teacher_middle_manager_excluded() {
-        let teachers = vec![TeacherInfo {
-            id: 1,
-            name: "中层".to_string(),
-            subjects: HashSet::from([Subject::Chinese]),
-            class_names: HashSet::from(["高一1班".to_string()]),
-            homeroom_classes: HashSet::from(["高一1班".to_string()]),
-            is_middle_manager: true,
-        }];
-        let runtime = HashMap::<i64, TeacherRuntimeState>::new();
-        let task = TaskBuild {
-            session_id: Some(1),
-            space_id: Some(1),
-            task_source: StaffTaskSource::ExamLinkedSelfStudy,
-            role: StaffRole::SelfStudySupervisor,
-            grade_name: "高一".to_string(),
-            subject: Subject::Math,
-            space_name: "高一1班".to_string(),
-            floor: "3层".to_string(),
-            start_at: "2026-03-24T08:00".to_string(),
-            end_at: "2026-03-24T10:00".to_string(),
-            start_ts: 1_000,
-            end_ts: 2_000,
-            duration_minutes: 120,
-            recommended_subject: Some(Subject::Chinese),
-            priority_subject_chain: vec![Subject::Chinese],
-            day_key: "2026-03-24".to_string(),
-            half_day: HalfDay::Morning,
-        };
-        let config = test_runtime_config();
-        let (teacher_id, reason) = choose_teacher_for_task(
-            &task,
-            &teachers,
-            &runtime,
-            Some("高一1班"),
-            &HashSet::new(),
-            &config,
-        );
-        assert_eq!(teacher_id, None);
-        assert_eq!(reason, Some("no_available_teacher".to_string()));
-    }
-
-    #[test]
-    fn test_choose_teacher_middle_manager_exception_enabled() {
-        let teachers = vec![TeacherInfo {
-            id: 1,
-            name: "中层".to_string(),
-            subjects: HashSet::from([Subject::Chinese]),
-            class_names: HashSet::new(),
-            homeroom_classes: HashSet::new(),
-            is_middle_manager: true,
-        }];
-        let runtime = HashMap::<i64, TeacherRuntimeState>::new();
-        let task = TaskBuild {
-            session_id: Some(1),
-            space_id: Some(1),
-            task_source: StaffTaskSource::Exam,
-            role: StaffRole::ExamRoomInvigilator,
-            grade_name: "高一".to_string(),
-            subject: Subject::Math,
-            space_name: "高一1场".to_string(),
-            floor: "3层".to_string(),
-            start_at: "2026-03-24T08:00".to_string(),
-            end_at: "2026-03-24T10:00".to_string(),
-            start_ts: 1_000,
-            end_ts: 2_000,
-            duration_minutes: 120,
-            recommended_subject: None,
-            priority_subject_chain: Vec::new(),
-            day_key: "2026-03-24".to_string(),
-            half_day: HalfDay::Morning,
-        };
-        let mut config = test_runtime_config();
-        config.middle_manager_exception_teacher_ids = HashSet::from([1_i64]);
-        let (teacher_id, reason) =
-            choose_teacher_for_task(&task, &teachers, &runtime, None, &HashSet::new(), &config);
-        assert_eq!(teacher_id, Some(1));
-        assert_eq!(reason, None);
-    }
-
-    #[test]
-    fn test_self_study_prefers_teacher_with_less_self_study_surplus() {
-        let teachers = vec![
-            TeacherInfo {
-                id: 1,
-                name: "物理老师A".to_string(),
-                subjects: HashSet::from([Subject::Physics]),
-                class_names: HashSet::from(["高二3班".to_string()]),
-                homeroom_classes: HashSet::new(),
-                is_middle_manager: false,
-            },
             TeacherInfo {
                 id: 2,
-                name: "物理老师B".to_string(),
-                subjects: HashSet::from([Subject::Physics]),
-                class_names: HashSet::from(["高二3班".to_string()]),
-                homeroom_classes: HashSet::new(),
-                is_middle_manager: false,
-            },
-        ];
-        let mut runtime = HashMap::<i64, TeacherRuntimeState>::new();
-        runtime.insert(
-            1,
-            TeacherRuntimeState {
-                self_study_task_count: 2,
-                exam_room_task_count: 0,
-                ..TeacherRuntimeState::default()
-            },
-        );
-        runtime.insert(
-            2,
-            TeacherRuntimeState {
-                self_study_task_count: 0,
-                exam_room_task_count: 1,
-                ..TeacherRuntimeState::default()
-            },
-        );
-        let task = TaskBuild {
-            session_id: Some(1),
-            space_id: Some(1),
-            task_source: StaffTaskSource::ExamLinkedSelfStudy,
-            role: StaffRole::SelfStudySupervisor,
-            grade_name: "高二".to_string(),
-            subject: Subject::Biology,
-            space_name: "高二3班".to_string(),
-            floor: "4层".to_string(),
-            start_at: "2026-03-24T08:00".to_string(),
-            end_at: "2026-03-24T10:00".to_string(),
-            start_ts: 1_000,
-            end_ts: 2_000,
-            duration_minutes: 120,
-            recommended_subject: Some(Subject::Physics),
-            priority_subject_chain: vec![Subject::Physics],
-            day_key: "2026-03-24".to_string(),
-            half_day: HalfDay::Morning,
-        };
-        let config = test_runtime_config();
-        let (teacher_id, reason) = choose_teacher_for_task(
-            &task,
-            &teachers,
-            &runtime,
-            Some("高二3班"),
-            &HashSet::new(),
-            &config,
-        );
-        assert_eq!(teacher_id, Some(2));
-        assert_eq!(reason, None);
-    }
-
-    #[test]
-    fn test_hard_duty_prefers_teacher_needing_compensation() {
-        let teachers = vec![
-            TeacherInfo {
-                id: 1,
-                name: "老师A".to_string(),
+                name: "班主任".to_string(),
                 subjects: HashSet::from([Subject::Chinese]),
                 class_names: HashSet::new(),
-                homeroom_classes: HashSet::new(),
+                homeroom_classes: HashSet::from(["高二3班".to_string()]),
                 is_middle_manager: false,
             },
             TeacherInfo {
-                id: 2,
-                name: "老师B".to_string(),
-                subjects: HashSet::from([Subject::English]),
-                class_names: HashSet::new(),
-                homeroom_classes: HashSet::new(),
-                is_middle_manager: false,
-            },
-        ];
-        let mut runtime = HashMap::<i64, TeacherRuntimeState>::new();
-        runtime.insert(
-            1,
-            TeacherRuntimeState {
-                self_study_task_count: 2,
-                ..TeacherRuntimeState::default()
-            },
-        );
-        runtime.insert(2, TeacherRuntimeState::default());
-        let task = TaskBuild {
-            session_id: Some(1),
-            space_id: Some(1),
-            task_source: StaffTaskSource::Exam,
-            role: StaffRole::ExamRoomInvigilator,
-            grade_name: "高一".to_string(),
-            subject: Subject::Math,
-            space_name: "高一1场".to_string(),
-            floor: "3层".to_string(),
-            start_at: "2026-03-24T14:00".to_string(),
-            end_at: "2026-03-24T16:00".to_string(),
-            start_ts: 1_000,
-            end_ts: 2_000,
-            duration_minutes: 120,
-            recommended_subject: None,
-            priority_subject_chain: Vec::new(),
-            day_key: "2026-03-24".to_string(),
-            half_day: HalfDay::Afternoon,
-        };
-        let config = test_runtime_config();
-        let (teacher_id, reason) =
-            choose_teacher_for_task(&task, &teachers, &runtime, None, &HashSet::new(), &config);
-        assert_eq!(teacher_id, Some(1));
-        assert_eq!(reason, None);
-    }
-
-    #[test]
-    fn test_same_half_day_is_preferred() {
-        let teachers = vec![
-            TeacherInfo {
-                id: 1,
-                name: "老师A".to_string(),
-                subjects: HashSet::from([Subject::Chinese]),
-                class_names: HashSet::new(),
-                homeroom_classes: HashSet::new(),
-                is_middle_manager: false,
-            },
-            TeacherInfo {
-                id: 2,
-                name: "老师B".to_string(),
+                id: 3,
+                name: "通用老师".to_string(),
                 subjects: HashSet::from([Subject::History]),
                 class_names: HashSet::new(),
                 homeroom_classes: HashSet::new(),
                 is_middle_manager: false,
             },
         ];
-        let mut runtime = HashMap::<i64, TeacherRuntimeState>::new();
-        let mut first_state = TeacherRuntimeState::default();
-        first_state.day_half_loads.insert(
-            "2026-03-24".to_string(),
-            DayHalfLoad {
-                morning_tasks: 1,
-                afternoon_tasks: 0,
-            },
+        let summary = build_task_candidate_summary(
+            &sample_self_study_task(StaffTaskSource::ExamLinkedSelfStudy),
+            &teachers,
+            &HashSet::new(),
+            &test_runtime_config(),
         );
-        runtime.insert(1, first_state);
-        let mut second_state = TeacherRuntimeState::default();
-        second_state.day_half_loads.insert(
-            "2026-03-24".to_string(),
-            DayHalfLoad {
-                morning_tasks: 0,
-                afternoon_tasks: 1,
-            },
+        assert_eq!(
+            summary
+                .candidates
+                .iter()
+                .map(|item| (item.teacher_id, item.assignment_tier))
+                .collect::<Vec<_>>(),
+            vec![
+                (1, Some(AssignmentTier::Primary)),
+                (2, Some(AssignmentTier::Homeroom)),
+                (3, Some(AssignmentTier::FallbackPool)),
+            ]
         );
-        runtime.insert(2, second_state);
-        let task = TaskBuild {
-            session_id: Some(1),
-            space_id: Some(1),
-            task_source: StaffTaskSource::Exam,
-            role: StaffRole::ExamRoomInvigilator,
-            grade_name: "高一".to_string(),
-            subject: Subject::Math,
-            space_name: "高一1场".to_string(),
-            floor: "3层".to_string(),
-            start_at: "2026-03-24T14:00".to_string(),
-            end_at: "2026-03-24T16:00".to_string(),
-            start_ts: 1_000,
-            end_ts: 2_000,
-            duration_minutes: 120,
-            recommended_subject: None,
-            priority_subject_chain: Vec::new(),
-            day_key: "2026-03-24".to_string(),
-            half_day: HalfDay::Afternoon,
-        };
-        let config = test_runtime_config();
-        let (teacher_id, reason) =
-            choose_teacher_for_task(&task, &teachers, &runtime, None, &HashSet::new(), &config);
-        assert_eq!(teacher_id, Some(2));
-        assert_eq!(reason, None);
     }
 
     #[test]
-    fn test_choose_teacher_respects_exclusion() {
-        let teachers = vec![
-            TeacherInfo {
-                id: 1,
-                name: "老师A".to_string(),
-                subjects: HashSet::from([Subject::Chinese]),
-                class_names: HashSet::new(),
-                homeroom_classes: HashSet::new(),
-                is_middle_manager: false,
-            },
-            TeacherInfo {
-                id: 2,
-                name: "老师B".to_string(),
-                subjects: HashSet::from([Subject::English]),
-                class_names: HashSet::new(),
-                homeroom_classes: HashSet::new(),
-                is_middle_manager: false,
-            },
-        ];
-        let runtime = HashMap::<i64, TeacherRuntimeState>::new();
-        let task = TaskBuild {
-            session_id: Some(99),
-            space_id: Some(1),
-            task_source: StaffTaskSource::Exam,
-            role: StaffRole::ExamRoomInvigilator,
-            grade_name: "高一".to_string(),
-            subject: Subject::Math,
-            space_name: "高一1场".to_string(),
-            floor: "3层".to_string(),
-            start_at: "2026-03-24T14:00".to_string(),
-            end_at: "2026-03-24T16:00".to_string(),
-            start_ts: 1_000,
-            end_ts: 2_000,
-            duration_minutes: 120,
-            recommended_subject: None,
-            priority_subject_chain: Vec::new(),
-            day_key: "2026-03-24".to_string(),
-            half_day: HalfDay::Afternoon,
-        };
-        let exclusions = HashSet::from([(2_i64, 99_i64)]);
-        let config = test_runtime_config();
-        let (teacher_id, reason) =
-            choose_teacher_for_task(&task, &teachers, &runtime, None, &exclusions, &config);
-        assert_eq!(teacher_id, Some(1));
-        assert_eq!(reason, None);
-    }
-
-    #[test]
-    fn test_full_self_study_ignores_middle_manager_exception() {
-        let teachers = vec![TeacherInfo {
+    fn test_candidate_summary_respects_middle_manager_and_full_self_study_rules() {
+        let middle_manager = vec![TeacherInfo {
             id: 1,
             name: "中层老师".to_string(),
-            subjects: HashSet::from([Subject::Chinese]),
-            class_names: HashSet::from(["高一1班".to_string()]),
-            homeroom_classes: HashSet::from(["高一1班".to_string()]),
+            subjects: HashSet::from([Subject::Physics]),
+            class_names: HashSet::from(["高二3班".to_string()]),
+            homeroom_classes: HashSet::from(["高二3班".to_string()]),
             is_middle_manager: true,
         }];
-        let runtime = HashMap::<i64, TeacherRuntimeState>::new();
-        let task = TaskBuild {
-            session_id: None,
-            space_id: None,
-            task_source: StaffTaskSource::FullSelfStudy,
-            role: StaffRole::SelfStudySupervisor,
-            grade_name: "高一".to_string(),
-            subject: Subject::Chinese,
-            space_name: "高一1班".to_string(),
-            floor: "3层".to_string(),
-            start_at: "2026-03-24T12:10".to_string(),
-            end_at: "2026-03-24T13:40".to_string(),
-            start_ts: 1_000,
-            end_ts: 2_000,
-            duration_minutes: 90,
-            recommended_subject: Some(Subject::Chinese),
-            priority_subject_chain: vec![Subject::Chinese],
-            day_key: "2026-03-24".to_string(),
-            half_day: HalfDay::Afternoon,
-        };
+        let summary = build_task_candidate_summary(
+            &sample_self_study_task(StaffTaskSource::ExamLinkedSelfStudy),
+            &middle_manager,
+            &HashSet::new(),
+            &test_runtime_config(),
+        );
+        assert!(summary.candidates.is_empty());
+
         let mut config = test_runtime_config();
-        config.middle_manager_default_enabled = true;
         config.middle_manager_exception_teacher_ids = HashSet::from([1_i64]);
-        let (teacher_id, reason) = choose_teacher_for_task(
-            &task,
-            &teachers,
-            &runtime,
-            Some("高一1班"),
+        let enabled = build_task_candidate_summary(
+            &sample_exam_task(Subject::Math),
+            &middle_manager,
             &HashSet::new(),
             &config,
         );
-        assert_eq!(teacher_id, None);
-        assert_eq!(reason, Some("no_available_teacher".to_string()));
+        assert_eq!(enabled.candidates.len(), 1);
+
+        config.middle_manager_default_enabled = true;
+        let disabled_again = build_task_candidate_summary(
+            &sample_self_study_task(StaffTaskSource::FullSelfStudy),
+            &middle_manager,
+            &HashSet::new(),
+            &config,
+        );
+        assert!(disabled_again.candidates.is_empty());
     }
 
     #[test]
-    fn test_full_self_study_ignores_exam_exclusion() {
+    fn test_candidate_summary_uses_fallback_pool_and_full_self_study_ignores_exam_exclusion() {
         let teachers = vec![TeacherInfo {
-            id: 1,
-            name: "语文老师".to_string(),
+            id: 9,
+            name: "通用老师".to_string(),
             subjects: HashSet::from([Subject::Chinese]),
-            class_names: HashSet::from(["高一1班".to_string()]),
+            class_names: HashSet::new(),
             homeroom_classes: HashSet::new(),
             is_middle_manager: false,
         }];
-        let runtime = HashMap::<i64, TeacherRuntimeState>::new();
-        let task = TaskBuild {
-            session_id: None,
-            space_id: None,
-            task_source: StaffTaskSource::FullSelfStudy,
-            role: StaffRole::SelfStudySupervisor,
-            grade_name: "高一".to_string(),
-            subject: Subject::Chinese,
-            space_name: "高一1班".to_string(),
-            floor: "3层".to_string(),
-            start_at: "2026-03-24T12:10".to_string(),
-            end_at: "2026-03-24T13:40".to_string(),
-            start_ts: 1_000,
-            end_ts: 2_000,
-            duration_minutes: 90,
-            recommended_subject: Some(Subject::Chinese),
-            priority_subject_chain: vec![Subject::Chinese],
-            day_key: "2026-03-24".to_string(),
-            half_day: HalfDay::Afternoon,
-        };
-        let exclusions = HashSet::from([(1_i64, 99_i64)]);
-        let config = test_runtime_config();
-        let (teacher_id, reason) = choose_teacher_for_task(
-            &task,
+        let exam_linked = build_task_candidate_summary(
+            &sample_self_study_task(StaffTaskSource::ExamLinkedSelfStudy),
             &teachers,
-            &runtime,
-            Some("高一1班"),
-            &exclusions,
-            &config,
+            &HashSet::new(),
+            &test_runtime_config(),
         );
-        assert_eq!(teacher_id, Some(1));
-        assert_eq!(reason, None);
+        assert_eq!(
+            exam_linked.candidates[0].assignment_tier,
+            Some(AssignmentTier::FallbackPool)
+        );
+
+        let full_self_study = build_task_candidate_summary(
+            &sample_self_study_task(StaffTaskSource::FullSelfStudy),
+            &teachers,
+            &HashSet::from([(9_i64, 99_i64)]),
+            &test_runtime_config(),
+        );
+        assert_eq!(full_self_study.candidates.len(), 1);
+        assert_eq!(full_self_study.candidates[0].teacher_id, 9);
     }
 
     #[test]
@@ -3630,45 +3031,7 @@ mod tests {
     }
 
     #[test]
-    fn test_choose_teacher_self_study_uses_fallback_pool_as_last_tier() {
-        let teachers = vec![TeacherInfo {
-            id: 9,
-            name: "通用老师".to_string(),
-            subjects: HashSet::from([Subject::Chinese]),
-            class_names: HashSet::new(),
-            homeroom_classes: HashSet::new(),
-            is_middle_manager: false,
-        }];
-        let runtime = HashMap::<i64, TeacherRuntimeState>::new();
-        let task = TaskBuild {
-            session_id: Some(1),
-            space_id: Some(1),
-            task_source: StaffTaskSource::ExamLinkedSelfStudy,
-            role: StaffRole::SelfStudySupervisor,
-            grade_name: "高二".to_string(),
-            subject: Subject::Biology,
-            space_name: "高二3班".to_string(),
-            floor: "4层".to_string(),
-            start_at: "2026-03-24T08:00".to_string(),
-            end_at: "2026-03-24T10:00".to_string(),
-            start_ts: 1_000,
-            end_ts: 2_000,
-            duration_minutes: 120,
-            recommended_subject: Some(Subject::Physics),
-            priority_subject_chain: vec![Subject::Physics],
-            day_key: "2026-03-24".to_string(),
-            half_day: HalfDay::Morning,
-        };
-        let config = test_runtime_config();
-        let decision =
-            choose_teacher_decision_for_task(&task, &teachers, &runtime, &HashSet::new(), &config);
-        assert_eq!(decision.teacher_id, Some(9));
-        assert_eq!(decision.reason, None);
-        assert_eq!(decision.assignment_tier, Some(AssignmentTier::FallbackPool));
-    }
-
-    #[test]
-    fn test_cp_sat_can_reduce_fallback_pool_assignments_against_greedy_baseline() {
+    fn test_cp_sat_reduces_fallback_pool_in_direct_mode() {
         let teachers = vec![
             TeacherInfo {
                 id: 1,
@@ -3727,24 +3090,97 @@ mod tests {
                 half_day: HalfDay::Morning,
             },
         ];
-        let config = test_runtime_config();
-        let exclusions = HashSet::new();
-
-        let baseline = solve_greedy_baseline(&tasks, &teachers, &exclusions, &config);
-        assert_eq!(baseline.metrics.unassigned_count, 0);
-        assert_eq!(baseline.metrics.fallback_pool_assignments, 1);
-
-        let cp_sat_attempt = solve_with_cp_sat(&tasks, &teachers, &exclusions, &config, &baseline);
-        let cp_sat_plan = cp_sat_attempt.plan.clone().expect(&format!(
-            "cp-sat should produce a feasible plan: {:?}",
-            cp_sat_attempt
-        ));
-
+        let cp_sat_attempt = solve_with_cp_sat(
+            &tasks,
+            &teachers,
+            &HashSet::new(),
+            &test_runtime_config(),
+        );
+        let cp_sat_plan = cp_sat_attempt.plan.expect("cp-sat should produce a plan");
         assert_eq!(cp_sat_plan.metrics.unassigned_count, 0);
         assert_eq!(cp_sat_plan.metrics.fallback_pool_assignments, 0);
-        assert_eq!(
-            cp_sat_plan.metrics.cmp_lex(&baseline.metrics),
-            Ordering::Less
+        assert_eq!(cp_sat_plan.solver_engine, SolverEngine::CpSat);
+    }
+
+
+
+
+    #[test]
+    #[ignore = "manual integration test against the real sqlite database"]
+    fn test_run_real_db_staff_plan_manual() {
+        let db_path = std::env::var("ACADEMIC_REAL_DB_PATH")
+            .expect("ACADEMIC_REAL_DB_PATH must point to scores.sqlite3");
+        let db_path = std::path::PathBuf::from(db_path);
+        let mut conn = Connection::open(&db_path).expect("open real sqlite db");
+        crate::schema::ensure_schema(&conn).expect("ensure schema");
+
+        let persisted_settings: (i64, f64, f64) = conn
+            .query_row(
+                "SELECT default_exam_room_required_count, indoor_allowance_per_minute, outdoor_allowance_per_minute FROM invigilation_config_settings WHERE id = 1",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .unwrap_or((1, 0.5, 0.3));
+        let mut config = build_config_from_payload(&GenerateExamStaffPlanPayload {
+            default_exam_room_required_count: persisted_settings.0,
+            indoor_allowance_per_minute: persisted_settings.1,
+            outdoor_allowance_per_minute: persisted_settings.2,
+            staff_exclusions: Vec::new(),
+        });
+        hydrate_runtime_middle_manager_config(&conn, &mut config).expect("hydrate config");
+        config.self_study_class_subjects =
+            load_self_study_class_subjects(&conn).expect("load self study subjects");
+
+        let mut exclusion_pairs = HashSet::new();
+        let mut stmt = conn
+            .prepare("SELECT teacher_id, session_id FROM invigilation_staff_exclusions")
+            .expect("prepare exclusions");
+        let rows = stmt
+            .query_map([], |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?)))
+            .expect("query exclusions");
+        for row in rows {
+            let (teacher_id, session_id) = row.expect("read exclusion row");
+            if teacher_id > 0 && session_id > 0 {
+                exclusion_pairs.insert((teacher_id, session_id));
+            }
+        }
+        drop(stmt);
+
+        let log_path = db_path
+            .parent()
+            .expect("db parent")
+            .join("logs")
+            .join("app.log");
+        let result = generate_latest_exam_staff_plan_internal(
+            &mut conn,
+            config,
+            exclusion_pairs,
+            Some(log_path.as_path()),
+        )
+        .expect("generate staff plan on real db");
+
+        let mut reason_stmt = conn
+            .prepare(
+                "SELECT COALESCE(reason, '<empty>') AS reason, COUNT(*) FROM latest_exam_staff_tasks WHERE status = 'unassigned' GROUP BY COALESCE(reason, '<empty>') ORDER BY COUNT(*) DESC, reason ASC",
+            )
+            .expect("prepare reason query");
+        let reason_rows = reason_stmt
+            .query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?)))
+            .expect("query reason rows");
+        let mut reason_counts = Vec::<(String, i64)>::new();
+        for row in reason_rows {
+            reason_counts.push(row.expect("read reason row"));
+        }
+
+        println!(
+            "REAL_DB_STAFF_PLAN {}",
+            serde_json::to_string(&result).expect("serialize result")
         );
+        println!(
+            "REAL_DB_UNASSIGNED_REASONS {}",
+            serde_json::to_string(&reason_counts).expect("serialize reason counts")
+        );
+        println!("REAL_DB_APP_LOG {}", log_path.display());
+        assert!(result.task_count > 0);
     }
 }

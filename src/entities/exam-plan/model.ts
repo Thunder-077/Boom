@@ -107,14 +107,9 @@ export interface ExamPlanSessionQuery {
 export type StaffRole = "exam_room_invigilator" | "self_study_supervisor" | "floor_rover";
 export type TaskStatus = "assigned" | "unassigned";
 export type ExamStaffTaskSource = "exam" | "exam_linked_self_study" | "full_self_study";
-export type SolverEngine = "cp_sat" | "greedy";
-export type OptimalityStatus = "optimal" | "feasible" | "fallback" | "infeasible" | "error";
-export type FallbackReason =
-  | "timeout"
-  | "unknown"
-  | "infeasible"
-  | "error"
-  | "not_better_than_baseline";
+export type SolverEngine = "cp_sat";
+export type OptimalityStatus = "optimal" | "feasible" | "infeasible" | "error";
+export type FallbackReason = "timeout" | "unknown" | "infeasible" | "error";
 export type AssignmentTier = "primary" | "homeroom" | "fallback_pool";
 
 export interface ExamSessionTime {
@@ -144,7 +139,6 @@ export interface GenerateLatestExamStaffPlanResult {
   solveDurationMs: number;
   fallbackReason: FallbackReason | null;
   fallbackPoolAssignments: number;
-  baselineDominated: boolean;
 }
 
 export interface ExamStaffPlanOverview {
@@ -160,7 +154,6 @@ export interface ExamStaffPlanOverview {
   solveDurationMs: number;
   fallbackReason: FallbackReason | null;
   fallbackPoolAssignments: number;
-  baselineDominated: boolean;
 }
 
 export interface ExamStaffTask {

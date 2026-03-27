@@ -661,7 +661,7 @@ enum CpSolverStatus {
 //
 // TODO(user): support returning multiple solutions. Look at the Stubby
 // streaming API as we probably wants to get them as they are found.
-// Next id: 27
+// Next id: 31
 message CpSolverResponse {
   // The status of the solve.
   CpSolverStatus status = 1;
@@ -743,7 +743,7 @@ message CpSolverResponse {
   double wall_time = 15;
   double user_time = 16;
   double deterministic_time = 17;
-  double primal_integral = 22;
+  double gap_integral = 22;
 
   // Additional information about how the solution was found.
   string solution_info = 20;
@@ -751,4 +751,11 @@ message CpSolverResponse {
   // The solve log will be filled if the parameter log_to_response is set to
   // true.
   string solve_log = 26;
+
+  // The objective in the internal integer space before scaling and offset are
+  // reapplied to objective_value / best_objective_bound.
+  int64 inner_objective_lower_bound = 29;
+
+  // Number of integer variables in the loaded model.
+  int64 num_integers = 30;
 }

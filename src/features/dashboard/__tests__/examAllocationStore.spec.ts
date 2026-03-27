@@ -130,12 +130,11 @@ const fakeService: ExamAllocationService = {
       unassignedCount: 1,
       imbalanceMinutes: 80,
       warningCount: 1,
-      solverEngine: "greedy" as const,
-      optimalityStatus: "fallback" as const,
+      solverEngine: "cp_sat" as const,
+      optimalityStatus: "feasible" as const,
       solveDurationMs: 1234,
-      fallbackReason: "not_better_than_baseline" as const,
+      fallbackReason: null,
       fallbackPoolAssignments: 0,
-      baselineDominated: false,
     };
   },
   async getStaffPlanOverview() {
@@ -147,12 +146,11 @@ const fakeService: ExamAllocationService = {
       unassignedCount: 1,
       warningCount: 1,
       imbalanceMinutes: 80,
-      solverEngine: "greedy" as const,
-      optimalityStatus: "fallback" as const,
+      solverEngine: "cp_sat" as const,
+      optimalityStatus: "feasible" as const,
       solveDurationMs: 1234,
-      fallbackReason: "not_better_than_baseline" as const,
+      fallbackReason: null,
       fallbackPoolAssignments: 0,
-      baselineDominated: false,
     };
   },
   async listStaffTasks() {

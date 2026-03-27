@@ -31,10 +31,22 @@ pub fn append_log(
     message: &str,
 ) -> Result<(), AppError> {
     let path = log_path(app)?;
+    append_log_to_path(&path, level, scope, message)
+}
+
+pub fn append_log_to_path(
+    path: &std::path::Path,
+    level: &str,
+    scope: &str,
+    message: &str,
+) -> Result<(), AppError> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).map_err(|e| AppError::new(format!("创建日志目录失败: {e}")))?;
+    }
     let mut file = OpenOptions::new()
         .create(true)
         .append(true)
-        .open(&path)
+        .open(path)
         .map_err(|e| AppError::new(format!("打开日志文件失败: {e}")))?;
     let now = Utc::now().to_rfc3339();
     writeln!(

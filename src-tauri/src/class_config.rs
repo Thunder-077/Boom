@@ -143,7 +143,6 @@ fn seed_default_class_configs(conn: &Connection) -> Result<(), AppError> {
                 Subject::Chemistry,
                 Subject::Biology,
                 Subject::Russian,
-                Subject::English,
             ],
         ),
         (
@@ -155,7 +154,6 @@ fn seed_default_class_configs(conn: &Connection) -> Result<(), AppError> {
                 Subject::Chemistry,
                 Subject::Biology,
                 Subject::English,
-                Subject::Russian,
             ],
         ),
         (
@@ -167,7 +165,6 @@ fn seed_default_class_configs(conn: &Connection) -> Result<(), AppError> {
                 Subject::Chemistry,
                 Subject::Geography,
                 Subject::Russian,
-                Subject::English,
             ],
         ),
         (
@@ -179,7 +176,6 @@ fn seed_default_class_configs(conn: &Connection) -> Result<(), AppError> {
                 Subject::Chemistry,
                 Subject::Geography,
                 Subject::English,
-                Subject::Russian,
             ],
         ),
         (
@@ -191,7 +187,6 @@ fn seed_default_class_configs(conn: &Connection) -> Result<(), AppError> {
                 Subject::Biology,
                 Subject::Geography,
                 Subject::Russian,
-                Subject::English,
             ],
         ),
         (
@@ -203,7 +198,6 @@ fn seed_default_class_configs(conn: &Connection) -> Result<(), AppError> {
                 Subject::Biology,
                 Subject::Geography,
                 Subject::English,
-                Subject::Russian,
             ],
         ),
         (
@@ -215,7 +209,6 @@ fn seed_default_class_configs(conn: &Connection) -> Result<(), AppError> {
                 Subject::Politics,
                 Subject::Geography,
                 Subject::Russian,
-                Subject::English,
             ],
         ),
         (
@@ -226,8 +219,8 @@ fn seed_default_class_configs(conn: &Connection) -> Result<(), AppError> {
                 Subject::History,
                 Subject::Politics,
                 Subject::Geography,
-                Subject::Russian,
                 Subject::English,
+                Subject::Russian,
             ],
         ),
         (

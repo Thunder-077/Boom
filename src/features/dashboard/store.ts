@@ -45,12 +45,11 @@ const emptyStaffOverview: ExamStaffPlanOverview = {
   unassignedCount: 0,
   warningCount: 0,
   imbalanceMinutes: 0,
-  solverEngine: "greedy",
-  optimalityStatus: "fallback",
+  solverEngine: "cp_sat",
+  optimalityStatus: "feasible",
   solveDurationMs: 0,
   fallbackReason: null,
   fallbackPoolAssignments: 0,
-  baselineDominated: false,
 };
 
 const emptyGenerationProgress: ExamGenerationProgress = {

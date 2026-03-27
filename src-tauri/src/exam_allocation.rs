@@ -277,7 +277,8 @@ fn default_session_time_for_subject(subject: Subject) -> Option<(&'static str, &
         Subject::History => Some(("2026-03-26T10:30", "2026-03-26T12:00")),
         Subject::Chemistry => Some(("2026-03-26T14:10", "2026-03-26T15:40")),
         Subject::Politics => Some(("2026-03-26T16:10", "2026-03-26T17:40")),
-        Subject::Russian | Subject::Japanese => None,
+        Subject::Russian => Some(("2026-03-26T08:00", "2026-03-26T10:00")),
+        Subject::Japanese => None,
     }
 }
 
@@ -290,6 +291,7 @@ fn seed_default_subject_time_templates(conn: &Connection) -> Result<(), AppError
         Subject::Biology,
         Subject::Physics,
         Subject::English,
+        Subject::Russian,
         Subject::History,
         Subject::Chemistry,
         Subject::Politics,
