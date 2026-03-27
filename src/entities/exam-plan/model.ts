@@ -267,8 +267,7 @@ export interface InvigilationExclusionSessionOption {
 }
 
 export interface ExportLatestExamAllocationBundleResult {
-  zipPath: string;
-  batchDir: string;
+  folderPath: string;
   gradeCount: number;
   fileCount: number;
   exportedAt: string;

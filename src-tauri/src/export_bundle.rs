@@ -1,6 +1,5 @@
 use std::collections::HashMap;
-use std::fs::{self, File};
-use std::io::Write;
+use std::fs;
 use std::path::{Path, PathBuf};
 
 use chrono::{DateTime, Datelike, NaiveDateTime, Timelike, Utc};
@@ -8,10 +7,6 @@ use rusqlite::params;
 use rust_xlsxwriter::{Color, Format, FormatAlign, FormatBorder, Workbook, Worksheet, XlsxError};
 use serde::Serialize;
 use tauri::{AppHandle, Manager};
-use zip::write::SimpleFileOptions;
-use zip::CompressionMethod;
-use zip::ZipWriter;
-
 use crate::app_log;
 use crate::score::{AppError, Subject};
 
@@ -32,8 +27,7 @@ const SUBJECT_EXPORT_ORDER: [(Subject, &str); 11] = [
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ExportLatestExamAllocationBundleResult {
-    zip_path: String,
-    batch_dir: String,
+    folder_path: String,
     grade_count: i64,
     file_count: i64,
     exported_at: String,
@@ -371,6 +365,19 @@ fn display_width(value: &str) -> usize {
         .sum::<usize>()
 }
 
+fn sanitize_file_name_segment(value: &str) -> String {
+    value
+        .trim()
+        .chars()
+        .map(|ch| match ch {
+            '\\' | '/' | ':' | '*' | '?' | '"' | '<' | '>' | '|' => '_',
+            _ => ch,
+        })
+        .collect::<String>()
+        .trim()
+        .to_string()
+}
+
 fn apply_summary_column_widths(sheet: &mut Worksheet, widths: &[usize]) -> Result<(), XlsxError> {
     for (idx, width) in widths.iter().enumerate() {
         let visual = (*width).max(10) as f64 + 2.0;
@@ -428,48 +435,6 @@ thead th{background:#2f86c3;color:#fff}
     html
 }
 
-fn build_zip(src_dir: &Path, zip_path: &Path) -> Result<i64, AppError> {
-    let file = File::create(zip_path).map_err(|e| AppError::new(format!("创建 ZIP 失败: {e}")))?;
-    let mut zip = ZipWriter::new(file);
-    let options = SimpleFileOptions::default().compression_method(CompressionMethod::Deflated);
-    let mut count = 0_i64;
-    zip_walk(src_dir, src_dir, &mut zip, options, &mut count)?;
-    zip.finish()
-        .map_err(|e| AppError::new(format!("写入 ZIP 失败: {e}")))?;
-    Ok(count)
-}
-
-fn zip_walk(
-    base: &Path,
-    current: &Path,
-    zip: &mut ZipWriter<File>,
-    options: SimpleFileOptions,
-    count: &mut i64,
-) -> Result<(), AppError> {
-    for entry in
-        fs::read_dir(current).map_err(|e| AppError::new(format!("读取导出目录失败: {e}")))?
-    {
-        let entry = entry.map_err(|e| AppError::new(format!("读取目录项失败: {e}")))?;
-        let path = entry.path();
-        if path.is_dir() {
-            zip_walk(base, &path, zip, options, count)?;
-        } else if path.is_file() {
-            let rel = path
-                .strip_prefix(base)
-                .map_err(|e| AppError::new(format!("处理 ZIP 相对路径失败: {e}")))?;
-            let name = rel.to_string_lossy().replace('\\', "/");
-            zip.start_file(name, options)
-                .map_err(|e| AppError::new(format!("写入 ZIP 文件头失败: {e}")))?;
-            let bytes =
-                fs::read(&path).map_err(|e| AppError::new(format!("读取导出文件失败: {e}")))?;
-            zip.write_all(&bytes)
-                .map_err(|e| AppError::new(format!("写入 ZIP 文件内容失败: {e}")))?;
-            *count += 1;
-        }
-    }
-    Ok(())
-}
-
 fn export_root_dir(app: &AppHandle) -> Result<PathBuf, AppError> {
     let mut dir = app
         .path()
@@ -480,12 +445,13 @@ fn export_root_dir(app: &AppHandle) -> Result<PathBuf, AppError> {
     Ok(dir)
 }
 
-fn export_batch_dir(root: &Path) -> PathBuf {
-    root.join("考场安排")
-}
-
-fn export_zip_path(root: &Path) -> PathBuf {
-    root.join("考场安排.zip")
+fn export_batch_dir(root: &Path, exam_title: &str) -> PathBuf {
+    let sanitized_title = sanitize_file_name_segment(exam_title);
+    if sanitized_title.is_empty() {
+        root.join("考场安排")
+    } else {
+        root.join(format!("{sanitized_title}考场安排"))
+    }
 }
 
 pub fn generate_export_files<F>(
@@ -507,15 +473,10 @@ where
     }
 
     let root = export_root_dir(app)?;
-    let batch_dir = export_batch_dir(&root);
-    let zip_path = export_zip_path(&root);
+    let batch_dir = export_batch_dir(&root, &exam_title);
     if batch_dir.exists() {
         fs::remove_dir_all(&batch_dir)
             .map_err(|e| AppError::new(format!("清理旧导出目录失败: {e}")))?;
-    }
-    if zip_path.exists() {
-        fs::remove_file(&zip_path)
-            .map_err(|e| AppError::new(format!("清理旧导出压缩包失败: {e}")))?;
     }
     fs::create_dir_all(&batch_dir)
         .map_err(|e| AppError::new(format!("创建导出批次目录失败: {e}")))?;
@@ -819,28 +780,43 @@ pub fn zip_existing_export_bundle(
 ) -> Result<ExportLatestExamAllocationBundleResult, AppError> {
     let exported_at = Utc::now().to_rfc3339();
     let root = export_root_dir(app)?;
-    let batch_dir = export_batch_dir(&root);
-    let zip_path = export_zip_path(&root);
+    let conn = crate::score::open_connection(app)?;
+    let (exam_title, _) = settings_from_db(&conn)?;
+    let batch_dir = export_batch_dir(&root, &exam_title);
     if !batch_dir.exists() {
         return Err(AppError::new("尚未生成导出文件，请先执行考场分配"));
-    }
-    if zip_path.exists() {
-        fs::remove_file(&zip_path)
-            .map_err(|e| AppError::new(format!("清理旧导出压缩包失败: {e}")))?;
     }
     let grade_count = fs::read_dir(&batch_dir)
         .map_err(|e| AppError::new(format!("读取导出目录失败: {e}")))?
         .filter_map(Result::ok)
         .filter(|entry| entry.path().is_dir())
         .count() as i64;
-    let file_count = build_zip(&batch_dir, &zip_path)?;
+    let file_count = count_files_recursively(&batch_dir)?;
     Ok(ExportLatestExamAllocationBundleResult {
-        zip_path: zip_path.to_string_lossy().to_string(),
-        batch_dir: batch_dir.to_string_lossy().to_string(),
+        folder_path: batch_dir.to_string_lossy().to_string(),
         grade_count,
         file_count,
         exported_at,
     })
+}
+
+fn count_files_recursively(dir: &Path) -> Result<i64, AppError> {
+    let mut count = 0_i64;
+    let mut stack = vec![dir.to_path_buf()];
+    while let Some(current) = stack.pop() {
+        let entries = fs::read_dir(&current)
+            .map_err(|e| AppError::new(format!("读取导出目录失败: {e}")))?;
+        for entry in entries {
+            let entry = entry.map_err(|e| AppError::new(format!("读取目录项失败: {e}")))?;
+            let path = entry.path();
+            if path.is_dir() {
+                stack.push(path);
+            } else if path.is_file() {
+                count += 1;
+            }
+        }
+    }
+    Ok(count)
 }
 
 #[tauri::command]

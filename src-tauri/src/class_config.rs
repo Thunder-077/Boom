@@ -124,7 +124,7 @@ fn seed_default_class_configs(conn: &Connection) -> Result<(), AppError> {
                 config_type: ClassConfigType::TeachingClass,
                 grade_name: "高一".to_string(),
                 class_name: format!("高一{}班", idx),
-                building: "教学楼A".to_string(),
+                building: "向远楼".to_string(),
                 floor: "3层".to_string(),
                 room_label: None,
                 subjects: Some(grade1.clone()),

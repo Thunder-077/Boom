@@ -194,8 +194,7 @@ const fakeService: ExamAllocationService = {
   },
   async exportLatestExamAllocationBundle() {
     return {
-      zipPath: "D:/exports/考场安排.zip",
-      batchDir: "D:/exports/考场安排",
+      folderPath: "D:/exports/2026年3月月考考场安排",
       gradeCount: 1,
       fileCount: 8,
       exportedAt: "2026-03-24T10:00:00Z",
