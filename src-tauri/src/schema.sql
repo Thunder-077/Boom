@@ -232,12 +232,11 @@ CREATE TABLE IF NOT EXISTS latest_exam_staff_plan_meta (
     unassigned_count INTEGER NOT NULL,
     warning_count INTEGER NOT NULL,
     imbalance_minutes INTEGER NOT NULL,
-    solver_engine TEXT NOT NULL DEFAULT 'greedy',
-    optimality_status TEXT NOT NULL DEFAULT 'fallback',
+    solver_engine TEXT NOT NULL DEFAULT 'cp_sat',
+    optimality_status TEXT NOT NULL DEFAULT 'feasible',
     solve_duration_ms INTEGER NOT NULL DEFAULT 0,
     fallback_reason TEXT,
-    fallback_pool_assignments INTEGER NOT NULL DEFAULT 0,
-    baseline_dominated INTEGER NOT NULL DEFAULT 0
+    fallback_pool_assignments INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS latest_exam_staff_tasks (
