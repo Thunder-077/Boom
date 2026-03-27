@@ -127,21 +127,59 @@ fn solve_internal(
         return error_response(&format!("无法写入 CP-SAT 输入模型: {error}"));
     }
 
+    let mut preferred_text_error: Option<String> = None;
+    if cfg!(windows) {
+        if let Some(protoc_path) = resolve_protoc_path(&runner_path) {
+            match recover_response_via_text_output(
+                &runner_path,
+                &protoc_path,
+                &input_path,
+                &text_output_path,
+                &runtime_proto_path,
+                params,
+            ) {
+                Ok(response) => {
+                    cleanup_files(&[
+                        &input_path,
+                        &binary_output_path,
+                        &text_output_path,
+                        &runtime_proto_path,
+                    ]);
+                    return response;
+                }
+                Err(text_error) => {
+                    preferred_text_error = Some(text_error);
+                }
+            }
+        }
+    }
+
     let binary_output = match run_sat_runner(&runner_path, &input_path, &binary_output_path, params) {
         Ok(output) => output,
         Err(error) => {
-            cleanup_files(&[&input_path, &binary_output_path]);
+            cleanup_files(&[
+                &input_path,
+                &binary_output_path,
+                &text_output_path,
+                &runtime_proto_path,
+            ]);
             return error_response(&format!(
-                "无法启动 CP-SAT 求解器 {}: {error} (input={})",
+                "无法启动 CP-SAT 求解器 {}: {error} (input={}, preferred_text={})",
                 runner_path.display(),
-                input_path.display()
+                input_path.display(),
+                preferred_text_error.unwrap_or_else(|| "not_attempted".to_string())
             ));
         }
     };
 
     if let Ok(response_bytes) = fs::read(&binary_output_path) {
         if let Ok(response) = proto::CpSolverResponse::decode(response_bytes.as_slice()) {
-            cleanup_files(&[&input_path, &binary_output_path]);
+            cleanup_files(&[
+                &input_path,
+                &binary_output_path,
+                &text_output_path,
+                &runtime_proto_path,
+            ]);
             return response;
         }
     }
@@ -183,13 +221,16 @@ fn solve_internal(
                     ]);
                 }
                 return error_response(&format!(
-                    "CP-SAT 二进制响应损坏，文本回退也失败: exit={:?}, stdout={}, stderr={}, input={}, output={}, file={}, text_fallback={}",
+                    "CP-SAT 二进制响应损坏，文本回退也失败: exit={:?}, stdout={}, stderr={}, input={}, output={}, file={}, preferred_text={}, text_fallback={}",
                     binary_output.status.code(),
                     String::from_utf8_lossy(&binary_output.stdout).trim(),
                     String::from_utf8_lossy(&binary_output.stderr).trim(),
                     input_path.display(),
                     binary_output_path.display(),
                     binary_diagnostic,
+                    preferred_text_error
+                        .as_deref()
+                        .unwrap_or("not_attempted"),
                     text_error
                 ));
             }
@@ -197,7 +238,12 @@ fn solve_internal(
     }
 
     if !keep_failed_artifacts() {
-        cleanup_files(&[&input_path, &binary_output_path]);
+        cleanup_files(&[
+            &input_path,
+            &binary_output_path,
+            &text_output_path,
+            &runtime_proto_path,
+        ]);
     }
     error_response(&format!(
         "CP-SAT 求解失败，且无法找到 protoc 文本回退工具: exit={:?}, stdout={}, stderr={}, input={}, output={}, file={}, protoc=missing",

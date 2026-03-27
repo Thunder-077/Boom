@@ -67,12 +67,12 @@ export function createScoreStore(service: ScoreService = scoreService) {
 
   async function importExcel(filePath: string) {
     state.importStatus = "importing";
-    state.importMessage = "正在导入 Excel...";
+    state.importMessage = "正在导入成绩 Excel...";
     try {
       const result = await service.importExcel(filePath);
       state.lastImportResult = result;
       state.importStatus = "success";
-      state.importMessage = `导入成功，共 ${result.rowCount} 条，耗时 ${result.durationMs}ms`;
+      state.importMessage = `共 ${result.rowCount} 条，耗时 ${result.durationMs}ms`;
       await load();
     } catch (error) {
       state.importStatus = "error";

@@ -21,10 +21,11 @@
       </div>
     </FilterToolbar>
 
-    <InfoHint :text="importHintText" />
-    <p v-if="store.viewState.importStatus !== 'idle'" class="import-status" :class="store.viewState.importStatus">
-      {{ store.viewState.importMessage }}
-    </p>
+    <InfoHint
+      class="import-status"
+      :type="store.viewState.importStatus === 'success' ? 'success' : store.viewState.importStatus === 'error' ? 'error' : store.viewState.importStatus === 'importing' ? 'warning' : 'info'"
+      :text="importStatusLabel + '：' + importStatusMessage"
+    />
 
     <TableCard title="考试成绩列表" :meta="`已同步 ${store.viewState.total} 条`">
       <div class="table-scroll">
@@ -156,11 +157,24 @@ const detailState = reactive<{
   form: null,
 });
 
-const importHintText = computed(() => {
-  if (isDragging.value) {
-    return "松开鼠标即可导入成绩 Excel 文件";
+const importStatusLabel = computed(() => {
+  if (store.viewState.importStatus === "idle") {
+    return "待导入";
   }
-  return "可将 Excel 文件拖拽到页面任意位置导入成绩数据";
+  if (store.viewState.importStatus === "importing") {
+    return "导入中";
+  }
+  if (store.viewState.importStatus === "success") {
+    return "导入成功";
+  }
+  return "导入失败";
+});
+
+const importStatusMessage = computed(() => {
+  if (store.viewState.importStatus === "idle") {
+    return "拖拽成绩 Excel 文件到页面任意位置即可开始导入";
+  }
+  return store.viewState.importMessage;
 });
 
 const LANGUAGE_SHORT: Record<string, string> = { "英语": "英", "俄语": "俄", "日语": "日" };
@@ -621,19 +635,6 @@ onUnmounted(() => {
 
 .import-status {
   margin: -10px 4px 0;
-  font-size: 13px;
-}
-
-.import-status.importing {
-  color: var(--color-brand);
-}
-
-.import-status.success {
-  color: var(--color-success);
-}
-
-.import-status.error {
-  color: var(--color-danger);
 }
 
 </style>

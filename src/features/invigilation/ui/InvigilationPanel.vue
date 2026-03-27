@@ -143,18 +143,28 @@
           <p v-if="store.viewState.staffOverview.generatedAt" class="solver-summary">{{ staffSolverSummary }}</p>
         </div>
         <div
-          v-if="assignmentNotice"
+          v-if="assignmentNotice || isAssignmentProgressVisible"
           ref="assignmentNoticeEl"
           class="assignment-notice inline"
-          :class="assignmentNotice.type"
-          :role="assignmentNotice.type === 'error' ? 'alert' : 'status'"
+          role="status"
           aria-live="polite"
           tabindex="-1"
         >
           <span class="material-symbols-rounded assignment-notice-icon">
-            {{ assignmentNotice.type === "success" ? "check_circle" : "error" }}
+            {{ assignmentNoticeIcon }}
           </span>
-          <span class="assignment-notice-text">{{ assignmentNotice.text }}</span>
+          <div class="assignment-notice-body">
+            <span class="assignment-notice-text">{{ assignmentNoticeText }}</span>
+            <div v-if="isAssignmentProgressVisible && assignmentProgress" class="assignment-progress">
+              <div class="assignment-progress-meta">
+                <span>{{ assignmentProgress.stageLabel }}</span>
+                <span>{{ assignmentProgress.percent }}%</span>
+              </div>
+              <div class="assignment-progress-track" aria-hidden="true">
+                <div class="assignment-progress-bar" :style="{ width: `${assignmentProgress.percent}%` }" />
+              </div>
+            </div>
+          </div>
         </div>
         <div class="action-buttons">
           <button class="primary-btn action-btn" type="button" :disabled="store.viewState.assigning" @click="assignTeachers">{{ store.viewState.assigning ? "分配中..." : "分配监考老师" }}</button>
@@ -374,7 +384,8 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import type { ClassConfigRow } from "../../../entities/class-config/model";
-import type { InvigilationConfig } from "../../../entities/exam-plan/model";
+import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+import type { ExamStaffAssignmentProgress, InvigilationConfig } from "../../../entities/exam-plan/model";
 import type { Subject } from "../../../entities/score/model";
 import { Subject as SubjectEnum } from "../../../entities/score/model";
 import ConfigCard from "../../../widgets/common/ConfigCard.vue";
@@ -395,6 +406,7 @@ interface AssignmentNotice {
 }
 
 const gradeRankMap: Record<string, number> = { 高一: 1, 高二: 2, 高三: 3 };
+const staffAssignmentProgressEvent = "invigilation_staff_assignment_progress";
 const store = useExamAllocationStore();
 
 const defaultExamRoomRequiredCount = ref(1);
@@ -431,6 +443,8 @@ const selfStudyClasses = ref<SelfStudyClassRow[]>([]);
 const middleManagerPageSize = 3;
 const assignmentNotice = ref<AssignmentNotice | null>(null);
 const assignmentNoticeEl = ref<HTMLElement | null>(null);
+const assignmentProgress = ref<ExamStaffAssignmentProgress | null>(null);
+let removeAssignmentProgressListener: UnlistenFn | null = null;
 
 const subjectLabelMap: Record<Subject, string> = {
   [SubjectEnum.Chinese]: "语文",
@@ -545,6 +559,17 @@ const middleManagerVisiblePages = computed(() =>
   ).filter((page) => page >= 1 && page <= middleManagerTotalPages.value),
 );
 const subjectMenuSelectedSubject = computed(() => (subjectMenu.value.open && subjectMenu.value.mode === "single" && subjectMenu.value.rowId !== null ? selfStudyClasses.value.find((item) => item.id === subjectMenu.value.rowId)?.subject ?? null : null));
+const isAssignmentProgressVisible = computed(() => Boolean(store.viewState.assigning));
+const assignmentNoticeIcon = computed(() => {
+  if (isAssignmentProgressVisible.value) return "hourglass_top";
+  return assignmentNotice.value?.type === "success" ? "check_circle" : "info";
+});
+const assignmentNoticeText = computed(() => {
+  if (isAssignmentProgressVisible.value) {
+    return assignmentProgress.value?.message || "正在准备监考分配...";
+  }
+  return assignmentNotice.value?.text || "";
+});
 
 watch(
   () => store.viewState.invigilationConfig,
@@ -928,8 +953,33 @@ async function showAssignmentNotice(type: AssignmentNotice["type"], text: string
 
 async function assignTeachers() {
   assignmentNotice.value = null;
+  assignmentProgress.value = {
+    status: "running",
+    stage: "preparing",
+    stageLabel: "准备开始",
+    percent: 0,
+    message: "正在准备监考分配...",
+    completedSteps: 0,
+    totalSteps: 13,
+    updatedAt: new Date().toISOString(),
+  };
+  await nextTick();
+  assignmentNoticeEl.value?.scrollIntoView({
+    behavior: "smooth",
+    block: "nearest",
+  });
   try {
     const result = await store.assignTeachers();
+    assignmentProgress.value = {
+      status: "completed",
+      stage: "completed",
+      stageLabel: "分配完成",
+      percent: 100,
+      message: "监考分配完成，正在刷新结果...",
+      completedSteps: 13,
+      totalSteps: 13,
+      updatedAt: new Date().toISOString(),
+    };
     const summary =
       result.optimalityStatus === "optimal"
         ? "CP-SAT 求解完成，已证明最优"
@@ -953,6 +1003,7 @@ async function assignTeachers() {
       `${summary}：已分配 ${result.assignedCount} 项，未分配 ${result.unassignedCount} 项，${optimality}，耗时 ${result.solveDurationMs} ms${fallbackPart}。`,
     );
   } catch (error) {
+    assignmentProgress.value = null;
     const message =
       store.viewState.errorMessage ||
       (error instanceof Error ? error.message : String(error)) ||
@@ -970,6 +1021,9 @@ function handleGlobalPointerDown(event: MouseEvent) {
 
 onMounted(async () => {
   document.addEventListener("mousedown", handleGlobalPointerDown);
+  removeAssignmentProgressListener = await listen<ExamStaffAssignmentProgress>(staffAssignmentProgressEvent, (event) => {
+    assignmentProgress.value = event.payload;
+  });
   await store.loadAll();
   await loadSelfStudyClassData();
   await nextTick();
@@ -977,6 +1031,8 @@ onMounted(async () => {
 
 onBeforeUnmount(() => {
   document.removeEventListener("mousedown", handleGlobalPointerDown);
+  removeAssignmentProgressListener?.();
+  removeAssignmentProgressListener = null;
 });
 </script>
 
@@ -1758,9 +1814,11 @@ onBeforeUnmount(() => {
   gap: 10px;
   padding: 14px 16px;
   border-radius: 16px;
-  border: 1px solid transparent;
+  border: 1px solid #dce6f3;
+  background: rgba(247, 251, 255, 0.82);
   font-size: 14px;
   line-height: 1.6;
+  color: var(--color-text);
 }
 
 .assignment-notice.inline {
@@ -1773,27 +1831,53 @@ onBeforeUnmount(() => {
   line-height: 1.45;
 }
 
-.assignment-notice.success {
-  background: transparent;
-  border-color: transparent;
-  color: #166534;
-}
-
-.assignment-notice.error {
-  background: #fff4f4;
-  border-color: #f3b2b2;
-  color: #b42318;
-}
-
 .assignment-notice-icon {
   font-size: 18px;
   line-height: 1.2;
+  color: #0f6cbd;
+}
+
+.assignment-notice-body {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
 }
 
 .assignment-notice-text {
-  flex: 1;
   min-width: 0;
   overflow-wrap: anywhere;
+}
+
+.assignment-progress {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.assignment-progress-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  color: var(--color-text-muted);
+  font-size: 12px;
+}
+
+.assignment-progress-track {
+  width: 100%;
+  height: 6px;
+  border-radius: 999px;
+  background: rgba(15, 108, 189, 0.12);
+  overflow: hidden;
+}
+
+.assignment-progress-bar {
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, #0f6cbd 0%, #4aa3ff 100%);
+  transition: width 220ms ease;
 }
 
 .title-stack {
