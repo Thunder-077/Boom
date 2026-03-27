@@ -868,7 +868,19 @@ fn load_session_time_template_rows(conn: &Connection) -> Result<Vec<ExamSessionT
     for row in rows {
         out.push(row?);
     }
-    out.sort_by(|a, b| subject_order(a.subject).cmp(&subject_order(b.subject)));
+    out.sort_by(|a, b| {
+        let a_ts = a
+            .start_at
+            .as_ref()
+            .and_then(|s| parse_datetime_to_ts(s).ok())
+            .unwrap_or(i64::MAX);
+        let b_ts = b
+            .start_at
+            .as_ref()
+            .and_then(|s| parse_datetime_to_ts(s).ok())
+            .unwrap_or(i64::MAX);
+        a_ts.cmp(&b_ts)
+    });
     Ok(out)
 }
 
