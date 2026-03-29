@@ -15,7 +15,8 @@
         "title": "Academic Administration System",
         "width": 1480,
         "height": 980,
-        "resizable": true
+        "resizable": true,
+        "decorations": false
       }
     ],
     "security": {

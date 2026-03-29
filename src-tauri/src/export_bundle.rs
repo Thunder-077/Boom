@@ -63,7 +63,8 @@ struct StudentBase {
 #[derive(Debug, Clone)]
 struct TicketExamItem {
     subject_label: &'static str,
-    time_display: String,
+    exam_date: String,
+    exam_time: String,
     room: String,
     seat: i64,
     start_ts: i64,
@@ -131,20 +132,29 @@ fn period_label(hour: u32, minute: u32) -> &'static str {
     }
 }
 
+fn format_ticket_date(start: &str) -> Option<String> {
+    let s = parse_datetime(start)?;
+    Some(format!("{}月{}日", s.month(), s.day()))
+}
+
 fn format_ticket_time(start: &str, end: &str) -> Option<String> {
     let s = parse_datetime(start)?;
     let e = parse_datetime(end)?;
     let left_period = period_label(s.hour(), s.minute());
     let right_period = period_label(e.hour(), e.minute());
     Some(format!(
-        "{}月{}日 {}{} — {}{}",
-        s.month(),
-        s.day(),
-        left_period,
-        s.format("%H:%M"),
-        right_period,
-        e.format("%H:%M")
+        "{}{} — {}{}",
+        left_period, s.format("%H:%M"), right_period, e.format("%H:%M")
     ))
+}
+
+fn escape_html(value: &str) -> String {
+    value
+        .replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
+        .replace('\'', "&#39;")
 }
 
 fn settings_from_db(conn: &rusqlite::Connection) -> Result<(String, Vec<String>), AppError> {
@@ -391,48 +401,58 @@ fn build_tickets_html(
     notices: &[String],
     students: &[(StudentBase, Vec<TicketExamItem>)],
 ) -> String {
-    let mut html = String::from(
-        r#"<!DOCTYPE html><html lang="zh-CN"><head><meta charset="UTF-8"/><title>准考证</title><style>
-body{margin:0;font-family:"Microsoft YaHei",sans-serif;background:#f2f2f2}
-.page{width:794px;margin:0 auto 16px;background:#fff;padding:32px;page-break-after:always}
-.title{text-align:center;font-size:28px;font-weight:700;margin-bottom:16px}
-.student-info{display:flex;justify-content:space-between;font-size:16px;margin-bottom:12px}
-table{width:100%;border-collapse:collapse;font-size:14px}
-th,td{border:1px solid #333;padding:6px;text-align:center}
-thead th{background:#2f86c3;color:#fff}
-.notice-title{text-align:center;margin:18px 0 10px;font-size:20px;letter-spacing:6px}
-.notice-list{font-size:13px;line-height:1.8}
-.notice-item{margin:0 0 6px}
-</style></head><body>"#,
-    );
+    let template = include_str!("../zhunkaozhengTemplate.html");
+    let page_start_marker = "<!--TICKET_PAGE_START-->";
+    let page_end_marker = "<!--TICKET_PAGE_END-->";
+    let Some(page_start) = template.find(page_start_marker) else {
+        return "<!DOCTYPE html><html><body><p>准考证模板缺少 TICKET_PAGE_START 标记</p></body></html>".to_string();
+    };
+    let Some(page_end) = template.find(page_end_marker) else {
+        return "<!DOCTYPE html><html><body><p>准考证模板缺少 TICKET_PAGE_END 标记</p></body></html>".to_string();
+    };
+    let page_tpl_start = page_start + page_start_marker.len();
+    if page_end <= page_tpl_start {
+        return "<!DOCTYPE html><html><body><p>准考证模板页面标记顺序错误</p></body></html>".to_string();
+    }
+    let page_tpl = &template[page_tpl_start..page_end];
+    let mut pages_html = String::new();
 
     for (student, exams) in students {
-        html.push_str(r#"<div class="page">"#);
-        html.push_str(&format!(r#"<div class="title">{}</div>"#, exam_title));
-        html.push_str(&format!(
-            r#"<div class="student-info"><div>姓名：{}</div><div>班级：{}</div><div>考号：{}</div></div>"#,
-            student.student_name, student.class_name, student.admission_no
-        ));
-        html.push_str(
-            r#"<table><thead><tr><th>考试科目</th><th>考试时间</th><th>考场</th><th>座号</th></tr></thead><tbody>"#,
-        );
-        for item in exams {
-            html.push_str(&format!(
-                r#"<tr><td>{}</td><td>{}</td><td>{}</td><td>{}</td></tr>"#,
-                item.subject_label, item.time_display, item.room, item.seat
-            ));
-        }
-        html.push_str(
-            r#"</tbody></table><div class="notice-title">考生须知</div><div class="notice-list">"#,
-        );
-        for notice in notices {
-            html.push_str(&format!(r#"<p class="notice-item">{}</p>"#, notice));
-        }
-        html.push_str("</div></div>");
+        let exam_rows = exams
+            .iter()
+            .map(|item| {
+                format!(
+                    r#"<tr><td class="subject">{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td></tr>"#,
+                    escape_html(item.subject_label),
+                    escape_html(&item.exam_date),
+                    escape_html(&item.exam_time),
+                    escape_html(&item.room),
+                    item.seat
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("");
+        let notice_rows = notices
+            .iter()
+            .map(|notice| format!(r#"<li>{}</li>"#, escape_html(notice)))
+            .collect::<Vec<_>>()
+            .join("");
+
+        let page_html = page_tpl
+            .replace("{{EXAM_TITLE}}", &escape_html(exam_title))
+            .replace("{{STUDENT_NAME}}", &escape_html(&student.student_name))
+            .replace("{{CLASS_NAME}}", &escape_html(&student.class_name))
+            .replace("{{ADMISSION_NO}}", &escape_html(&student.admission_no))
+            .replace("{{EXAM_ROWS}}", &exam_rows)
+            .replace("{{NOTICE_ITEMS}}", &notice_rows);
+        pages_html.push_str(&page_html);
     }
 
-    html.push_str("</body></html>");
-    html
+    let mut html = String::new();
+    html.push_str(&template[..page_start]);
+    html.push_str(&pages_html);
+    html.push_str(&template[page_end + page_end_marker.len()..]);
+    html.replace("{{EXAM_TITLE}}", &escape_html(exam_title))
 }
 
 fn export_root_dir(app: &AppHandle) -> Result<PathBuf, AppError> {
@@ -747,7 +767,8 @@ where
                         ) {
                             exams.push(TicketExamItem {
                                 subject_label: session.subject_label,
-                                time_display: format_ticket_time(start, end).unwrap_or_default(),
+                                exam_date: format_ticket_date(start).unwrap_or_default(),
+                                exam_time: format_ticket_time(start, end).unwrap_or_default(),
                                 room: room.clone(),
                                 seat: *seat,
                                 start_ts,

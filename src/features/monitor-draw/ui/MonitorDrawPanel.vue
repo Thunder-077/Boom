@@ -17,7 +17,7 @@
       <p class="lead">为每个考场一次性分配监考员甲/乙，支持固定结对和随机结对。</p>
       <p class="desc">流程：录入考场 → 导入监考员 → 选择方式 → 批量抽签 → 查看结果</p>
       <div class="prepare-list">
-        <span class="pill">准备考场号列表</span>
+        <span class="pill">准备考场</span>
         <span class="pill">准备监考员Excel</span>
         <span class="pill">确认结对方式（固定或随机）</span>
       </div>
