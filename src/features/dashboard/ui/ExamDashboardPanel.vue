@@ -1,7 +1,7 @@
 <template>
   <section class="dashboard-grid">
     <div class="left-col">
-      <ConfigCard title="当前考试配置" description="统一设置考试标题、须知与各科目时间。Ctrl+S 只保存本页配置，不会触发考场分配。">
+      <ConfigCard title="当前考试配置" description="统一设置考试标题、须知与各科目时间，修改后自动保存本页配置。">
         <div class="field-stack" :style="{ opacity: store.viewState.loading ? 0 : 1, pointerEvents: store.viewState.loading ? 'none' : 'auto', transition: 'opacity 0.3s ease' }">
           <label class="field-block">
             <span class="metric-label">考试标题</span>
@@ -13,7 +13,7 @@
             />
           </label>
           <label class="field-block">
-            <span class="metric-label">考试须知</span>
+            <span class="metric-label">考生须知</span>
             <textarea
               v-model="capacityForm.examNoticesText"
               class="glass-area filled-area"
@@ -21,6 +21,9 @@
             />
           </label>
         </div>
+        <p class="autosave-note" :class="{ error: !!autoSaveError }" aria-live="polite">
+          {{ autoSaveError ? `自动保存失败：${autoSaveError}` : autoSaveText }}
+        </p>
       </ConfigCard>
 
       <TableCard title="考试时间">
@@ -111,7 +114,7 @@
         </div>
         <p class="progress-desc">{{ progressDescription }}</p>
         <div class="cta-row">
-          <button class="primary-btn" :disabled="store.viewState.generating || isApplyingConfig" @click="generateExamPlan">
+          <button class="primary-btn" :disabled="store.viewState.generating || isPreparingGenerate" @click="generateExamPlan">
             {{ generateActionText }}
           </button>
           <strong class="percent">{{ progressPercent }}%</strong>
@@ -162,7 +165,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, reactive } from "vue";
+import { computed, onMounted, onUnmounted, reactive, ref, watch } from "vue";
 import { SUBJECT_LABELS } from "../../../entities/class-config/model";
 import { Subject } from "../../../entities/score/model";
 import { revealInExplorer } from "../../../shared/utils/appLog";
@@ -194,6 +197,14 @@ const dateEditState = reactive<{ sessionId: number | null; value: string }>({
   value: "",
 });
 let manualSubjectRowId = 1;
+let autoSaveTimer: ReturnType<typeof setTimeout> | null = null;
+const autoSaveReady = ref(false);
+const autoSaving = ref(false);
+const autoSaveError = ref("");
+const autoSavedAt = ref(0);
+const autoSaveDirty = ref(false);
+const suppressAutoSave = ref(false);
+const isPreparingGenerate = ref(false);
 
 const progressPercent = computed(() => {
   if (store.viewState.generating || store.viewState.generationProgress.status === "running") {
@@ -328,12 +339,33 @@ function getDraftDate(sessionId: number): string {
 }
 
 const isApplyingConfig = computed(() => store.viewState.saving || store.viewState.savingTimes);
+const autoSaveText = computed(() => {
+  if (store.viewState.loading) return "正在加载配置...";
+  if (autoSaving.value) return "正在自动保存...";
+  if (autoSavedAt.value > 0) {
+    return `已自动保存（${new Date(autoSavedAt.value).toLocaleTimeString("zh-CN", { hour12: false })}）`;
+  }
+  return "修改后自动保存";
+});
+const completeManualRowsSignature = computed(() =>
+  JSON.stringify(
+    manualSubjectRows
+      .filter((row) => row.examMonthDay.trim() && row.startTime.trim() && row.endTime.trim())
+      .map((row) => ({
+        id: row.id,
+        subject: row.subject,
+        examMonthDay: row.examMonthDay.trim(),
+        startTime: row.startTime.trim(),
+        endTime: row.endTime.trim(),
+      })),
+  ),
+);
 
 const generateActionText = computed(() => {
   if (store.viewState.generating) {
     return "分配中...";
   }
-  if (isApplyingConfig.value) {
+  if (isPreparingGenerate.value) {
     return "保存配置中...";
   }
   return "开始分配考场";
@@ -437,7 +469,8 @@ function onGlobalPointerDown(event: PointerEvent) {
   commitDateEdit(dateEditState.sessionId);
 }
 
-async function persistDrafts() {
+async function persistDrafts(options: { strictManualRows?: boolean; clearManualRows?: boolean } = {}) {
+  const { strictManualRows = true, clearManualRows = true } = options;
   const examNotices = capacityForm.examNoticesText
     .split(/\r?\n/)
     .map((line) => line.trim())
@@ -447,7 +480,10 @@ async function persistDrafts() {
   const extraItems: Array<{ sessionId: number; subject: Subject; startAt: string; endAt: string }> = [];
   for (const row of manualSubjectRows) {
     if (!row.examMonthDay || !row.startTime || !row.endTime) {
-      throw new Error(`请先完整填写 ${SUBJECT_LABELS[row.subject]} 的考试日期（月-日）、开始时间和结束时间`);
+      if (strictManualRows) {
+        throw new Error(`请先完整填写 ${SUBJECT_LABELS[row.subject]} 的考试日期（月-日）、开始时间和结束时间`);
+      }
+      continue;
     }
     const existing = store.viewState.sessionTimes.find((item) => item.subject === row.subject);
     if (existing) {
@@ -467,7 +503,9 @@ async function persistDrafts() {
   }
 
   await store.saveSessionTimes(extraItems);
-  manualSubjectRows.splice(0, manualSubjectRows.length);
+  if (clearManualRows) {
+    manualSubjectRows.splice(0, manualSubjectRows.length);
+  }
 }
 
 async function removeExistingSubjectTime(subject: Subject) {
@@ -475,21 +513,54 @@ async function removeExistingSubjectTime(subject: Subject) {
 }
 
 async function generateExamPlan() {
-  await persistDrafts();
+  if (store.viewState.generating || isPreparingGenerate.value) return;
+  isPreparingGenerate.value = true;
+  autoSaveError.value = "";
+  if (autoSaveTimer) {
+    clearTimeout(autoSaveTimer);
+    autoSaveTimer = null;
+  }
+  autoSaveDirty.value = false;
+  suppressAutoSave.value = true;
+  try {
+    await persistDrafts();
+  } finally {
+    suppressAutoSave.value = false;
+    isPreparingGenerate.value = false;
+  }
   await store.generate();
 }
-
-async function saveAllByShortcut() {
-  if (store.viewState.generating || isApplyingConfig.value) {
-    return;
+function scheduleAutoSave(delay = 700) {
+  if (!autoSaveReady.value || suppressAutoSave.value) return;
+  autoSaveDirty.value = true;
+  if (autoSaveTimer) {
+    clearTimeout(autoSaveTimer);
   }
-  await persistDrafts();
+  autoSaveTimer = setTimeout(() => {
+    void flushAutoSave();
+  }, delay);
 }
 
-function onGlobalKeydown(event: KeyboardEvent) {
-  if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "s") {
-    event.preventDefault();
-    void saveAllByShortcut();
+async function flushAutoSave() {
+  if (!autoSaveReady.value || suppressAutoSave.value || !autoSaveDirty.value) return;
+  if (store.viewState.generating || isApplyingConfig.value) {
+    scheduleAutoSave(400);
+    return;
+  }
+  autoSaveDirty.value = false;
+  autoSaving.value = true;
+  autoSaveError.value = "";
+  suppressAutoSave.value = true;
+  try {
+    await persistDrafts({ strictManualRows: false, clearManualRows: false });
+    autoSavedAt.value = Date.now();
+  } catch (error) {
+    autoSaveDirty.value = true;
+    autoSaveError.value = error instanceof Error ? error.message : String(error);
+    scheduleAutoSave(1200);
+  } finally {
+    suppressAutoSave.value = false;
+    autoSaving.value = false;
   }
 }
 
@@ -505,18 +576,47 @@ async function openExportFolder() {
   await revealInExplorer(target);
 }
 
+watch(
+  () => [capacityForm.examTitle, capacityForm.examNoticesText, capacityForm.defaultCapacity, capacityForm.maxCapacity],
+  () => {
+    if (!autoSaveReady.value || suppressAutoSave.value) return;
+    autoSaveError.value = "";
+    scheduleAutoSave();
+  },
+);
+
+watch(
+  () => store.viewState.sessionTimeDrafts,
+  () => {
+    if (!autoSaveReady.value || suppressAutoSave.value) return;
+    autoSaveError.value = "";
+    scheduleAutoSave(850);
+  },
+  { deep: true },
+);
+
+watch(completeManualRowsSignature, (next, prev) => {
+  if (!autoSaveReady.value || suppressAutoSave.value) return;
+  if (next === prev) return;
+  autoSaveError.value = "";
+  scheduleAutoSave(850);
+});
+
 onMounted(async () => {
   await store.loadAll();
   capacityForm.defaultCapacity = store.viewState.settings.defaultCapacity;
   capacityForm.maxCapacity = store.viewState.settings.maxCapacity;
   capacityForm.examTitle = store.viewState.settings.examTitle ?? "";
   capacityForm.examNoticesText = (store.viewState.settings.examNotices ?? []).join("\n");
-  window.addEventListener("keydown", onGlobalKeydown);
+  autoSaveReady.value = true;
   window.addEventListener("pointerdown", onGlobalPointerDown, true);
 });
 
 onUnmounted(() => {
-  window.removeEventListener("keydown", onGlobalKeydown);
+  if (autoSaveTimer) {
+    clearTimeout(autoSaveTimer);
+    autoSaveTimer = null;
+  }
   window.removeEventListener("pointerdown", onGlobalPointerDown, true);
 });
 </script>
@@ -524,7 +624,7 @@ onUnmounted(() => {
 <style scoped>
 .dashboard-grid {
   display: grid;
-  grid-template-columns: 672px 346px;
+  grid-template-columns: minmax(0, 1.75fr) minmax(320px, 1fr);
   gap: 22px;
 }
 
@@ -568,6 +668,7 @@ onUnmounted(() => {
 .right-col {
   display: flex;
   flex-direction: column;
+  min-width: 0;
 }
 
 .left-col {
@@ -591,6 +692,16 @@ onUnmounted(() => {
   display: flex;
   flex-direction: column;
   gap: 8px;
+}
+
+.autosave-note {
+  margin: 6px 0 0;
+  font-size: 12px;
+  color: #5f738d;
+}
+
+.autosave-note.error {
+  color: var(--color-danger);
 }
 
 .filled-field::placeholder,
