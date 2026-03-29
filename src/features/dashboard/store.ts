@@ -65,17 +65,6 @@ const emptyGenerationProgress: ExamGenerationProgress = {
   updatedAt: "",
 };
 
-const emptyStaffAssignmentProgress: ExamStaffAssignmentProgress = {
-  status: "running",
-  stage: "preparing",
-  stageLabel: "准备开始",
-  percent: 0,
-  message: "正在准备监考分配...",
-  completedSteps: 0,
-  totalSteps: 13,
-  updatedAt: "",
-};
-
 const defaultInvigilationConfig: InvigilationConfig = {
   defaultExamRoomRequiredCount: 1,
   indoorAllowancePerMinute: 0.5,

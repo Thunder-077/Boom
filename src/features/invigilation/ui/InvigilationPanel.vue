@@ -39,14 +39,14 @@
       <div class="exclude-toolbar">
         <FluentSelect
           :model-value="selectedTeacherId ?? ''"
-          :options="teacherSelectOptions"
+          :options="teacherSelectOptions as any"
           @update:model-value="pickTeacher"
           style="width: 220px;"
         />
 
         <FluentSelect
           :model-value="selectedSessionId ?? ''"
-          :options="sessionSelectOptions"
+          :options="sessionSelectOptions as any"
           @update:model-value="pickSession"
           style="width: 260px;"
         />

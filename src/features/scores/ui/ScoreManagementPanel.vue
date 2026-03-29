@@ -9,7 +9,7 @@
     <FilterToolbar :items="[]">
       <div class="toolbar-fields">
         <FluentSelect
-          :model-value="store.viewState.filters.gradeName"
+          :model-value="store.viewState.filters.gradeName ?? ''"
           :options="[{ label: '全部年级', value: '' }, { label: '高一', value: '高一' }, { label: '高二', value: '高二' }, { label: '高三', value: '高三' }]"
           @update:model-value="store.setFilters({ gradeName: $event as string })"
           style="width: 220px;"

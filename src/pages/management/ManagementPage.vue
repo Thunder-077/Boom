@@ -15,8 +15,10 @@
       <ScoreManagementPanel v-else-if="activeSection === 'scores'" />
       <ClassConfigPanel v-else-if="activeSection === 'classes'" />
       <ExamDashboardPanel v-else-if="activeSection === 'exam-assignment'" />
-      <InvigilationPanel v-else-if="activeSection === 'monitor-config'" />
-      <!-- monitor-draw is a placeholder for now like in the old DashboardPage -->
+      <KeepAlive>
+        <MonitorDrawPanel v-if="activeSection === 'monitor-draw'" />
+      </KeepAlive>
+      <InvigilationPanel v-if="activeSection === 'monitor-config'" />
     </AppShell>
   </div>
 </template>
@@ -31,6 +33,7 @@ import type { RailItem, SecondaryNavItem } from "../../widgets/layout/types";
 import ClassConfigPanel from "../../features/classes/ui/ClassConfigPanel.vue";
 import ExamDashboardPanel from "../../features/dashboard/ui/ExamDashboardPanel.vue";
 import InvigilationPanel from "../../features/invigilation/ui/InvigilationPanel.vue";
+import MonitorDrawPanel from "../../features/monitor-draw/ui/MonitorDrawPanel.vue";
 import ScoreManagementPanel from "../../features/scores/ui/ScoreManagementPanel.vue";
 import TeacherListPanel from "../../features/teachers/ui/TeacherListPanel.vue";
 

@@ -11,8 +11,18 @@
               placeholder="请输入班级名称"
               @input="onSearchInput"
               @focus="onSearchFocus"
+              @click="onSearchFocus"
               @blur="onSearchBlur"
             />
+            <button
+              v-if="searchKeyword"
+              type="button"
+              class="clear-btn"
+              @mousedown.prevent
+              @click="clearSearchKeyword"
+            >
+              <span class="material-symbols-rounded" aria-hidden="true">close</span>
+            </button>
           </label>
           <div v-if="showSuggestionList" class="suggestion-list">
             <button
@@ -422,6 +432,11 @@ function onRoomLabelInput(event: Event) {
   store.setFormField("roomLabel", value || null);
 }
 
+function clearSearchKeyword() {
+  searchKeyword.value = "";
+  isSuggestionOpen.value = true;
+}
+
 async function deleteCurrent() {
   if (!store.viewState.editingId) {
     return;
@@ -532,6 +547,28 @@ onMounted(async () => {
   display: flex;
   align-items: center;
   gap: 10px;
+  position: relative;
+}
+
+.clear-btn {
+  border: 0;
+  background: transparent;
+  color: var(--color-text-muted);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  margin-left: auto;
+  flex-shrink: 0;
+}
+
+.clear-btn .material-symbols-rounded {
+  font-size: 20px;
+}
+
+.clear-btn:hover {
+  color: var(--color-text);
 }
 
 .class-input-shell:focus-within {
@@ -663,15 +700,20 @@ onMounted(async () => {
 }
 
 .current-input-wrap {
-  width: 400px;
+  width: 280px;
   max-width: 100%;
   display: flex;
   flex-direction: column;
   gap: 10px;
+  align-items: flex-start;
+  flex-shrink: 0;
 }
 
 .room-label-wrap {
   width: 280px;
+  align-items: flex-start;
+  margin-left: auto;
+  margin-right: 32px;
 }
 
 .room-label-input-shell {
@@ -688,6 +730,10 @@ onMounted(async () => {
   font-weight: 600;
 }
 
+.room-label-input:focus {
+  outline: none;
+}
+
 .current-input-shell {
   padding-right: 18px;
 }
@@ -697,6 +743,7 @@ onMounted(async () => {
   color: var(--color-text-muted);
   font-size: 13px;
   line-height: 1.5;
+  white-space: nowrap;
 }
 
 .status-copy-new {
