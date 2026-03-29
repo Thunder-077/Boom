@@ -10,6 +10,7 @@ import type {
   ExamStaffTaskQuery,
   TeacherDutyStat,
   ExportLatestInvigilationScheduleResult,
+  MonitorDrawImportResult,
 } from "../../entities/exam-plan/model";
 import type { ListResult } from "../../shared/types/api";
 import type { TeacherRow } from "../../entities/teacher/model";
@@ -24,6 +25,7 @@ export interface InvigilationService {
   listInvigilationExclusionSessionOptions(): Promise<InvigilationExclusionSessionOption[]>;
   listTeachers(params?: { nameKeyword?: string; page?: number; pageSize?: number }): Promise<ListResult<TeacherRow>>;
   exportLatestInvigilationSchedule(): Promise<ExportLatestInvigilationScheduleResult>;
+  importMonitorDrawPairsExcel(filePath: string): Promise<MonitorDrawImportResult>;
 }
 
 export const invigilationService: InvigilationService = {
@@ -53,5 +55,8 @@ export const invigilationService: InvigilationService = {
   },
   exportLatestInvigilationSchedule() {
     return invoke<ExportLatestInvigilationScheduleResult>("export_latest_invigilation_schedule");
+  },
+  importMonitorDrawPairsExcel(filePath) {
+    return invoke<MonitorDrawImportResult>("import_monitor_draw_pairs_from_excel", { filePath });
   },
 };

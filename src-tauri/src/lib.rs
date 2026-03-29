@@ -53,6 +53,7 @@ pub fn run() {
             invigilation::save_persisted_invigilation_config,
             invigilation::replace_persisted_invigilation_exclusions,
             invigilation::save_persisted_self_study_class_subjects,
+            invigilation::import_monitor_draw_pairs_from_excel,
             invigilation::generate_latest_exam_staff_plan,
             invigilation::get_latest_exam_staff_plan_overview,
             invigilation::list_latest_exam_staff_tasks,

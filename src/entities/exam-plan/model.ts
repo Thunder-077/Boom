@@ -250,6 +250,19 @@ export interface SelfStudyClassSubjectConfig {
   subject: Subject | null;
 }
 
+export interface MonitorDrawImportRow {
+  groupNo: string;
+  invigilatorAName: string;
+  invigilatorBName: string;
+}
+
+export interface MonitorDrawImportResult {
+  importedAt: string;
+  rowCount: number;
+  durationMs: number;
+  rows: MonitorDrawImportRow[];
+}
+
 export interface GenerateExamStaffPlanPayload {
   defaultExamRoomRequiredCount: number;
   indoorAllowancePerMinute: number;

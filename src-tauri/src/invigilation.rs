@@ -10,6 +10,7 @@ pub use crate::exam_staff::{
     GenerateExamStaffPlanPayload, GenerateLatestExamStaffPlanResult,
     InvigilationExclusionSessionOption, ListExamStaffTasksParams, ListTeacherDutyStatsParams,
     PersistedExamStaffExclusion, PersistedInvigilationConfig, PersistedInvigilationState,
+    MonitorDrawImportResult,
     PersistedSelfStudyClassSubject, TeacherDutyStat,
 };
 pub use crate::export_invigilation::ExportLatestInvigilationScheduleResult;
@@ -71,6 +72,14 @@ pub fn save_persisted_self_study_class_subjects(
     items: Vec<PersistedSelfStudyClassSubject>,
 ) -> Result<SuccessResponse, String> {
     exam_staff::save_persisted_self_study_class_subjects(app, items)
+}
+
+#[tauri::command]
+pub fn import_monitor_draw_pairs_from_excel(
+    app: AppHandle,
+    file_path: String,
+) -> Result<MonitorDrawImportResult, String> {
+    exam_staff::import_monitor_draw_pairs_from_excel(app, file_path)
 }
 
 #[tauri::command]

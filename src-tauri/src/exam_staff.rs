@@ -2,6 +2,7 @@ use std::collections::{HashMap, HashSet};
 use std::path::Path;
 use std::time::Instant;
 
+use calamine::{Data, Reader, open_workbook_auto};
 use chrono::{DateTime, NaiveDateTime, Timelike, Utc};
 use cp_sat::builder::{BoolVar, CpModelBuilder, IntVar, LinearExpr};
 use cp_sat::proto::{CpSolverResponse, CpSolverStatus, SatParameters};
@@ -436,6 +437,23 @@ pub struct PersistedExamStaffExclusion {
 pub struct PersistedSelfStudyClassSubject {
     class_id: i64,
     subject: Option<Subject>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MonitorDrawImportRow {
+    group_no: String,
+    invigilator_a_name: String,
+    invigilator_b_name: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MonitorDrawImportResult {
+    imported_at: String,
+    row_count: i64,
+    duration_ms: i64,
+    rows: Vec<MonitorDrawImportRow>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -3063,12 +3081,213 @@ fn default_persisted_invigilation_config() -> PersistedInvigilationConfig {
     }
 }
 
+fn remove_legacy_monitor_draw_fixed_pairs_column(conn: &Connection) -> Result<(), AppError> {
+    let mut stmt = conn.prepare("PRAGMA table_info(invigilation_config_settings)")?;
+    let rows = stmt.query_map([], |row| row.get::<_, String>(1))?;
+    let mut has_legacy_column = false;
+    for row in rows {
+        if row?.eq("monitor_draw_fixed_pairs_json") {
+            has_legacy_column = true;
+            break;
+        }
+    }
+    if !has_legacy_column {
+        return Ok(());
+    }
+
+    conn.execute_batch(
+        r#"
+        BEGIN IMMEDIATE;
+        CREATE TABLE IF NOT EXISTS invigilation_config_settings_new (
+            id INTEGER PRIMARY KEY,
+            default_exam_room_required_count INTEGER NOT NULL DEFAULT 1,
+            indoor_allowance_per_minute REAL NOT NULL DEFAULT 0.5,
+            outdoor_allowance_per_minute REAL NOT NULL DEFAULT 0.3,
+            middle_manager_default_enabled INTEGER NOT NULL DEFAULT 0,
+            middle_manager_exception_teacher_ids_json TEXT NOT NULL DEFAULT '[]',
+            self_study_date TEXT NOT NULL DEFAULT '',
+            self_study_start_time TEXT NOT NULL DEFAULT '12:10',
+            self_study_end_time TEXT NOT NULL DEFAULT '13:40',
+            self_study_class_subjects_json TEXT NOT NULL DEFAULT '[]',
+            updated_at TEXT NOT NULL
+        );
+        INSERT INTO invigilation_config_settings_new
+        (id, default_exam_room_required_count, indoor_allowance_per_minute, outdoor_allowance_per_minute, middle_manager_default_enabled, middle_manager_exception_teacher_ids_json, self_study_date, self_study_start_time, self_study_end_time, self_study_class_subjects_json, updated_at)
+        SELECT
+            id,
+            default_exam_room_required_count,
+            indoor_allowance_per_minute,
+            outdoor_allowance_per_minute,
+            middle_manager_default_enabled,
+            middle_manager_exception_teacher_ids_json,
+            self_study_date,
+            self_study_start_time,
+            self_study_end_time,
+            self_study_class_subjects_json,
+            updated_at
+        FROM invigilation_config_settings;
+        DROP TABLE invigilation_config_settings;
+        ALTER TABLE invigilation_config_settings_new RENAME TO invigilation_config_settings;
+        COMMIT;
+        "#,
+    )?;
+    Ok(())
+}
+
+fn monitor_draw_cell_to_string(cell: Option<&Data>) -> String {
+    match cell {
+        Some(Data::String(s)) => s.trim().to_string(),
+        Some(Data::Float(v)) => {
+            if v.fract().abs() < 1e-9 {
+                format!("{v:.0}")
+            } else {
+                v.to_string()
+            }
+        }
+        Some(Data::Int(v)) => v.to_string(),
+        Some(Data::Bool(v)) => v.to_string(),
+        Some(Data::DateTimeIso(s)) => s.trim().to_string(),
+        Some(Data::DurationIso(s)) => s.trim().to_string(),
+        Some(Data::Empty) | None => String::new(),
+        Some(other) => other.to_string().trim().to_string(),
+    }
+}
+
+fn normalize_monitor_draw_header(text: &str) -> String {
+    text.trim().replace(' ', "").replace('\n', "")
+}
+
+fn monitor_draw_header_has(header: &str, aliases: &[&str]) -> bool {
+    aliases.iter().any(|alias| header == *alias)
+}
+
+pub fn import_monitor_draw_pairs_from_excel(
+    app: AppHandle,
+    file_path: String,
+) -> Result<MonitorDrawImportResult, String> {
+    let started = Instant::now();
+    let result = (|| -> Result<MonitorDrawImportResult, AppError> {
+        let conn = score::open_connection(&app)?;
+        exam_allocation::ensure_schema(&conn)?;
+        remove_legacy_monitor_draw_fixed_pairs_column(&conn)?;
+
+        let path_text = file_path.trim();
+        if path_text.is_empty() {
+            return Err(AppError::new("未提供可导入的 Excel 文件路径"));
+        }
+        let path = Path::new(path_text);
+        if !path.exists() {
+            return Err(AppError::new(format!("文件不存在：{}", path.display())));
+        }
+
+        let mut workbook = open_workbook_auto(path)
+            .map_err(|error| AppError::new(format!("无法打开 Excel 文件: {error}")))?;
+        let sheet_name = workbook
+            .sheet_names()
+            .first()
+            .cloned()
+            .ok_or_else(|| AppError::new("Excel 文件没有可读取的工作表"))?;
+        let range = workbook
+            .worksheet_range(&sheet_name)
+            .map_err(|error| AppError::new(format!("读取工作表失败: {error}")))?;
+
+        let mut rows_iter = range.rows();
+        let header_row = rows_iter
+            .next()
+            .ok_or_else(|| AppError::new("Excel 内容为空，至少需要一行表头"))?;
+        let headers = header_row
+            .iter()
+            .enumerate()
+            .map(|(index, cell)| {
+                (
+                    index,
+                    normalize_monitor_draw_header(&monitor_draw_cell_to_string(Some(cell))),
+                )
+            })
+            .collect::<Vec<_>>();
+
+        let group_col = headers
+            .iter()
+            .find(|(_, text)| monitor_draw_header_has(text, &["组号", "普通序号", "序号"]))
+            .map(|(index, _)| *index)
+            .ok_or_else(|| AppError::new("导入失败：缺少“组号”列"))?;
+        let a_col = headers
+            .iter()
+            .find(|(_, text)| monitor_draw_header_has(text, &["监考员甲", "甲姓名", "甲"]))
+            .map(|(index, _)| *index)
+            .ok_or_else(|| AppError::new("导入失败：缺少“监考员甲”列"))?;
+        let b_col = headers
+            .iter()
+            .find(|(_, text)| monitor_draw_header_has(text, &["监考员乙", "乙姓名", "乙"]))
+            .map(|(index, _)| *index)
+            .ok_or_else(|| AppError::new("导入失败：缺少“监考员乙”列"))?;
+
+        let mut seen_groups = HashSet::<String>::new();
+        let mut seen_a_names = HashSet::<String>::new();
+        let mut seen_b_names = HashSet::<String>::new();
+        let mut imported_rows = Vec::<MonitorDrawImportRow>::new();
+
+        for (offset, row) in rows_iter.enumerate() {
+            let row_no = offset + 2;
+            let group_no = monitor_draw_cell_to_string(row.get(group_col));
+            let invigilator_a_name = monitor_draw_cell_to_string(row.get(a_col));
+            let invigilator_b_name = monitor_draw_cell_to_string(row.get(b_col));
+
+            if group_no.is_empty() && invigilator_a_name.is_empty() && invigilator_b_name.is_empty() {
+                continue;
+            }
+            if group_no.is_empty() || invigilator_a_name.is_empty() || invigilator_b_name.is_empty() {
+                return Err(AppError::new(format!("第 {row_no} 行存在空值：组号、监考员甲、监考员乙均为必填")));
+            }
+            if invigilator_a_name == invigilator_b_name {
+                return Err(AppError::new(format!("第 {row_no} 行数据非法：监考员甲与监考员乙不能为同一人")));
+            }
+            if !seen_groups.insert(group_no.clone()) {
+                return Err(AppError::new(format!("导入失败：组号“{group_no}”重复")));
+            }
+            if !seen_a_names.insert(invigilator_a_name.clone()) {
+                return Err(AppError::new(format!("导入失败：监考员甲“{invigilator_a_name}”重复")));
+            }
+            if !seen_b_names.insert(invigilator_b_name.clone()) {
+                return Err(AppError::new(format!("导入失败：监考员乙“{invigilator_b_name}”重复")));
+            }
+
+            imported_rows.push(MonitorDrawImportRow {
+                group_no,
+                invigilator_a_name,
+                invigilator_b_name,
+            });
+        }
+
+        if imported_rows.is_empty() {
+            return Err(AppError::new("未识别到可用数据，请检查表格内容"));
+        }
+
+        Ok(MonitorDrawImportResult {
+            imported_at: Utc::now().to_rfc3339(),
+            row_count: imported_rows.len() as i64,
+            duration_ms: started.elapsed().as_millis() as i64,
+            rows: imported_rows,
+        })
+    })();
+    if let Err(error) = &result {
+        let _ = app_log::append_log(
+            &app,
+            "error",
+            "invigilation.import_monitor_draw_pairs_from_excel",
+            &format!("失败: {error}"),
+        );
+    }
+    result.map_err(|error| error.to_string())
+}
+
 pub fn get_persisted_invigilation_state(
     app: AppHandle,
 ) -> Result<PersistedInvigilationState, String> {
     let result = (|| -> Result<PersistedInvigilationState, AppError> {
         let conn = score::open_connection(&app)?;
         exam_allocation::ensure_schema(&conn)?;
+        remove_legacy_monitor_draw_fixed_pairs_column(&conn)?;
 
         let config = conn
             .query_row(
@@ -3162,6 +3381,7 @@ pub fn save_persisted_invigilation_config(
     let result = (|| -> Result<SuccessResponse, AppError> {
         let conn = score::open_connection(&app)?;
         exam_allocation::ensure_schema(&conn)?;
+        remove_legacy_monitor_draw_fixed_pairs_column(&conn)?;
         let now = Utc::now().to_rfc3339();
         let middle_manager_exception_teacher_ids_json = serde_json::to_string(
             &normalize_teacher_id_list(payload.middle_manager_exception_teacher_ids.clone()),
@@ -3208,6 +3428,7 @@ pub fn save_persisted_self_study_class_subjects(
     let result = (|| -> Result<SuccessResponse, AppError> {
         let conn = score::open_connection(&app)?;
         exam_allocation::ensure_schema(&conn)?;
+        remove_legacy_monitor_draw_fixed_pairs_column(&conn)?;
         let now = Utc::now().to_rfc3339();
         let json_text = serde_json::to_string(&items)
             .map_err(|e| AppError::new(format!("自习科目配置序列化失败: {e}")))?;

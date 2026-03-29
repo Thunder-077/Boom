@@ -15,13 +15,13 @@
           <input class="glass-field" :value="store.viewState.filters.nameKeyword" placeholder="按教师姓名查询" @input="onNameInput" />
         </label>
         <FluentSelect
-          :model-value="store.viewState.filters.className"
+          :model-value="store.viewState.filters.className ?? ''"
           :options="[{ label: '班级', value: '' }, ...classOptions.map(c => ({ label: c, value: c }))]"
           @update:model-value="store.setFilters({ className: $event as string })"
           style="width: 150px;"
         />
         <FluentSelect
-          :model-value="store.viewState.filters.subject"
+          :model-value="store.viewState.filters.subject ?? ''"
           :options="TEACHER_SUBJECT_OPTIONS"
           @update:model-value="store.setFilters({ subject: $event as any })"
           style="width: 150px;"
@@ -74,7 +74,7 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref, watch } from "vue";
 import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
-import { TEACHER_SUBJECT_LABELS, type TeacherSubject } from "../../../entities/teacher/model";
+import { TEACHER_SUBJECT_LABELS } from "../../../entities/teacher/model";
 import FilterToolbar from "../../../widgets/common/FilterToolbar.vue";
 import FluentSelect from "../../../widgets/common/FluentSelect.vue";
 import InfoHint from "../../../widgets/common/InfoHint.vue";
