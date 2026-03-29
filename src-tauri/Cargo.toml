@@ -1,7 +1,7 @@
 [package]
 name = "academic-administration-system"
 version = "0.1.0"
-description = "Academic Administration System desktop app"
+description = "Boom desktop app"
 authors = ["you"]
 edition = "2021"
 
