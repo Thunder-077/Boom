@@ -90,7 +90,7 @@ const classOptions = computed(() =>
 );
 
 const currentPage = ref(1);
-const pageSize = ref(15);
+const pageSize = ref(5);
 
 const totalRows = computed(() => store.viewState.rows.length);
 const totalPages = computed(() => Math.max(1, Math.ceil(totalRows.value / pageSize.value)));
