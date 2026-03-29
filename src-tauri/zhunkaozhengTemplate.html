@@ -2,143 +2,228 @@
 <html lang="zh-CN">
 <head>
   <meta charset="UTF-8" />
-  <title>准考证</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>准考证-{{EXAM_TITLE}}</title>
   <style>
+    @page {
+      size: A4 portrait;
+      margin: 0;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
     body {
       margin: 0;
-      font-family: "Microsoft YaHei", sans-serif;
-      background: #f2f2f2;
+      background: #f4f6f8;
+      font-family: "Microsoft YaHei", "PingFang SC", Arial, sans-serif;
+      color: #222;
     }
 
     .page {
-      width: 794px;
+      width: 210mm;
+      min-height: 297mm;
       margin: 0 auto;
       background: #fff;
-      padding: 40px;
+      padding: 10mm;
+      page-break-after: always;
     }
 
-    .title {
+    .ticket {
+      width: 100%;
+      min-height: calc(297mm - 20mm);
+      border: 2px solid #222;
+      overflow: hidden;
+      background: #fff;
+    }
+
+    .header {
       text-align: center;
-      font-size: 32px;
-      font-weight: bold;
-      margin-bottom: 20px;
+      padding: 8mm 8mm 5mm;
+      border-bottom: 2px solid #222;
+    }
+
+    .header h1 {
+      margin: 0;
+      font-size: 22pt;
+      font-weight: 700;
+      line-height: 1.35;
+    }
+
+    .header h2 {
+      margin: 4px 0 6px;
+      font-size: 16pt;
+      font-weight: 700;
+      line-height: 1.35;
+    }
+
+    .main-title {
+      font-size: 20pt;
+      font-weight: 700;
+      letter-spacing: 6px;
+      line-height: 1.35;
+    }
+
+    .section {
+      padding: 5mm 6mm;
+      border-bottom: 1px solid #d9d9d9;
+    }
+
+    .section:last-of-type {
+      border-bottom: none;
+    }
+
+    .section-title {
+      margin: 0 0 3mm;
+      font-size: 13pt;
+      font-weight: 700;
+      color: #111;
+      padding-left: 8px;
+      border-left: 4px solid #222;
+      line-height: 1.2;
     }
 
     .student-info {
-      display: flex;
-      justify-content: space-between;
-      font-size: 18px;
-      margin-bottom: 15px;
-    }
-
-    table {
       width: 100%;
       border-collapse: collapse;
-      font-size: 16px;
+      font-size: 12pt;
+      table-layout: fixed;
     }
 
-    th, td {
-      border: 1px solid #333;
-      padding: 6px;
+    .student-info td {
+      border: 1px solid #222;
+      padding: 6px 8px;
+      height: 12mm;
+      vertical-align: middle;
+      word-break: break-all;
+    }
+
+    .label {
+      width: 12%;
+      font-weight: 700;
+      background: #fafafa;
       text-align: center;
+      white-space: nowrap;
     }
 
-    thead th {
-      background: #2f86c3;
-      color: #fff;
+    .value {
+      width: 21.33%;
     }
 
-    .notice-title {
+    .exam-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 10.5pt;
+      table-layout: fixed;
+    }
+
+    .exam-table th,
+    .exam-table td {
+      border: 1px solid #222;
+      padding: 5px 4px;
       text-align: center;
-      margin: 20px 0;
-      font-size: 22px;
-      letter-spacing: 10px;
+      vertical-align: middle;
+      line-height: 1.45;
+      word-break: break-word;
     }
 
-    .notice-list {
-      font-size: 14px;
-      line-height: 1.8;
+    .exam-table th {
+      background: #f1f1f1;
+      font-weight: 700;
+    }
+
+    .exam-table td.subject {
+      font-weight: 700;
+    }
+
+    .notes-box {
+      border: 1px solid #222;
+      padding: 6px 8px;
+    }
+
+    .notes-box ol {
+      margin: 0;
+      padding-left: 22px;
+      line-height: 1.7;
+      font-size: 10pt;
+    }
+
+    .notes-box li {
+      margin-bottom: 4px;
+      text-align: justify;
+    }
+
+    .notes-box li:last-child {
+      margin-bottom: 0;
+    }
+
+    @media print {
+      body {
+        background: #fff;
+      }
+
+      .page {
+        margin: 0;
+        padding: 10mm;
+        width: 210mm;
+        min-height: 297mm;
+      }
     }
   </style>
 </head>
 <body>
+<!--TICKET_PAGE_START-->
+  <div class="page">
+    <div class="ticket">
+      <div class="header">
+        <h1>成武县江河高级中学</h1>
+        <h2>{{EXAM_TITLE}}</h2>
+        <div class="main-title">准考证</div>
+      </div>
 
-<div class="page">
+      <div class="section">
+        <div class="section-title">一、考生基本信息</div>
+        <table class="student-info">
+          <tr>
+            <td class="label">姓名</td>
+            <td class="value">{{STUDENT_NAME}}</td>
+            <td class="label">班级</td>
+            <td class="value">{{CLASS_NAME}}</td>
+            <td class="label">考号</td>
+            <td class="value">{{ADMISSION_NO}}</td>
+          </tr>
+        </table>
+      </div>
 
-  <!-- 标题 -->
-  <div class="title" id="examTitle"></div>
+      <div class="section">
+        <div class="section-title">二、考试安排</div>
+        <table class="exam-table">
+          <thead>
+            <tr>
+              <th style="width: 14%;">考试科目</th>
+              <th style="width: 18%;">考试日期</th>
+              <th style="width: 32%;">考试时间</th>
+              <th style="width: 22%;">考场</th>
+              <th style="width: 14%;">座号</th>
+            </tr>
+          </thead>
+          <tbody>
+            {{EXAM_ROWS}}
+          </tbody>
+        </table>
+      </div>
 
-  <!-- 学生信息 -->
-  <div class="student-info">
-    <div>姓名：<span id="studentName"></span></div>
-    <div>班级：<span id="className"></span></div>
-    <div>考号：<span id="examNo"></span></div>
+      <div class="section">
+        <div class="section-title">三、考生须知</div>
+        <div class="notes-box">
+          <ol>
+            {{NOTICE_ITEMS}}
+          </ol>
+        </div>
+      </div>
+    </div>
   </div>
-
-  <!-- 考试表 -->
-  <table>
-    <thead>
-      <tr>
-        <th>考试科目</th>
-        <th>考试时间</th>
-        <th>考场</th>
-        <th>座号</th>
-      </tr>
-    </thead>
-    <tbody id="examTableBody">
-      <!-- 动态填充 -->
-    </tbody>
-  </table>
-
-  <!-- 考生须知 -->
-  <div class="notice-title">考生须知</div>
-  <ol class="notice-list" id="noticeList">
-    <!-- 动态填充 -->
-  </ol>
-
-</div>
-
-<script>
-  const fallbackData = {
-    title: "",
-    studentName: "",
-    className: "",
-    examNo: "",
-    exams: [],
-    notices: []
-  };
-  const injectedData = window.__ADMISSION_TICKET_DATA__;
-  const data = (injectedData && typeof injectedData === "object") ? injectedData : fallbackData;
-
-  // ===== 渲染逻辑 =====
-  document.getElementById("examTitle").innerText = data.title;
-  document.getElementById("studentName").innerText = data.studentName;
-  document.getElementById("className").innerText = data.className;
-  document.getElementById("examNo").innerText = data.examNo;
-
-  // 渲染考试表
-  const tbody = document.getElementById("examTableBody");
-  (data.exams || []).forEach(item => {
-    const tr = document.createElement("tr");
-
-    tr.innerHTML = `
-      <td>${item.subject}</td>
-      <td>${item.time}</td>
-      <td>${item.room}</td>
-      <td>${item.seat}</td>
-    `;
-
-    tbody.appendChild(tr);
-  });
-
-  // 渲染考生须知
-  const noticeList = document.getElementById("noticeList");
-  (data.notices || []).forEach(text => {
-    const li = document.createElement("li");
-    li.innerText = text;
-    noticeList.appendChild(li);
-  });
-</script>
-
+<!--TICKET_PAGE_END-->
 </body>
 </html>
