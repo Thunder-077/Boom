@@ -1695,7 +1695,7 @@ onBeforeUnmount(() => {
   position: fixed;
   inset: 0;
   background: rgba(15, 23, 42, 0.1);
-  z-index: 40;
+  z-index: 998;
 }
 
 .config-drawer {
@@ -1710,7 +1710,7 @@ onBeforeUnmount(() => {
   border: 1px solid rgba(220, 230, 243, 0.92);
   background: rgba(255, 255, 255, 0.97);
   box-shadow: 0 22px 44px rgba(107, 124, 147, 0.2);
-  z-index: 50;
+  z-index: 999;
 }
 
 .soft-panel {

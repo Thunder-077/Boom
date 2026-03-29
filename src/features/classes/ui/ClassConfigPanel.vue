@@ -33,18 +33,32 @@
 
     <ConfigCard class="current-card" title="当前配置班级">
       <div class="current-head">
-        <div class="current-input-wrap">
-          <label class="class-input-shell current-input-shell">
-            <input
-              class="current-input"
-              :value="store.viewState.form.className"
-              placeholder="请输入班级名称"
-              @input="onCurrentClassInput"
-            />
-          </label>
-          <p class="status-copy" :class="{ 'status-copy-new': store.viewState.mode === 'new' }">
-            {{ stateDescription }}
-          </p>
+        <div class="current-inputs-wrap">
+          <div class="current-input-wrap">
+            <p class="picker-label">教室名</p>
+            <label class="class-input-shell current-input-shell">
+              <input
+                class="current-input"
+                :value="store.viewState.form.className"
+                placeholder="请输入班级名称"
+                @input="onCurrentClassInput"
+              />
+            </label>
+            <p class="status-copy" :class="{ 'status-copy-new': store.viewState.mode === 'new' }">
+              {{ stateDescription }}
+            </p>
+          </div>
+          <div class="current-input-wrap room-label-wrap">
+            <p class="picker-label">教室标签</p>
+            <label class="class-input-shell current-input-shell room-label-input-shell">
+              <input
+                class="room-label-input"
+                :value="store.viewState.form.roomLabel || ''"
+                placeholder="请输入教室标签"
+                @input="onRoomLabelInput"
+              />
+            </label>
+          </div>
         </div>
 
         <button
@@ -403,6 +417,11 @@ function onCurrentClassInput(event: Event) {
   }
 }
 
+function onRoomLabelInput(event: Event) {
+  const value = (event.target as HTMLInputElement).value;
+  store.setFormField("roomLabel", value || null);
+}
+
 async function deleteCurrent() {
   if (!store.viewState.editingId) {
     return;
@@ -493,6 +512,8 @@ onMounted(async () => {
   color: var(--color-text-muted);
   font-size: 13px;
   font-weight: 600;
+  line-height: 1.2;
+  min-height: 18px;
 }
 
 .class-input-wrap {
@@ -634,12 +655,37 @@ onMounted(async () => {
   gap: 16px;
 }
 
+.current-inputs-wrap {
+  display: flex;
+  gap: 16px;
+  flex: 1;
+  min-width: 0;
+}
+
 .current-input-wrap {
   width: 400px;
   max-width: 100%;
   display: flex;
   flex-direction: column;
   gap: 10px;
+}
+
+.room-label-wrap {
+  width: 280px;
+}
+
+.room-label-input-shell {
+  padding-right: 18px;
+}
+
+.room-label-input {
+  min-width: 0;
+  width: 100%;
+  border: 0;
+  background: transparent;
+  color: var(--color-text);
+  font-size: 18px;
+  font-weight: 600;
 }
 
 .current-input-shell {
@@ -821,8 +867,13 @@ onMounted(async () => {
     width: 100%;
   }
 
-  .current-head {
+  .current-head,
+  .current-inputs-wrap {
     flex-direction: column;
+  }
+
+  .room-label-wrap {
+    width: 100%;
   }
 
   .editor-grid {

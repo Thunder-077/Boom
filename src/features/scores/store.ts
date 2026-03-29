@@ -28,7 +28,7 @@ export function createScoreStore(service: ScoreService = scoreService) {
     importMessage: "",
     lastImportResult: null as ImportResult | null,
     page: 1,
-    pageSize: 50,
+    pageSize: 7,
   });
 
   async function load() {

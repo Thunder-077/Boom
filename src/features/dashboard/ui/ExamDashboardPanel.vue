@@ -529,7 +529,7 @@ onUnmounted(() => {
 }
 
 .exam-table-scroll {
-  max-height: 332px;
+  max-height: 260px;
   overflow-y: auto;
   padding-right: 6px;
 }
