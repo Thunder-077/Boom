@@ -283,6 +283,14 @@ fn run_sat_runner(
     if let Some(text) = sat_parameters_to_text(params) {
         command.arg(format!("--params={text}"));
     }
+    
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x08000000;
+        command.creation_flags(CREATE_NO_WINDOW);
+    }
+    
     command.output()
 }
 
@@ -460,13 +468,23 @@ fn encode_text_response_with_protoc(
         .and_then(|name| name.to_str())
         .ok_or_else(|| "运行时 proto 文件名无效".to_string())?;
 
-    let mut child = Command::new(protoc_path)
+    let mut command = Command::new(protoc_path);
+    command
         .arg(format!("--proto_path={}", proto_dir.display()))
         .arg("--encode=operations_research.sat.CpSolverResponse")
         .arg(proto_name)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
+        .stderr(Stdio::piped());
+    
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x08000000;
+        command.creation_flags(CREATE_NO_WINDOW);
+    }
+    
+    let mut child = command
         .spawn()
         .map_err(|error| format!("无法启动 protoc {}: {error}", protoc_path.display()))?;
 

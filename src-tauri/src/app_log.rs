@@ -87,10 +87,16 @@ pub fn reveal_in_explorer(path: String) -> Result<(), String> {
     if target.is_empty() {
         return Err("路径不能为空".to_string());
     }
-    Command::new("explorer.exe")
-        .arg("/select,")
-        .arg(target)
-        .spawn()
-        .map_err(|e| format!("打开资源管理器失败: {e}"))?;
+    let mut command = Command::new("explorer.exe");
+    command.arg("/select,").arg(target);
+    
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x08000000;
+        command.creation_flags(CREATE_NO_WINDOW);
+    }
+    
+    command.spawn().map_err(|e| format!("打开资源管理器失败: {e}"))?;
     Ok(())
 }

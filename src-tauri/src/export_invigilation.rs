@@ -87,6 +87,7 @@ struct AccountingTeacherRow {
 }
 
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 struct AccountingConfig {
     outdoor_allowance_per_minute: f64,
     middle_manager_default_enabled: bool,
@@ -533,6 +534,7 @@ fn load_accounting_config(conn: &rusqlite::Connection) -> Result<AccountingConfi
     })
 }
 
+#[allow(dead_code)]
 fn middle_manager_participates(
     teacher_id: i64,
     is_middle_manager: bool,
