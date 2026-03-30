@@ -85,8 +85,30 @@ const store = useTeacherStore();
 const isDragging = ref(false);
 let unlistenDragDrop: (() => void) | null = null;
 
+const gradeRankMap: Record<string, number> = { 高一: 1, 高二: 2, 高三: 3 };
+
+function extractClassSortNumber(className: string) {
+  const match = className.match(/(\d+)/g);
+  return match && match.length > 0 ? Number(match[match.length - 1]) : Number.POSITIVE_INFINITY;
+}
+
+function extractGradeName(className: string) {
+  const match = className.match(/^(高[一二三]|初[一二三]|初中[一二三]|高中[一二三])/);
+  return match?.[0] ?? "";
+}
+
+function compareClasses(a: string, b: string) {
+  const gradeA = extractGradeName(a);
+  const gradeB = extractGradeName(b);
+  const gradeDiff = (gradeRankMap[gradeA] ?? 99) - (gradeRankMap[gradeB] ?? 99);
+  if (gradeDiff !== 0) return gradeDiff;
+  const classDiff = extractClassSortNumber(a) - extractClassSortNumber(b);
+  if (classDiff !== 0) return classDiff;
+  return a.localeCompare(b, "zh-CN", { numeric: true });
+}
+
 const classOptions = computed(() =>
-  Array.from(new Set(store.viewState.rows.flatMap((row) => row.classNames))).sort((a, b) => a.localeCompare(b, "zh-CN")),
+  Array.from(new Set(store.viewState.rows.flatMap((row) => row.classNames))).sort(compareClasses),
 );
 
 const currentPage = ref(1);
