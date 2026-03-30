@@ -44,15 +44,15 @@ defineEmits<{
   padding: 24px 18px;
   border-radius: 22px;
   box-shadow: 
-    0 1px 0 rgba(255, 255, 255, 0.8) inset,
-    0 4px 20px rgba(0, 0, 0, 0.06);
+    0 1px 0 rgba(255, 255, 255, 0.82) inset,
+    0 0 0 1px rgba(255, 255, 255, 0.16);
   transition: all 0.25s cubic-bezier(0.25, 0.8, 0.25, 1);
 }
 
 .secondary-nav:hover {
   box-shadow: 
-    0 1px 0 rgba(255, 255, 255, 0.8) inset,
-    0 6px 24px rgba(0, 0, 0, 0.08);
+    0 1px 0 rgba(255, 255, 255, 0.88) inset,
+    0 0 0 1px rgba(197, 220, 255, 0.3);
 }
 
 .nav-content {
@@ -145,8 +145,8 @@ defineEmits<{
 }
 
 .nav-item:hover {
-  background: rgba(255, 255, 255, 0.6);
-  color: #334155;
+  background: rgba(255, 255, 255, 0.58);
+  color: #49566a;
   transform: translateX(2px);
 }
 
@@ -166,11 +166,13 @@ defineEmits<{
 
 .nav-item.active {
   color: var(--color-brand);
-  border-color: #c5dcff;
-  background: rgba(234, 243, 255, 0.8);
+  border-color: #b9d6ff;
+  background: var(--color-brand-soft);
   font-weight: 600;
   transform: translateX(3px);
-  box-shadow: 0 8px 20px rgba(15, 108, 189, 0.08);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.45),
+    0 10px 22px rgba(15, 108, 189, 0.12);
 }
 
 .nav-item.active::before {
