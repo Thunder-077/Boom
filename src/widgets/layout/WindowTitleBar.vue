@@ -115,8 +115,8 @@ onBeforeUnmount(() => {
 }
 
 .app-icon {
-  width: 24px;
-  height: 24px;
+  width: 29px;
+  height: 29px;
   object-fit: contain;
   flex-shrink: 0;
 }
@@ -125,8 +125,8 @@ onBeforeUnmount(() => {
   color: #1a2740;
   /* font-family: "Luckiest Guy", "Inter", "Segoe UI Variable", "PingFang SC", "Microsoft YaHei", sans-serif; */
   font-family: "Bangers", "Inter", "Segoe UI Variable", "PingFang SC", "Microsoft YaHei", sans-serif;
-  font-size: 18px;
-  font-weight: 400;
+  font-size: 20px;
+  font-weight: 300;
   letter-spacing: 0.02em;
   line-height: 1;
   white-space: nowrap;
