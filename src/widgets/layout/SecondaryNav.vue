@@ -43,6 +43,16 @@ defineEmits<{
   width: 232px;
   padding: 24px 18px;
   border-radius: 22px;
+  box-shadow: 
+    0 1px 0 rgba(255, 255, 255, 0.8) inset,
+    0 4px 20px rgba(0, 0, 0, 0.06);
+  transition: all 0.25s cubic-bezier(0.25, 0.8, 0.25, 1);
+}
+
+.secondary-nav:hover {
+  box-shadow: 
+    0 1px 0 rgba(255, 255, 255, 0.8) inset,
+    0 6px 24px rgba(0, 0, 0, 0.08);
 }
 
 .nav-content {
