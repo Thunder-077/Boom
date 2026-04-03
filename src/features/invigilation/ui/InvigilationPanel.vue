@@ -2040,7 +2040,8 @@ onBeforeUnmount(() => {
   max-height: calc(5 * 42px + 16px);
   overflow-y: auto;
   border-radius: 16px;
-  z-index: 60;
+  /* 需要高于抽屉(999)和遮罩(998)，避免在抽屉中被遮挡。 */
+  z-index: 1200;
 }
 
 .subject-menu-item {

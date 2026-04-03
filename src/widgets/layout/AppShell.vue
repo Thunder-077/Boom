@@ -53,6 +53,7 @@ function handleRailSelect(key: string) {
 <style scoped>
 .page-shell {
   width: 1440px;
+  margin: 0 auto;
   min-height: 100%;
   display: flex;
   gap: 14px;

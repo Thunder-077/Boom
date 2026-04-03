@@ -1186,7 +1186,7 @@ fn write_accounting_sheet(
     Ok(())
 }
 
-fn build_formats() -> (Format, Format, Format, Format, Format, Format) {
+fn build_formats() -> (Format, Format, Format, Format, Format, Format, Format) {
     let header_fmt = Format::new()
         .set_bold()
         .set_align(FormatAlign::Center)
@@ -1208,7 +1208,22 @@ fn build_formats() -> (Format, Format, Format, Format, Format, Format) {
         .set_align(FormatAlign::VerticalCenter)
         .set_border(FormatBorder::Thin);
     let plain_wrap_fmt = plain_body_fmt.clone();
-    (header_fmt, plain_header_fmt, body_fmt, wrap_fmt, plain_body_fmt, plain_wrap_fmt)
+    // 流动监考第一列需要和主体区域保持同样底色，便于打印阅读。
+    let flow_group_fmt = Format::new()
+        .set_bold()
+        .set_align(FormatAlign::Center)
+        .set_align(FormatAlign::VerticalCenter)
+        .set_background_color(Color::RGB(LIGHT_BLUE))
+        .set_border(FormatBorder::Thin);
+    (
+        header_fmt,
+        plain_header_fmt,
+        body_fmt,
+        wrap_fmt,
+        plain_body_fmt,
+        plain_wrap_fmt,
+        flow_group_fmt,
+    )
 }
 
 fn build_workbook_from_connection(conn: &rusqlite::Connection) -> Result<Workbook, AppError> {
@@ -1225,8 +1240,15 @@ fn build_workbook_from_connection(conn: &rusqlite::Connection) -> Result<Workboo
         return Err(AppError::new("暂无可导出的监考任务"));
     }
 
-    let (header_fmt, plain_header_fmt, body_fmt, wrap_fmt, plain_body_fmt, plain_wrap_fmt) =
-        build_formats();
+    let (
+        header_fmt,
+        plain_header_fmt,
+        body_fmt,
+        wrap_fmt,
+        plain_body_fmt,
+        plain_wrap_fmt,
+        flow_group_fmt,
+    ) = build_formats();
     let mut workbook = Workbook::new();
     let sheet = workbook.add_worksheet();
     sheet
@@ -1254,7 +1276,7 @@ fn build_workbook_from_connection(conn: &rusqlite::Connection) -> Result<Workboo
         &floor_cells,
         &body_fmt,
         &wrap_fmt,
-        &header_fmt,
+        &flow_group_fmt,
         &plain_body_fmt,
         &plain_wrap_fmt,
     )

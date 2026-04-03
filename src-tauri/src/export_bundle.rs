@@ -724,6 +724,14 @@ where
                         summary_widths[col as usize].max(display_width(room));
                     summary_widths[col as usize + 1] =
                         summary_widths[col as usize + 1].max(display_width(&seat.to_string()));
+                } else {
+                    // 未选科目也要显式写入空单元格，确保边框完整显示。
+                    summary_sheet
+                        .write_string_with_format(r, col, "", &summary_cell_fmt)
+                        .map_err(|e| AppError::new(format!("写总览空单元格失败: {e}")))?;
+                    summary_sheet
+                        .write_string_with_format(r, col + 1, "", &summary_cell_fmt)
+                        .map_err(|e| AppError::new(format!("写总览空单元格失败: {e}")))?;
                 }
             }
         }
