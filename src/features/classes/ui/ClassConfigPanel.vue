@@ -24,7 +24,7 @@
               <span class="material-symbols-rounded" aria-hidden="true">close</span>
             </button>
           </label>
-          <div v-if="showSuggestionList" class="suggestion-list">
+          <div v-if="showSuggestionList" ref="suggestionListRef" class="suggestion-list" @scroll.passive="onSuggestionScroll">
             <button
               v-for="row in suggestionRows"
               :key="row.id"
@@ -36,6 +36,9 @@
               <span>{{ row.className }}</span>
               <span class="suggestion-meta">{{ row.gradeName || "未设置年级" }}</span>
             </button>
+            <div v-if="hasMoreSuggestions" class="suggestion-load-more">
+              向下滚动加载更多班级...
+            </div>
           </div>
         </div>
       </div>
@@ -176,7 +179,11 @@ const store = useClassConfigStore();
 const searchKeyword = ref("");
 const isSuggestionOpen = ref(false);
 const isSelectingSuggestion = ref(false);
+const suggestionPage = ref(1);
+const suggestionListRef = ref<HTMLElement | null>(null);
 let dialogResolver: ((value: boolean) => void) | null = null;
+const SUGGESTION_PAGE_SIZE = 30;
+const gradeRankMap: Record<string, number> = { 高一: 1, 高二: 2, 高三: 3 };
 
 const dialogState = reactive({
   visible: false,
@@ -193,14 +200,19 @@ const dialogState = reactive({
 const visibleSubjects = computed(() => SUBJECT_OPTIONS);
 const configTypeOptions = CLASS_CONFIG_TYPE_OPTIONS;
 const normalizedSearchKeyword = computed(() => searchKeyword.value.trim().replace(/\s+/g, ""));
-const suggestionRows = computed(() => {
+const sortedRows = computed(() => [...store.viewState.rows].sort(compareClassRows));
+const filteredSuggestionRows = computed(() => {
   if (!normalizedSearchKeyword.value) {
-    return store.viewState.rows.slice(0, 8);
+    return sortedRows.value;
   }
-  return store.viewState.rows
-    .filter((row) => row.className.replace(/\s+/g, "").includes(normalizedSearchKeyword.value))
-    .slice(0, 8);
+  return sortedRows.value.filter((row) =>
+    normalizeClassName(row.className).includes(normalizedSearchKeyword.value),
+  );
 });
+const suggestionRows = computed(() => {
+  return filteredSuggestionRows.value.slice(0, suggestionPage.value * SUGGESTION_PAGE_SIZE);
+});
+const hasMoreSuggestions = computed(() => suggestionRows.value.length < filteredSuggestionRows.value.length);
 const showSuggestionList = computed(() => isSuggestionOpen.value && suggestionRows.value.length > 0);
 const dialogToneClass = computed(() => {
   if (dialogState.tone === "danger") {
@@ -225,12 +237,70 @@ function syncSearchToCurrentClass() {
   searchKeyword.value = store.viewState.form.className;
 }
 
+function normalizeClassName(name: string) {
+  return name.trim().replace(/\s+/g, "");
+}
+
+function extractClassSortNumber(className: string) {
+  const match = className.match(/(\d+)/g);
+  return match && match.length > 0 ? Number(match[match.length - 1]) : Number.POSITIVE_INFINITY;
+}
+
+function extractGradeName(value: string) {
+  const source = value.trim();
+  if (source) {
+    const match = source.match(/^(高[一二三]|高中[一二三]|初[一二三]|初中[一二三])/);
+    if (match?.[0]) {
+      return match[0];
+    }
+  }
+  return "";
+}
+
+function gradeSortRank(gradeName: string, className: string) {
+  const normalizedGrade = gradeName.trim() || extractGradeName(className);
+  return gradeRankMap[normalizedGrade] ?? 99;
+}
+
+function compareClassRows(a: ClassConfigRow, b: ClassConfigRow) {
+  const gradeDiff = gradeSortRank(a.gradeName, a.className) - gradeSortRank(b.gradeName, b.className);
+  if (gradeDiff !== 0) {
+    return gradeDiff;
+  }
+  const classDiff = extractClassSortNumber(a.className) - extractClassSortNumber(b.className);
+  if (classDiff !== 0) {
+    return classDiff;
+  }
+  return a.className.localeCompare(b.className, "zh-CN", { numeric: true });
+}
+
+function resetSuggestionPaging() {
+  suggestionPage.value = 1;
+  if (suggestionListRef.value) {
+    suggestionListRef.value.scrollTop = 0;
+  }
+}
+
+function loadMoreSuggestions() {
+  if (hasMoreSuggestions.value) {
+    suggestionPage.value += 1;
+  }
+}
+
+function onSuggestionScroll(event: Event) {
+  // 在接近列表底部时增量加载下一页，避免一次渲染过多班级项。
+  const target = event.target as HTMLElement;
+  if (target.scrollTop + target.clientHeight >= target.scrollHeight - 24) {
+    loadMoreSuggestions();
+  }
+}
+
 function findExactRowByName(name: string): ClassConfigRow | undefined {
-  const normalizedName = name.trim().replace(/\s+/g, "");
+  const normalizedName = normalizeClassName(name);
   if (!normalizedName) {
     return undefined;
   }
-  return store.viewState.rows.find((row) => row.className.trim().replace(/\s+/g, "") === normalizedName);
+  return sortedRows.value.find((row) => normalizeClassName(row.className) === normalizedName);
 }
 
 function inferGradeName(className: string) {
@@ -285,10 +355,12 @@ function closeDialog(result: boolean) {
 
 function onSearchFocus() {
   isSuggestionOpen.value = true;
+  resetSuggestionPaging();
 }
 
 function onSearchInput() {
   isSuggestionOpen.value = true;
+  resetSuggestionPaging();
 }
 
 function onSuggestionMouseDown() {
@@ -435,6 +507,7 @@ function onRoomLabelInput(event: Event) {
 function clearSearchKeyword() {
   searchKeyword.value = "";
   isSuggestionOpen.value = true;
+  resetSuggestionPaging();
 }
 
 async function deleteCurrent() {
@@ -673,6 +746,16 @@ onMounted(async () => {
 
 .suggestion-item + .suggestion-item {
   margin-top: 4px;
+}
+
+.suggestion-load-more {
+  margin-top: 6px;
+  min-height: 30px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--color-text-muted);
+  font-size: 12px;
 }
 
 .suggestion-meta {
