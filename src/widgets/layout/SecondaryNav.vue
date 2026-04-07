@@ -2,8 +2,13 @@
   <aside class="secondary-nav card-shell">
     <Transition name="nav-switch" appear mode="out-in">
       <div class="nav-content" :key="title">
-        <h2 class="title">{{ title }}</h2>
-        <p class="desc">{{ description }}</p>
+        <div class="nav-head">
+          <h2 class="title">{{ title }}</h2>
+          <p class="desc">{{ description }}</p>
+          <div class="meta-row">
+            <span class="meta-pill">{{ items.length }} 个工作区</span>
+          </div>
+        </div>
         <div class="list">
           <button
             v-for="item in items"
@@ -40,26 +45,52 @@ defineEmits<{
 
 <style scoped>
 .secondary-nav {
-  width: 232px;
-  padding: 24px 18px;
-  border-radius: 22px;
-  box-shadow: 
-    0 1px 0 rgba(255, 255, 255, 0.82) inset,
-    0 0 0 1px rgba(255, 255, 255, 0.16);
-  transition: all 0.25s cubic-bezier(0.25, 0.8, 0.25, 1);
+  width: 248px;
+  padding: 18px 14px 14px;
+  border-radius: var(--radius-card-large);
+  background: var(--surface-nav-panel);
+  border: 1px solid var(--border-default);
+  box-shadow: 0 12px 28px rgba(31, 60, 103, 0.06);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  position: relative;
 }
 
-.secondary-nav:hover {
-  box-shadow: 
-    0 1px 0 rgba(255, 255, 255, 0.88) inset,
-    0 0 0 1px rgba(197, 220, 255, 0.3);
+.secondary-nav::before,
+.secondary-nav::after {
+  display: none;
 }
 
 .nav-content {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 14px;
   width: 100%;
+  min-height: 100%;
+}
+
+.nav-head {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 2px 4px 0;
+  position: relative;
+}
+
+.nav-head::after {
+  content: "";
+  width: 100%;
+  height: 1px;
+  background: var(--accent-divider);
+  margin-top: 4px;
+}
+
+.eyebrow {
+  color: var(--text-tertiary);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
 }
 
 .nav-switch-enter-active,
@@ -80,36 +111,55 @@ defineEmits<{
 .title {
   margin: 0;
   font-size: 22px;
-  font-weight: 600;
+  font-weight: 700;
+  letter-spacing: -0.02em;
 }
 
 .desc {
   margin: 0;
-  color: var(--color-text-muted);
-  font-size: 13px;
-  line-height: 1.35;
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.meta-row {
+  display: flex;
+  align-items: center;
+  padding-top: 2px;
+}
+
+.meta-pill {
+  display: inline-flex;
+  align-items: center;
+  min-height: 24px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: rgba(var(--accent-rgb), 0.1);
+  color: var(--accent-primary);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
 }
 
 .list {
   display: flex;
   flex-direction: column;
   gap: 8px;
-  padding-top: 8px;
 }
 
 .nav-item {
   position: relative;
   overflow: hidden;
-  height: 52px;
-  padding: 0 16px;
+  min-height: 50px;
+  padding: 0 14px 0 16px;
   border-radius: 16px;
-  border: 1px solid transparent;
-  background: rgba(255, 255, 255, 0.45);
-  color: var(--color-text);
+  border: 1px solid var(--border-default);
+  background: var(--surface-nav-item);
+  color: var(--text-primary);
   text-align: left;
   cursor: pointer;
-  font-size: 15px;
-  font-weight: 500;
+  font-size: 14px;
+  font-weight: 600;
   display: inline-flex;
   align-items: center;
   gap: 12px;
@@ -129,7 +179,7 @@ defineEmits<{
   width: 4px;
   height: 24px;
   border-radius: 999px;
-  background: linear-gradient(180deg, #0f6cbd, #2e86de);
+  background: linear-gradient(180deg, var(--accent-primary-strong), var(--accent-primary));
   opacity: 0;
   transform: translateY(-50%) scaleY(0.4);
   transition: opacity 0.18s ease, transform 0.18s ease;
@@ -139,15 +189,15 @@ defineEmits<{
   content: "";
   position: absolute;
   inset: 0;
-  background: linear-gradient(90deg, rgba(15, 108, 189, 0.08), rgba(255, 255, 255, 0));
+  background: var(--accent-sheen);
   opacity: 0;
   transition: opacity 0.18s ease;
 }
 
 .nav-item:hover {
-  background: rgba(255, 255, 255, 0.58);
-  color: #49566a;
-  transform: translateX(2px);
+  background: var(--surface-nav-item-hover);
+  color: var(--text-primary);
+  transform: none;
 }
 
 .nav-item:hover::after {
@@ -155,24 +205,23 @@ defineEmits<{
 }
 
 .nav-item:active {
-  transform: translateX(1px) scale(0.99);
+  transform: scale(0.99);
 }
 
 .nav-item:focus-visible {
   outline: none;
-  border-color: #b9d6ff;
-  box-shadow: 0 0 0 4px rgba(185, 214, 255, 0.3);
+  border-color: var(--accent-border-strong);
+  box-shadow: 0 0 0 4px var(--accent-focus-ring);
 }
 
 .nav-item.active {
-  color: var(--color-brand);
-  border-color: #b9d6ff;
-  background: var(--color-brand-soft);
-  font-weight: 600;
-  transform: translateX(3px);
+  color: var(--accent-primary-strong);
+  border-color: var(--accent-border-soft);
+  background: var(--surface-nav-item-active);
+  transform: none;
   box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.45),
-    0 10px 22px rgba(15, 108, 189, 0.12);
+    inset 0 1px 0 rgba(255, 255, 255, 0.58),
+    0 8px 18px rgba(var(--accent-rgb), 0.06);
 }
 
 .nav-item.active::before {

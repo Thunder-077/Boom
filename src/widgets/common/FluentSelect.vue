@@ -176,12 +176,12 @@ onUnmounted(() => {
   min-height: 42px;
   padding: 0 34px 0 14px;
   border-radius: 14px;
-  border: 1px solid var(--color-border-soft, #d8e4f2);
-  background: rgba(255, 255, 255, 0.59);
+  border: 1px solid var(--color-border-soft);
+  background: var(--surface-panel);
   cursor: pointer;
   user-select: none;
   font-size: 14px;
-  color: var(--color-text, #1c1f23);
+  color: var(--color-text);
   transition: all 0.2s ease;
 }
 
@@ -192,7 +192,7 @@ onUnmounted(() => {
 }
 
 .fluent-value.placeholder {
-  color: var(--color-text-muted, #7a879a);
+  color: var(--color-text-muted);
 }
 
 .combo-icon {
@@ -201,7 +201,7 @@ onUnmounted(() => {
   top: 50%;
   transform: translateY(-50%);
   font-size: 18px;
-  color: #667085;
+  color: var(--text-secondary);
   pointer-events: none;
   transition: transform 0.2s ease;
 }
@@ -212,15 +212,15 @@ onUnmounted(() => {
 
 .fluent-combo:focus-within .fluent-trigger,
 .fluent-combo.open .fluent-trigger {
-  border-color: #b9d6ff;
-  box-shadow: 0 0 0 3px rgba(185, 214, 255, 0.35);
-  background: rgba(255, 255, 255, 0.95);
+  border-color: var(--accent-border-strong);
+  box-shadow: 0 0 0 3px var(--accent-focus-ring);
+  background: var(--surface-input-strong);
 }
 
 .fluent-combo.disabled .fluent-trigger {
   opacity: 0.6;
   cursor: not-allowed;
-  background: rgba(240, 244, 248, 0.5);
+  background: var(--surface-elevated);
 }
 </style>
 
@@ -230,10 +230,10 @@ onUnmounted(() => {
   position: fixed;
   max-height: 240px;
   padding: 6px;
-  border: 1px solid #d8e4f2;
+  border: 1px solid var(--color-border-soft);
   border-radius: 14px;
-  background: rgba(255, 255, 255, 0.98);
-  box-shadow: 0 18px 40px rgba(35, 52, 78, 0.16);
+  background: var(--surface-input-strong);
+  box-shadow: var(--shadow-strong);
   backdrop-filter: blur(20px);
   overflow-y: auto;
   z-index: 99999;
@@ -263,7 +263,7 @@ onUnmounted(() => {
   padding: 8px 12px;
   cursor: pointer;
   font-size: 13px;
-  color: #334155;
+  color: var(--text-primary);
   transition: all 0.15s ease;
   display: flex;
   align-items: center;
@@ -271,19 +271,19 @@ onUnmounted(() => {
 }
 
 .teleported-fluent-menu .fluent-option:hover {
-  background: #eef5ff;
-  color: #0f6cbd;
+  background: rgba(var(--accent-rgb), 0.12);
+  color: var(--accent-primary);
 }
 
 .teleported-fluent-menu .fluent-option.selected {
-  background: #eef5ff;
-  color: #0f6cbd;
+  background: rgba(var(--accent-rgb), 0.12);
+  color: var(--accent-primary);
   font-weight: 600;
 }
 
 .teleported-fluent-menu .menu-empty {
   padding: 10px 12px;
-  color: var(--color-text-muted, #7a879a);
+  color: var(--color-text-muted);
   font-size: 13px;
   text-align: center;
 }

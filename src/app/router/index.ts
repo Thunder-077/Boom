@@ -1,7 +1,7 @@
 import { createRouter, createWebHistory } from "vue-router";
 import ManagementPage from "../../pages/management/ManagementPage.vue";
 
-export type AppSection = "exam-assignment" | "monitor-draw" | "monitor-config" | "teachers" | "scores" | "classes";
+export type AppSection = "exam-assignment" | "monitor-draw" | "monitor-config" | "teachers" | "scores" | "classes" | "settings";
 
 export const router = createRouter({
   history: createWebHistory(),
