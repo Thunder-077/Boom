@@ -22,14 +22,13 @@ defineProps<{
 
 <style scoped>
 .toolbar {
-  min-height: 78px;
+  min-height: 84px;
   display: flex;
   align-items: center;
   gap: 12px;
-  padding: 18px;
-  border-radius: 20px;
-  background: rgba(255, 255, 255, 0.72);
-  border-color: rgba(255, 255, 255, 0.85);
+  padding: 18px 20px;
+  border-radius: var(--radius-card-large);
+  background: var(--surface-toolbar-gradient);
 }
 
 .chip {
@@ -37,18 +36,18 @@ defineProps<{
   min-width: 150px;
   padding: 0 14px;
   border: 1px solid var(--color-border-soft);
-  border-radius: 14px;
-  background: rgba(255, 255, 255, 0.58);
+  border-radius: 16px;
+  background: var(--surface-chip);
   display: inline-flex;
   align-items: center;
   justify-content: space-between;
   gap: 12px;
   font-size: 14px;
-  color: var(--color-text-muted);
+  color: var(--text-secondary);
 }
 
 .value {
-  color: var(--color-text);
-  font-weight: 600;
+  color: var(--text-primary);
+  font-weight: 700;
 }
 </style>

@@ -2,9 +2,11 @@ import { createApp } from "vue";
 import App from "./app/App.vue";
 import { router } from "./app/router";
 import { appendAppLog } from "./shared/utils/appLog";
+import { initializeTheme } from "./shared/theme/theme";
 import "./shared/styles/index.css";
 
 const app = createApp(App);
+initializeTheme();
 
 app.config.errorHandler = (error, instance, info) => {
   const componentType = (instance as { type?: { name?: string } } | null)?.type;

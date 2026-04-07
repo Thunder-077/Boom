@@ -1,8 +1,13 @@
 <template>
   <header class="window-titlebar" :class="{ unfocused: !isFocused }">
     <div class="drag-zone" data-tauri-drag-region>
-      <img :src="appIcon" class="app-icon" alt="应用图标" />
-      <span class="app-title">Boom</span>
+      <span class="app-icon" aria-hidden="true">
+        <img class="app-logo" src="/boom.svg" alt="" />
+      </span>
+      <div class="title-copy">
+        <span class="app-title">BOOM</span>
+        <span class="app-subtitle">教务管理系统</span>
+      </div>
     </div>
     <div class="window-controls">
       <button class="win-btn" type="button" aria-label="最小化窗口" title="最小化" @click="minimizeWindow">
@@ -21,8 +26,6 @@
 <script setup lang="ts">
 import { onBeforeUnmount, onMounted, ref } from "vue";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import appIcon from "../../assets/app-icon.png";
-
 const appWindow = getCurrentWindow();
 const isFocused = ref(true);
 const isMaximized = ref(false);
@@ -96,8 +99,8 @@ onBeforeUnmount(() => {
   align-items: center;
   justify-content: space-between;
   padding-left: 12px;
-  border-bottom: 1px solid #d7e3f4;
-  background: linear-gradient(180deg, rgba(255, 255, 255, 0.9), rgba(246, 251, 255, 0.85));
+  border-bottom: 1px solid var(--surface-titlebar-border);
+  background: var(--surface-titlebar);
   user-select: none;
 }
 
@@ -110,32 +113,48 @@ onBeforeUnmount(() => {
   flex: 1;
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: 10px;
   height: 100%;
 }
 
 .app-icon {
-  width: 29px;
-  height: 29px;
-  object-fit: contain;
+  width: 28px;
+  height: 28px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   flex-shrink: 0;
 }
 
+.app-logo {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.title-copy {
+  min-width: 0;
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+}
+
 .app-title {
-  color: #1a2740;
-  /* font-family: "Luckiest Guy", "Inter", "Segoe UI Variable", "PingFang SC", "Microsoft YaHei", sans-serif; */
-  font-family: "Bangers", "Inter", "Segoe UI Variable", "PingFang SC", "Microsoft YaHei", sans-serif;
+  color: var(--surface-titlebar-title);
+  font-family: "Bangers", var(--font-ui);
   font-size: 20px;
-  font-weight: 300;
-  letter-spacing: 0.02em;
+  font-weight: 400;
+  letter-spacing: 0.08em;
   line-height: 1;
   white-space: nowrap;
 }
 
 .app-subtitle {
-  color: #6b7d95;
-  font-size: 12px;
-  font-weight: 500;
+  color: var(--surface-titlebar-subtitle);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
   white-space: nowrap;
 }
 
@@ -151,7 +170,7 @@ onBeforeUnmount(() => {
   padding: 0;
   margin: 0;
   background: transparent;
-  color: #4d6079;
+  color: var(--text-secondary);
   cursor: pointer;
   display: inline-flex;
   align-items: center;
@@ -165,13 +184,13 @@ onBeforeUnmount(() => {
 }
 
 .win-btn:hover {
-  background: rgba(15, 108, 189, 0.12);
-  color: #0f6cbd;
+  background: var(--surface-titlebar-hover);
+  color: var(--accent-primary);
 }
 
 .win-btn.close:hover {
-  background: #d13438;
-  color: #fff;
+  background: var(--color-danger);
+  color: var(--surface-table-content);
 }
 
 .win-btn:active {

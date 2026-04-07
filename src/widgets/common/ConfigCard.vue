@@ -17,30 +17,31 @@ defineProps<{
 
 <style scoped>
 .config-card {
-  padding: 18px;
+  padding: 22px;
   display: flex;
   flex-direction: column;
-  gap: 10px;
-  border-radius: 20px;
-  background: rgba(255, 255, 255, 0.8);
-  border-color: rgba(255, 255, 255, 0.88);
+  gap: 12px;
+  border-radius: var(--radius-card-large);
+  background: var(--surface-card-gradient);
 }
 
 .config-card h3 {
   margin: 0;
-  font-size: 22px;
-  font-weight: 600;
+  font-size: 20px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
 }
 
 .config-card p {
   margin: 0;
   font-size: 13px;
-  color: var(--color-text-muted);
+  color: var(--text-secondary);
+  line-height: 1.5;
 }
 
 .body {
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 14px;
 }
 </style>

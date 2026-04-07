@@ -28,15 +28,14 @@ defineProps<{
   padding: 22px;
   display: flex;
   flex-direction: column;
-  gap: 12px;
-  border-radius: 20px;
-  background: rgba(255, 255, 255, 0.8);
-  border-color: rgba(255, 255, 255, 0.88);
+  gap: 16px;
+  border-radius: var(--radius-card-large);
+  background: var(--surface-card-gradient);
 }
 
 .head {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: space-between;
   gap: 16px;
 }
@@ -44,32 +43,47 @@ defineProps<{
 .copy {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 8px;
 }
 
 .meta-wrap {
   display: flex;
   align-items: center;
   gap: 12px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
 }
 
 .head h3 {
   margin: 0;
-  font-size: 22px;
-  font-weight: 600;
+  font-size: 20px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
 }
 
 .head p {
   margin: 0;
-  color: var(--color-brand);
-  font-size: 13px;
+  color: var(--text-secondary);
+  font-size: 12px;
   font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
 }
 
 .content {
   overflow: hidden;
-  border-radius: 16px;
+  border-radius: 18px;
   border: 1px solid var(--color-border-soft);
-  background: #fff;
+  background: var(--surface-table-content);
+}
+
+@media (max-width: 900px) {
+  .head {
+    flex-direction: column;
+  }
+
+  .meta-wrap {
+    justify-content: flex-start;
+  }
 }
 </style>

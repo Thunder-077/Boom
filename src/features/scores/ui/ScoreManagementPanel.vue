@@ -363,17 +363,17 @@ onUnmounted(() => {
 }
 
 .panel.dragging :deep(.toolbar) {
-  border-color: #b9d6ff;
-  background: rgba(232, 242, 255, 0.92);
+  border-color: var(--accent-border-strong);
+  background: rgba(var(--accent-rgb), 0.08);
 }
 
 .drag-overlay {
   position: absolute;
   inset: 0;
   z-index: 10;
-  border-radius: 20px;
-  background: rgba(15, 108, 189, 0.08);
-  border: 2px dashed #7fb1ea;
+  border-radius: 24px;
+  background: rgba(var(--accent-rgb), 0.08);
+  border: 2px dashed rgba(var(--accent-rgb), 0.34);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -382,10 +382,10 @@ onUnmounted(() => {
 
 .drag-card {
   min-width: 280px;
-  padding: 18px 22px;
-  border-radius: 18px;
-  background: rgba(255, 255, 255, 0.94);
-  box-shadow: 0 18px 36px rgba(15, 108, 189, 0.14);
+  padding: 20px 24px;
+  border-radius: 22px;
+  background: var(--surface-panel-strong);
+  box-shadow: var(--shadow-medium);
   display: flex;
   flex-direction: column;
   gap: 6px;
@@ -417,8 +417,8 @@ onUnmounted(() => {
   height: 42px;
   padding: 0 14px;
   border: 1px solid var(--color-border-soft);
-  border-radius: 14px;
-  background: rgba(255, 255, 255, 0.59);
+  border-radius: 16px;
+  background: var(--surface-input);
 }
 
 /* Search */
@@ -448,8 +448,8 @@ onUnmounted(() => {
 }
 
 .filter-search:focus-within {
-  border-color: #b9d6ff;
-  box-shadow: 0 0 0 3px rgba(185, 214, 255, 0.35);
+  border-color: rgba(var(--accent-rgb), 0.3);
+  box-shadow: 0 0 0 4px var(--accent-focus-ring);
 }
 
 .score-table tbody tr {
@@ -463,8 +463,10 @@ onUnmounted(() => {
 }
 
 .score-cell {
-  font-size: 18px;
+  font-size: 20px;
   font-weight: 700;
+  color: var(--accent-primary-strong);
+  font-family: var(--font-mono);
 }
 
 .link-cell {
@@ -489,7 +491,7 @@ onUnmounted(() => {
 }
 
 .row-alt {
-  background: #f8fbff;
+  background: var(--surface-elevated);
 }
 
 /* Pagination */
@@ -498,8 +500,8 @@ onUnmounted(() => {
   align-items: center;
   justify-content: space-between;
   padding: 16px 20px;
-  border-top: 1px solid var(--color-border-soft);
-  background: rgba(255, 255, 255, 0.4);
+  border-top: 1px solid var(--border-default);
+  background: var(--surface-panel);
 }
 
 .page-meta {
@@ -516,25 +518,25 @@ onUnmounted(() => {
   min-width: 32px;
   height: 32px;
   padding: 0 8px;
-  border-radius: 8px;
-  border: 1px solid #d8e4f2;
-  background: #fff;
+  border-radius: 10px;
+  border: 1px solid var(--color-border-soft);
+  background: var(--surface-panel-strong);
   cursor: pointer;
-  color: #52657f;
+  color: var(--text-secondary);
   font-size: 13px;
   transition: all 0.2s;
 }
 
 .page-btn:hover:not(:disabled) {
-  background: #f8fbff;
-  border-color: #bad7ff;
-  color: #0f6cbd;
+  background: rgba(var(--accent-rgb), 0.1);
+  border-color: var(--accent-border-strong);
+  color: var(--accent-primary);
 }
 
 .page-btn.active {
-  background: #0f6cbd;
+  background: var(--accent-primary);
   color: #fff;
-  border-color: #0f6cbd;
+  border-color: var(--accent-primary);
 }
 
 .page-btn:disabled {
@@ -545,7 +547,7 @@ onUnmounted(() => {
 .detail-mask {
   position: fixed;
   inset: 0;
-  background: rgba(17, 21, 26, 0.42);
+  background: var(--surface-overlay);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -556,10 +558,11 @@ onUnmounted(() => {
   width: 780px;
   max-height: 86vh;
   overflow: auto;
-  padding: 18px;
+  padding: 22px;
   display: flex;
   flex-direction: column;
-  gap: 14px;
+  gap: 16px;
+  border-radius: 26px;
 }
 
 .detail-head {
@@ -570,6 +573,8 @@ onUnmounted(() => {
 
 .detail-head h3 {
   margin: 0;
+  font-size: 22px;
+  font-weight: 700;
 }
 
 .close-btn {
@@ -579,6 +584,13 @@ onUnmounted(() => {
   line-height: 1;
   cursor: pointer;
   color: var(--color-text-muted);
+  width: 32px;
+  height: 32px;
+  border-radius: 10px;
+}
+
+.close-btn:hover {
+  background: rgba(var(--accent-rgb), 0.08);
 }
 
 .detail-meta {
@@ -600,10 +612,10 @@ onUnmounted(() => {
 
 .subject-list {
   border: 1px solid var(--color-border-soft);
-  border-radius: 14px;
-  padding: 12px;
+  border-radius: 18px;
+  padding: 14px;
   display: grid;
-  gap: 8px;
+  gap: 10px;
 }
 
 .subject-row {

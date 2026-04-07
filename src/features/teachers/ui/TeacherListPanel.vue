@@ -272,17 +272,17 @@ onUnmounted(() => {
 }
 
 .panel.dragging :deep(.toolbar) {
-  border-color: #b9d6ff;
-  background: rgba(232, 242, 255, 0.92);
+  border-color: var(--accent-border-strong);
+  background: rgba(var(--accent-rgb), 0.08);
 }
 
 .drag-overlay {
   position: absolute;
   inset: 0;
   z-index: 10;
-  border-radius: 20px;
-  background: rgba(15, 108, 189, 0.08);
-  border: 2px dashed #7fb1ea;
+  border-radius: 24px;
+  background: rgba(var(--accent-rgb), 0.08);
+  border: 2px dashed rgba(var(--accent-rgb), 0.34);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -291,10 +291,10 @@ onUnmounted(() => {
 
 .drag-card {
   min-width: 280px;
-  padding: 18px 22px;
-  border-radius: 18px;
-  background: rgba(255, 255, 255, 0.94);
-  box-shadow: 0 18px 36px rgba(15, 108, 189, 0.14);
+  padding: 20px 24px;
+  border-radius: 22px;
+  background: var(--surface-panel-strong);
+  box-shadow: var(--shadow-medium);
   display: flex;
   flex-direction: column;
   gap: 6px;
@@ -352,14 +352,14 @@ onUnmounted(() => {
 
 .teacher-grid-head {
   min-height: 48px;
-  background: #fafcff;
+  background: var(--surface-elevated);
   border-bottom: 1px solid var(--color-border-soft);
 }
 
 .teacher-grid-row {
   min-height: 72px;
-  background: #fff;
-  border-bottom: 1px solid var(--color-border-soft);
+  background: var(--surface-panel-strong);
+  border-bottom: 1px solid var(--border-default);
 }
 
 .cell {
@@ -373,9 +373,11 @@ onUnmounted(() => {
 }
 
 .head {
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--color-text-muted);
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text-secondary);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
 }
 
 .teacher-name {
@@ -402,7 +404,7 @@ onUnmounted(() => {
 }
 
 .row-alt {
-  background: #f8fbff;
+  background: var(--surface-elevated);
 }
 
 .import-status {
@@ -414,8 +416,8 @@ onUnmounted(() => {
   align-items: center;
   justify-content: space-between;
   padding: 16px 20px;
-  border-top: 1px solid var(--color-border-soft);
-  background: rgba(255, 255, 255, 0.4);
+  border-top: 1px solid var(--border-default);
+  background: var(--surface-panel);
 }
 
 .page-meta {
@@ -432,25 +434,25 @@ onUnmounted(() => {
   min-width: 32px;
   height: 32px;
   padding: 0 8px;
-  border-radius: 8px;
-  border: 1px solid #d8e4f2;
-  background: #fff;
+  border-radius: 10px;
+  border: 1px solid var(--color-border-soft);
+  background: var(--surface-panel-strong);
   cursor: pointer;
-  color: #52657f;
+  color: var(--text-secondary);
   font-size: 13px;
   transition: all 0.2s;
 }
 
 .page-btn:hover:not(:disabled) {
-  background: #f8fbff;
-  border-color: #bad7ff;
-  color: #0f6cbd;
+  background: rgba(var(--accent-rgb), 0.1);
+  border-color: var(--accent-border-strong);
+  color: var(--accent-primary);
 }
 
 .page-btn.active {
-  background: #0f6cbd;
+  background: var(--accent-primary);
   color: #fff;
-  border-color: #0f6cbd;
+  border-color: var(--accent-primary);
 }
 
 .page-btn:disabled {

@@ -108,11 +108,22 @@
 
     <div class="right-col">
       <section class="progress-card card-shell">
+        <span class="hero-eyebrow">自动排考引擎</span>
         <div class="progress-head">
           <h3>开始分配考场</h3>
           <span class="progress-badge">{{ progressBadgeText }}</span>
         </div>
         <p class="progress-desc">{{ progressDescription }}</p>
+        <div class="hero-metrics">
+          <div class="hero-metric">
+            <span>考场数量</span>
+            <strong>{{ store.viewState.overview.examRoomCount || "--" }}</strong>
+          </div>
+          <div class="hero-metric">
+            <span>考生数量</span>
+            <strong>{{ store.viewState.overview.studentAllocationCount || "--" }}</strong>
+          </div>
+        </div>
         <div class="cta-row">
           <button class="primary-btn" :disabled="store.viewState.generating || isPreparingGenerate" @click="generateExamPlan">
             {{ generateActionText }}
@@ -128,36 +139,54 @@
         </div>
       </section>
 
-      <ConfigCard title="考场容量配置">
-        <div class="field-stack compact" :style="{ opacity: store.viewState.loading ? 0 : 1, pointerEvents: store.viewState.loading ? 'none' : 'auto', transition: 'opacity 0.3s ease' }">
-          <label class="metric-field">
-            <span class="metric-label">考场默认容量</span>
-            <input v-model.number="capacityForm.defaultCapacity" class="metric-input" type="number" min="1" />
-          </label>
-          <label class="metric-field">
-            <span class="metric-label">考场最大容量</span>
-            <input v-model.number="capacityForm.maxCapacity" class="metric-input" type="number" min="1" />
-          </label>
+      <section class="overview-card card-shell">
+        <div class="overview-head">
+          <span class="overview-eyebrow">执行总览</span>
+          <h3>配置与结果</h3>
+          <p>在这里统一校验容量约束、查看生成结果，并直接完成导出。</p>
         </div>
-      </ConfigCard>
+        <div class="overview-body">
+          <section class="capacity-card">
+            <div class="overview-section-head">
+              <span class="section-kicker">容量配置</span>
+              <strong>考场容量参数</strong>
+            </div>
+            <div class="field-stack compact" :style="{ opacity: store.viewState.loading ? 0 : 1, pointerEvents: store.viewState.loading ? 'none' : 'auto', transition: 'opacity 0.3s ease' }">
+              <label class="metric-field">
+                <span class="metric-label">考场默认容量</span>
+                <input v-model.number="capacityForm.defaultCapacity" class="metric-input" type="number" min="1" />
+              </label>
+              <label class="metric-field">
+                <span class="metric-label">考场最大容量</span>
+                <input v-model.number="capacityForm.maxCapacity" class="metric-input" type="number" min="1" />
+              </label>
+            </div>
+          </section>
 
-      <section class="complete-card card-shell">
-        <div class="complete-head">
-          <h3>{{ completeTitle }}</h3>
-          <span class="complete-badge" :class="{ pending: isCompletePending }">{{ completeBadgeText }}</span>
-        </div>
-        <p class="complete-desc">{{ completeDescription }}</p>
-        <div class="complete-meta">
-          <div class="complete-summary">
-            <span class="metric-label">结果摘要</span>
-            <strong v-if="!store.viewState.lastExportFolderPath">{{ completeSummary }}</strong>
-            <button v-else class="export-link" type="button" @click="openExportFolder">{{ exportFileName }}</button>
-          </div>
-          <div class="complete-action">
-            <button class="primary-btn export-btn" :disabled="store.viewState.exporting || !store.viewState.overview.generatedAt" @click="exportBundle">
-              {{ store.viewState.exporting ? "导出中..." : "导出分配结果" }}
-            </button>
-          </div>
+          <section class="complete-card">
+            <span class="complete-eyebrow">结果中心</span>
+            <div class="complete-head">
+              <h3>{{ completeTitle }}</h3>
+              <span class="complete-badge" :class="{ pending: isCompletePending }">{{ completeBadgeText }}</span>
+            </div>
+            <p class="complete-desc">{{ completeDescription }}</p>
+            <div class="complete-kpi">
+              <span>已生成结果</span>
+              <strong>{{ store.viewState.overview.generatedAt ? "可导出" : "未生成" }}</strong>
+            </div>
+            <div class="complete-meta">
+              <div class="complete-summary">
+                <span class="metric-label">结果摘要</span>
+                <strong v-if="!store.viewState.lastExportFolderPath">{{ completeSummary }}</strong>
+                <button v-else class="export-link" type="button" @click="openExportFolder">{{ exportFileName }}</button>
+              </div>
+              <div class="complete-action">
+                <button class="primary-btn export-btn" :disabled="store.viewState.exporting || !store.viewState.overview.generatedAt" @click="exportBundle">
+                  {{ store.viewState.exporting ? "导出中..." : "导出分配结果" }}
+                </button>
+              </div>
+            </div>
+          </section>
         </div>
       </section>
     </div>
@@ -625,11 +654,14 @@ onUnmounted(() => {
 .dashboard-grid {
   display: grid;
   grid-template-columns: minmax(0, 1.75fr) minmax(320px, 1fr);
-  gap: 22px;
+  gap: 20px;
+  min-height: calc(100vh - 170px);
 }
 
 .exam-table-scroll {
-  max-height: 260px;
+  flex: 1;
+  min-height: 380px;
+  max-height: none;
   overflow-y: auto;
   padding-right: 6px;
 }
@@ -638,16 +670,16 @@ onUnmounted(() => {
   position: sticky;
   top: 0;
   z-index: 1;
-  background: #f7f9fc;
+  background: var(--surface-elevated);
 }
 
 .global-hint {
   grid-column: 1 / -1;
   margin: 0;
   padding: 10px 12px;
-  border: 1px solid #dce8f8;
+  border: 1px solid var(--color-border-soft);
   border-radius: 12px;
-  background: #f7fbff;
+  background: var(--surface-elevated);
   color: var(--color-text-muted);
   font-size: 13px;
 }
@@ -669,19 +701,39 @@ onUnmounted(() => {
   display: flex;
   flex-direction: column;
   min-width: 0;
+  min-height: 0;
 }
 
 .left-col {
-  gap: 18px;
+  gap: 16px;
 }
 
 .right-col {
-  gap: 12px;
+  gap: 14px;
+}
+
+.left-col :deep(.table-card) {
+  flex: 1;
+  min-height: 0;
+}
+
+.left-col :deep(.table-card .content) {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.left-col :deep(.config-card:first-child) {
+  padding-bottom: 16px;
+}
+
+.left-col :deep(.config-card:first-child .glass-area) {
+  min-height: 124px;
 }
 
 .field-stack {
   display: grid;
-  gap: 12px;
+  gap: 10px;
 }
 
 .field-stack.compact {
@@ -691,13 +743,13 @@ onUnmounted(() => {
 .field-block {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 6px;
 }
 
 .autosave-note {
-  margin: 6px 0 0;
+  margin: 2px 0 0;
   font-size: 12px;
-  color: #5f738d;
+  color: var(--text-tertiary);
 }
 
 .autosave-note.error {
@@ -706,30 +758,67 @@ onUnmounted(() => {
 
 .filled-field::placeholder,
 .filled-area::placeholder {
-  color: rgba(28, 31, 35, 0.72);
+  color: var(--text-secondary);
 }
 
 .progress-card {
   padding: 18px;
-  border-radius: 22px;
-  border-color: #d9e8ff;
-  background: linear-gradient(135deg, rgba(247, 251, 255, 0.8), rgba(233, 243, 255, 0.8));
-  box-shadow: 0 14px 40px var(--color-shadow-strong);
+  border-radius: 24px;
+  border-color: rgba(var(--accent-rgb), 0.14);
+  background: var(--accent-panel);
+  box-shadow: 0 22px 48px rgba(var(--accent-rgb), 0.12);
   display: flex;
   flex-direction: column;
   gap: 12px;
+  color: var(--text-primary);
+}
+
+.progress-card::before {
+  border-color: rgba(255, 255, 255, 0.34);
+}
+
+.progress-card::after {
+  content: "";
+  position: absolute;
+  inset: auto -8% -18% 36%;
+  height: 170px;
+  background: var(--accent-glow);
+  pointer-events: none;
 }
 
 .progress-head {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: 14px;
+}
+
+.hero-eyebrow,
+.complete-eyebrow {
+  display: inline-flex;
+  align-items: center;
+  width: fit-content;
+  min-height: 24px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.hero-eyebrow {
+  color: var(--accent-primary);
+  background: var(--surface-nav-panel);
+  border: 1px solid rgba(var(--accent-rgb), 0.12);
 }
 
 .progress-head h3 {
   margin: 0;
-  font-size: 22px;
-  font-weight: 600;
+  font-size: 24px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  color: var(--accent-primary-strong);
 }
 
 .progress-badge {
@@ -739,50 +828,89 @@ onUnmounted(() => {
   min-height: 28px;
   padding: 8px 12px;
   border-radius: 999px;
-  border: 1px solid #cfe0fb;
-  background: rgba(255, 255, 255, 0.6);
-  color: var(--color-brand);
+  border: 1px solid rgba(var(--accent-rgb), 0.14);
+  background: var(--surface-panel-strong);
+  color: var(--accent-primary);
   font-size: 12px;
   font-weight: 700;
+  letter-spacing: 0.04em;
 }
 
 .progress-desc,
 .complete-desc {
   margin: 0;
-  color: var(--color-text-muted);
+  color: inherit;
   font-size: 14px;
-  line-height: 1.45;
+  line-height: 1.55;
+}
+
+.progress-desc {
+  color: var(--text-secondary);
+}
+
+.hero-metrics {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.hero-metric {
+  padding: 10px 12px;
+  border-radius: 16px;
+  border: 1px solid rgba(var(--accent-rgb), 0.12);
+  background: var(--surface-panel);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.hero-metric span {
+  color: var(--text-secondary);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.hero-metric strong {
+  color: var(--accent-primary-strong);
+  font-size: 20px;
+  font-weight: 700;
+  letter-spacing: -0.03em;
 }
 
 .cta-row {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: 14px;
 }
 
 .percent {
-  color: var(--color-brand);
+  color: var(--accent-primary-strong);
   font-size: 28px;
+  font-family: var(--font-mono);
+  letter-spacing: -0.04em;
 }
 
 .progress-track {
   height: 14px;
   border-radius: 999px;
-  background: #dcebff;
+  background: rgba(var(--accent-rgb), 0.12);
   overflow: hidden;
 }
 
 .progress-fill {
   height: 100%;
   border-radius: 999px;
-  background: linear-gradient(90deg, #0f6cbd, #2e86de);
+  background: var(--accent-progress-fill);
 }
 
 .step-card {
-  border: 1px solid #e4eeff;
-  border-radius: 16px;
-  background: rgba(255, 255, 255, 0.56);
-  padding: 16px;
+  border: 1px solid rgba(var(--accent-rgb), 0.14);
+  border-radius: 18px;
+  background: var(--surface-panel);
+  padding: 14px;
   display: flex;
   flex-direction: column;
   gap: 10px;
@@ -790,6 +918,8 @@ onUnmounted(() => {
 
 .step-text {
   font-size: 14px;
+  color: var(--accent-primary-strong);
+  line-height: 1.5;
 }
 
 .metric-input {
@@ -807,17 +937,99 @@ onUnmounted(() => {
 
 .table-hint {
   margin: 0;
-  color: var(--color-text-muted);
+  color: var(--text-secondary);
   font-size: 13px;
 }
 
-.complete-card {
-  padding: 12px;
-  border-radius: 20px;
-  background: rgba(255, 255, 255, 0.72);
+.overview-card {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 16px;
+  border-radius: 24px;
+  background: var(--surface-card-gradient);
+}
+
+.overview-head {
   display: flex;
   flex-direction: column;
   gap: 6px;
+}
+
+.overview-head h3 {
+  margin: 0;
+  font-size: 22px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+
+.overview-head p {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.overview-eyebrow {
+  display: inline-flex;
+  align-items: center;
+  width: fit-content;
+  min-height: 24px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: rgba(var(--accent-rgb), 0.12);
+  color: var(--accent-primary);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.overview-body {
+  display: grid;
+  gap: 12px;
+}
+
+.capacity-card,
+.complete-card {
+  padding: 0;
+  border-radius: 0;
+  border: 0;
+  background: transparent;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.capacity-card {
+  padding-bottom: 14px;
+  border-bottom: 1px solid var(--border-default);
+}
+
+.overview-section-head {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.overview-section-head strong {
+  font-size: 17px;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+.section-kicker {
+  color: var(--text-tertiary);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.complete-eyebrow {
+  color: var(--accent-primary);
+  background: rgba(var(--accent-rgb), 0.12);
 }
 
 .complete-head {
@@ -828,8 +1040,9 @@ onUnmounted(() => {
 
 .complete-head h3 {
   margin: 0;
-  font-size: 20px;
+  font-size: 18px;
   font-weight: 700;
+  letter-spacing: -0.02em;
 }
 
 .complete-badge {
@@ -839,6 +1052,7 @@ onUnmounted(() => {
   min-height: 28px;
   padding: 8px 12px;
   border-radius: 999px;
+  border: 1px solid transparent;
   background: var(--color-success-soft);
   color: var(--color-success);
   font-size: 12px;
@@ -856,6 +1070,31 @@ onUnmounted(() => {
   gap: 8px;
 }
 
+.complete-kpi {
+  padding: 10px 12px;
+  border-radius: 14px;
+  border: 1px solid var(--border-default);
+  background: var(--surface-elevated);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.complete-kpi span {
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.complete-kpi strong {
+  color: var(--text-primary);
+  font-size: 18px;
+  font-weight: 700;
+}
+
 .complete-summary {
   display: flex;
   flex-direction: column;
@@ -864,6 +1103,7 @@ onUnmounted(() => {
 
 .complete-summary strong {
   font-size: 14px;
+  color: var(--text-primary);
 }
 
 .complete-action {
@@ -875,16 +1115,35 @@ onUnmounted(() => {
   width: 164px;
 }
 
+.exam-table thead tr {
+  height: 46px;
+}
+
 .exam-table tbody tr {
-  height: 58px;
+  height: 52px;
+}
+
+.exam-table th,
+.exam-table td {
+  padding-inline: 14px;
+}
+
+.exam-table td {
+  font-size: 13px;
+}
+
+.exam-table tbody td:first-child {
+  font-weight: 700;
+  color: var(--text-primary);
 }
 
 .time-input {
   width: 88px;
-  border: 0;
+  border: 1px solid transparent;
   background: transparent;
-  border-radius: 8px;
+  border-radius: 10px;
   padding: 4px 8px;
+  color: var(--text-primary);
 }
 
 .month-day-input {
@@ -895,18 +1154,18 @@ onUnmounted(() => {
 
 .month-day-input.inline-edit {
   width: 84px;
-  border: 1px solid #b9d6ff;
-  border-radius: 8px;
-  background: #f4f9ff;
+  border: 1px solid var(--accent-border-strong);
+  border-radius: 10px;
+  background: rgba(var(--accent-rgb), 0.08);
   padding: 4px 8px;
-  box-shadow: 0 0 0 2px rgba(185, 214, 255, 0.35);
+  box-shadow: 0 0 0 3px var(--accent-focus-ring);
 }
 
 .time-input:focus {
   outline: none;
-  border: 1px solid #b9d6ff;
-  background: #f4f9ff;
-  box-shadow: 0 0 0 2px rgba(185, 214, 255, 0.35);
+  border: 1px solid var(--accent-border-strong);
+  background: rgba(var(--accent-rgb), 0.08);
+  box-shadow: 0 0 0 3px var(--accent-focus-ring);
 }
 
 .month-day-input:focus {
@@ -920,7 +1179,7 @@ onUnmounted(() => {
 }
 
 .date-cell.editing {
-  background: #eef5ff;
+  background: rgba(var(--accent-rgb), 0.12);
 }
 
 .date-display-btn {
@@ -928,6 +1187,7 @@ onUnmounted(() => {
   background: transparent;
   color: var(--color-text);
   font: inherit;
+  font-weight: 600;
   cursor: text;
   padding: 0;
 }
@@ -938,7 +1198,7 @@ onUnmounted(() => {
 }
 
 .time-cell:focus-within {
-  background: #eef5ff;
+  background: rgba(var(--accent-rgb), 0.12);
 }
 
 
@@ -957,13 +1217,22 @@ onUnmounted(() => {
 }
 
 .icon-btn {
-  border: 0;
-  background: transparent;
-  color: #c26868;
+  border: 1px solid transparent;
+  background: var(--surface-panel);
+  color: var(--color-danger);
   cursor: pointer;
   display: inline-flex;
   align-items: center;
   justify-content: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 10px;
+  transition: background-color 0.18s ease, color 0.18s ease;
+}
+
+.icon-btn:hover {
+  background: var(--color-danger-soft);
+  border-color: rgba(182, 68, 68, 0.14);
 }
 
 .icon-btn .material-symbols-rounded {
@@ -974,6 +1243,19 @@ onUnmounted(() => {
 .icon-btn.disabled {
   color: var(--color-text-muted);
   cursor: not-allowed;
+}
+
+@media (max-width: 1180px) {
+  .dashboard-grid {
+    grid-template-columns: 1fr;
+    min-height: auto;
+  }
+}
+
+@media (max-width: 900px) {
+  .hero-metrics {
+    grid-template-columns: 1fr;
+  }
 }
 
 </style>

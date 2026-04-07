@@ -1,5 +1,31 @@
 <template>
   <section class="panel">
+    <section class="hero-card card-shell">
+      <div class="hero-copy">
+        <span class="section-kicker">监考配置</span>
+        <h3>设置监考人数、禁排规则和津贴标准</h3>
+        <p>请先确认基础规则，再进行监考分配和导出，系统会按当前设置执行。</p>
+      </div>
+      <div class="hero-stats">
+        <article class="hero-stat">
+          <span>默认监考人数</span>
+          <strong>{{ defaultExamRoomRequiredCount }} 人</strong>
+        </article>
+        <article class="hero-stat">
+          <span>禁排规则</span>
+          <strong>{{ store.viewState.staffExclusions.length }} 条</strong>
+        </article>
+        <article class="hero-stat">
+          <span>中层例外</span>
+          <strong>{{ middleManagerExceptionCount }} 位</strong>
+        </article>
+        <article class="hero-stat">
+          <span>待补班级</span>
+          <strong>{{ pendingClassCount }} 个</strong>
+        </article>
+      </div>
+    </section>
+
     <div class="grid-two top-grid">
       <ConfigCard class="top-card exam-count-card" title="监考人数配置" description="统一设置每个考场所需监考老师个数，分配时自动按此规则执行。">
         <div class="card-stack">
@@ -28,7 +54,7 @@
             <button class="segment-btn" :class="{ active: !middleManagerDefaultEnabled }" type="button" @click="setMiddleManagerDefaultEnabled(false)">不参与监考</button>
           </div>
           <div class="footer-row middle-footer">
-            <span class="warning-pill">已设置 {{ middleManagerExceptionCount }} 位例外人员</span>
+            <span class="exception-pill">已设置 {{ middleManagerExceptionCount }} 位例外人员</span>
             <button class="secondary-btn drawer-trigger" type="button" @click="openMiddleManagerDrawer">配置例外</button>
           </div>
         </div>
@@ -52,8 +78,12 @@
         />
       </div>
 
-      <div v-if="store.viewState.staffExclusions.length === 0" class="empty-box">
-        选择教师与考试场次后会自动加入禁排列表。
+      <div v-if="store.viewState.staffExclusions.length === 0" class="empty-box empty-box-guide">
+        <span class="material-symbols-rounded empty-box-icon" aria-hidden="true">playlist_add</span>
+        <div class="empty-box-copy">
+          <strong>暂未添加禁排规则</strong>
+          <span>选择教师和考试场次后，系统会自动加入下方禁排列表。</span>
+        </div>
       </div>
       <div v-else class="exclude-list">
         <div v-for="item in store.viewState.staffExclusions" :key="`${item.teacherId}-${item.sessionId}`" class="exclude-item">
@@ -80,9 +110,9 @@
               <span class="field-label">已配置班级</span>
               <strong class="summary-value">{{ configuredClassCount }} 个</strong>
             </div>
-            <div class="summary-chip warning">
-              <span class="field-label warning-text">待补充</span>
-              <strong class="summary-value warning-text">{{ pendingClassCount }} 个班级</strong>
+            <div class="summary-chip pending-chip">
+              <span class="field-label pending-text">待补充</span>
+              <strong class="summary-value pending-text">{{ pendingClassCount }} 个班级</strong>
             </div>
           </div>
           <div class="footer-row self-study-footer">
@@ -208,7 +238,7 @@
             <div>
               <h4>班级科目配置</h4>
             </div>
-            <span class="warning-pill">{{ pendingClassCount }} 个待处理</span>
+            <span class="pending-pill">{{ pendingClassCount }} 个待处理</span>
           </div>
 
           <div v-if="selfStudyLoadError" class="empty-box error-box">{{ selfStudyLoadError }}</div>
@@ -299,7 +329,7 @@
               <h4>例外名单</h4>
               <p>按人设置与默认规则相反的监考状态。</p>
             </div>
-            <span class="warning-pill">{{ middleManagerExceptionTeacherIdsDraft.length }} 位例外</span>
+            <span class="exception-pill">{{ middleManagerExceptionTeacherIdsDraft.length }} 位例外</span>
           </div>
 
           <div class="middle-toolbar">
@@ -1079,6 +1109,77 @@ onBeforeUnmount(() => {
   isolation: isolate;
 }
 
+.hero-card {
+  padding: 22px 24px;
+  display: grid;
+  grid-template-columns: minmax(0, 1.5fr) minmax(340px, 1fr);
+  gap: 18px;
+  align-items: stretch;
+  background:
+    linear-gradient(135deg, rgba(255, 255, 255, 0.9), rgba(244, 248, 255, 0.82)),
+    radial-gradient(circle at top right, rgba(var(--accent-rgb), 0.14), rgba(var(--accent-rgb), 0));
+}
+
+.hero-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.section-kicker {
+  color: var(--text-tertiary);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.hero-copy h3 {
+  margin: 0;
+  font-size: 26px;
+  line-height: 1.15;
+  letter-spacing: -0.03em;
+}
+
+.hero-copy p {
+  margin: 0;
+  max-width: 64ch;
+  color: var(--text-secondary);
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.hero-stats {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.hero-stat {
+  min-height: 102px;
+  padding: 16px;
+  border-radius: 20px;
+  border: 1px solid rgba(174, 194, 216, 0.18);
+  background: rgba(255, 255, 255, 0.6);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.68);
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.hero-stat span {
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+.hero-stat strong {
+  color: var(--text-primary);
+  font-size: 18px;
+  font-weight: 700;
+  line-height: 1.25;
+}
+
 .grid-two {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -1201,10 +1302,11 @@ onBeforeUnmount(() => {
 .display-field,
 .summary-chip,
 .summary-box {
-  border: 1px solid #e9f0f8;
-  border-radius: 16px;
-  background: rgba(255, 255, 255, 0.6);
+  border: 1px solid rgba(174, 194, 216, 0.18);
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.56);
   padding: 12px 14px;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.62);
 }
 
 .display-field {
@@ -1235,6 +1337,10 @@ onBeforeUnmount(() => {
 }
 .warning-text {
   color: var(--color-warning);
+}
+
+.pending-text {
+  color: color-mix(in srgb, var(--color-warning) 78%, var(--text-primary));
 }
 
 .field-value-row {
@@ -1299,9 +1405,9 @@ onBeforeUnmount(() => {
 .framed-input {
   min-height: 40px;
   padding: 0 12px;
-  border: 1px solid #dce6f3;
+  border: 1px solid var(--color-border-soft);
   border-radius: 12px;
-  background: rgba(255, 255, 255, 0.96);
+  background: var(--surface-panel-strong);
 }
 
 .segment-wrap {
@@ -1309,9 +1415,9 @@ onBeforeUnmount(() => {
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 8px;
   padding: 6px;
-  background: #f6f9fc;
-  border-radius: 18px;
-  border: 1px solid #e2ebf5;
+  background: rgba(255, 255, 255, 0.48);
+  border-radius: 20px;
+  border: 1px solid rgba(174, 194, 216, 0.18);
 }
 
 .segment-btn {
@@ -1319,16 +1425,16 @@ onBeforeUnmount(() => {
   border: 0;
   border-radius: 14px;
   background: transparent;
-  color: #52657f;
+  color: var(--text-secondary);
   font-size: 14px;
   font-weight: 700;
   cursor: pointer;
 }
 
 .segment-btn.active {
-  background: #fff;
-  color: #0f6cbd;
-  box-shadow: 0 8px 18px rgba(15, 108, 189, 0.12);
+  background: rgba(255, 255, 255, 0.86);
+  color: var(--accent-primary);
+  box-shadow: 0 8px 18px rgba(var(--accent-rgb), 0.12);
 }
 
 .summary-box,
@@ -1388,6 +1494,8 @@ onBeforeUnmount(() => {
 }
 
 .info-pill,
+.exception-pill,
+.pending-pill,
 .warning-pill,
 .danger-pill,
 .status-badge,
@@ -1403,14 +1511,26 @@ onBeforeUnmount(() => {
 }
 
 .info-pill {
-  background: #eaf3ff;
-  color: #0f6cbd;
+  background: rgba(var(--accent-rgb), 0.12);
+  color: var(--accent-primary);
+}
+
+.exception-pill {
+  background: rgba(var(--accent-rgb), 0.12);
+  color: var(--accent-primary);
+  border: 1px solid var(--accent-border-soft);
+}
+
+.pending-pill {
+  background: color-mix(in srgb, var(--color-warning-soft) 74%, white);
+  color: color-mix(in srgb, var(--color-warning) 76%, var(--text-primary));
+  border: 1px solid rgba(154, 111, 43, 0.18);
 }
 
 .warning-pill {
-  background: #fff7ed;
-  color: #c96a10;
-  border: 1px solid #f3d2a4;
+  background: var(--color-warning-soft);
+  color: var(--color-warning);
+  border: 1px solid rgba(154, 111, 43, 0.28);
 }
 
 .danger-pill {
@@ -1441,17 +1561,55 @@ onBeforeUnmount(() => {
   display: flex;
   align-items: center;
   padding: 10px 12px;
-  border-radius: 14px;
-  border: 1px dashed #dce8f8;
-  background: rgba(247, 251, 255, 0.76);
+  border-radius: 16px;
+  border: 1px dashed rgba(174, 194, 216, 0.3);
+  background: rgba(255, 255, 255, 0.5);
   color: var(--color-text-muted);
   font-size: 13px;
 }
 
+.empty-box-guide {
+  min-height: 72px;
+  gap: 12px;
+  padding: 14px 16px;
+  border-style: solid;
+  background: color-mix(in srgb, var(--surface-elevated) 78%, white);
+}
+
+.empty-box-icon {
+  width: 36px;
+  height: 36px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 12px;
+  background: rgba(var(--accent-rgb), 0.12);
+  color: var(--accent-primary);
+  font-size: 20px;
+  flex-shrink: 0;
+}
+
+.empty-box-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.empty-box-copy strong {
+  color: var(--text-primary);
+  font-size: 14px;
+}
+
+.empty-box-copy span {
+  color: var(--text-secondary);
+  line-height: 1.5;
+}
+
 .error-box {
   border-color: rgba(216, 80, 80, 0.24);
-  color: #b63d3d;
-  background: rgba(255, 245, 245, 0.9);
+  color: var(--color-danger);
+  background: var(--color-danger-soft);
 }
 
 .summary-grid,
@@ -1476,13 +1634,18 @@ onBeforeUnmount(() => {
 .summary-chip.warning,
 .subject-badge.empty,
 .status-badge.pending {
-  background: #fff8f1;
-  border-color: #f7d6ae;
-  color: #c96a12;
+  background: var(--color-warning-soft);
+  border-color: rgba(154, 111, 43, 0.28);
+  color: var(--color-warning);
 }
 
 .summary-chip.warning {
-  border: 1px solid #f7d6ae;
+  border: 1px solid rgba(154, 111, 43, 0.28);
+}
+
+.summary-chip.pending-chip {
+  border: 1px solid rgba(154, 111, 43, 0.18);
+  background: color-mix(in srgb, var(--color-warning-soft) 72%, white);
 }
 
 .summary-chip {
@@ -1511,8 +1674,8 @@ onBeforeUnmount(() => {
 .search-bar {
   min-height: 42px;
   border-radius: 14px;
-  border: 1px solid #d8e4f2;
-  background: rgba(255, 255, 255, 0.95);
+  border: 1px solid var(--color-border-soft);
+  background: var(--surface-panel-strong);
 }
 
 .fluent-input {
@@ -1526,7 +1689,7 @@ onBeforeUnmount(() => {
   right: 10px;
   top: 11px;
   font-size: 18px;
-  color: #667085;
+  color: var(--text-secondary);
 }
 
 .select-field {
@@ -1537,10 +1700,10 @@ onBeforeUnmount(() => {
 .subject-menu {
   position: absolute;
   padding: 6px;
-  border: 1px solid #d8e4f2;
+  border: 1px solid var(--color-border-soft);
   border-radius: 14px;
-  background: rgba(255, 255, 255, 0.98);
-  box-shadow: 0 18px 40px rgba(35, 52, 78, 0.16);
+  background: var(--surface-input-strong);
+  box-shadow: var(--shadow-strong);
   z-index: 140;
 }
 
@@ -1563,15 +1726,15 @@ onBeforeUnmount(() => {
   padding: 8px 12px;
   cursor: pointer;
   font-size: 13px;
-  color: #334155;
+  color: var(--text-primary);
 }
 
 .fluent-option.selected,
 .fluent-option:hover,
 .subject-menu-item.active,
 .subject-menu-item:hover {
-  background: #eef5ff;
-  color: #0f6cbd;
+  background: rgba(var(--accent-rgb), 0.12);
+  color: var(--accent-primary);
 }
 
 .menu-empty {
@@ -1587,24 +1750,24 @@ onBeforeUnmount(() => {
   gap: 12px;
   align-items: center;
   padding: 14px 16px;
-  border-radius: 18px;
+  border-radius: 20px;
 }
 
 .class-table-head {
-  background: #f3f7fb;
-  color: #5f708a;
+  background: rgba(255, 255, 255, 0.52);
+  color: var(--text-secondary);
   font-size: 13px;
   font-weight: 700;
 }
 
 .class-table-row {
-  border: 1px solid #dce8f8;
-  background: #fff;
+  border: 1px solid rgba(174, 194, 216, 0.18);
+  background: rgba(255, 255, 255, 0.58);
 }
 
 .class-table-row.selected {
-  border-color: #bad7ff;
-  background: #f8fbff;
+  border-color: var(--accent-border-strong);
+  background: var(--surface-elevated);
 }
 
 .check-cell {
@@ -1614,14 +1777,14 @@ onBeforeUnmount(() => {
 
 .subject-badge {
   justify-self: start;
-  border: 1px solid #dbe5f3;
-  background: #f7fbff;
-  color: #334155;
+  border: 1px solid var(--color-border-soft);
+  background: var(--surface-elevated);
+  color: var(--text-primary);
 }
 
 .status-badge.done {
-  background: #e9f9ef;
-  color: #0f8b57;
+  background: var(--color-success-soft);
+  color: var(--color-success);
 }
 
 .toolbar-filter {
@@ -1641,9 +1804,9 @@ onBeforeUnmount(() => {
   min-height: 44px;
   padding: 0 16px;
   border-radius: 16px;
-  border: 1px solid #d6e5fa;
-  background: #eef5ff;
-  color: #0f6cbd;
+  border: 1px solid var(--accent-border-soft);
+  background: rgba(var(--accent-rgb), 0.12);
+  color: var(--accent-primary);
   font-size: 14px;
   font-weight: 700;
   cursor: pointer;
@@ -1658,9 +1821,9 @@ onBeforeUnmount(() => {
 .page-chip {
   padding: 10px 14px;
   border-radius: 16px;
-  border: 1px solid #d6e5fa;
-  background: #f7fbff;
-  color: #4a5f80;
+  border: 1px solid var(--accent-border-soft);
+  background: rgba(255, 255, 255, 0.56);
+  color: var(--text-secondary);
   font-size: 13px;
   font-weight: 700;
 }
@@ -1669,24 +1832,24 @@ onBeforeUnmount(() => {
   min-width: 44px;
   min-height: 40px;
   border-radius: 14px;
-  border: 1px solid #d6e5fa;
-  background: #fff;
-  color: #4a5f80;
+  border: 1px solid var(--accent-border-soft);
+  background: rgba(255, 255, 255, 0.62);
+  color: var(--text-secondary);
   font-size: 14px;
   font-weight: 700;
   cursor: pointer;
 }
 
 .page-btn.active {
-  background: #eef5ff;
-  color: #0f6cbd;
+  background: rgba(var(--accent-rgb), 0.12);
+  color: var(--accent-primary);
 }
 
 .selection-strip {
   padding: 8px 12px;
   border-radius: 14px;
-  background: #eef6ff;
-  color: #0f6cbd;
+  background: rgba(var(--accent-rgb), 0.12);
+  color: var(--accent-primary);
   font-size: 13px;
   font-weight: 700;
 }
@@ -1694,7 +1857,7 @@ onBeforeUnmount(() => {
 .drawer-backdrop {
   position: fixed;
   inset: 0;
-  background: rgba(15, 23, 42, 0.1);
+  background: rgba(15, 23, 42, 0.14);
   z-index: 998;
 }
 
@@ -1706,18 +1869,18 @@ onBeforeUnmount(() => {
   overflow-y: auto;
   width: min(560px, calc(100vw - 24px));
   padding: 24px;
-  border-radius: 24px;
+  border-radius: 28px;
   border: 1px solid rgba(220, 230, 243, 0.92);
-  background: rgba(255, 255, 255, 0.97);
-  box-shadow: 0 22px 44px rgba(107, 124, 147, 0.2);
+  background: var(--surface-panel-strong);
+  box-shadow: var(--shadow-strong);
   z-index: 999;
 }
 
 .soft-panel {
   padding: 20px;
-  border-radius: 22px;
-  border: 1px solid #dce8f8;
-  background: #f7fbff;
+  border-radius: 24px;
+  border: 1px solid rgba(174, 194, 216, 0.18);
+  background: rgba(255, 255, 255, 0.56);
 }
 
 .class-config-section {
@@ -1755,7 +1918,7 @@ onBeforeUnmount(() => {
 
 .summary-card :deep(p) {
   font-size: 12px;
-  color: #7a879a;
+  color: var(--text-tertiary);
 }
 
 .middle-footer,
@@ -1778,11 +1941,11 @@ onBeforeUnmount(() => {
 }
 
 .icon-btn {
-  color: #c26868;
+  color: var(--color-danger);
 }
 
 .text-btn {
-  color: #0f6cbd;
+  color: var(--accent-primary);
   font-size: 13px;
   font-weight: 700;
 }
@@ -1815,7 +1978,7 @@ onBeforeUnmount(() => {
 
 .search-icon {
   font-size: 18px;
-  color: #7a879a;
+  color: var(--text-tertiary);
 }
 
 .candidate-item {
@@ -1823,12 +1986,12 @@ onBeforeUnmount(() => {
   justify-content: space-between;
   padding: 0 14px;
   border-radius: 14px;
-  border: 1px dashed #c8dbf6;
-  background: #f8fbff;
+  border: 1px dashed var(--accent-border-soft);
+  background: var(--surface-elevated);
 }
 
 .candidate-action {
-  color: #0f6cbd;
+  color: var(--accent-primary);
   font-size: 13px;
   font-weight: 700;
 }
@@ -1869,8 +2032,8 @@ onBeforeUnmount(() => {
   gap: 10px;
   padding: 14px 16px;
   border-radius: 16px;
-  border: 1px solid #dce6f3;
-  background: rgba(247, 251, 255, 0.82);
+  border: 1px solid var(--color-border-soft);
+  background: var(--surface-panel);
   font-size: 14px;
   line-height: 1.6;
   color: var(--color-text);
@@ -1889,7 +2052,7 @@ onBeforeUnmount(() => {
 .assignment-notice-icon {
   font-size: 18px;
   line-height: 1.2;
-  color: #0f6cbd;
+  color: var(--accent-primary);
 }
 
 .assignment-notice-body {
@@ -1937,14 +2100,14 @@ onBeforeUnmount(() => {
   width: 100%;
   height: 6px;
   border-radius: 999px;
-  background: rgba(15, 108, 189, 0.12);
+  background: rgba(var(--accent-rgb), 0.12);
   overflow: hidden;
 }
 
 .assignment-progress-bar {
   height: 100%;
   border-radius: inherit;
-  background: linear-gradient(90deg, #0f6cbd 0%, #4aa3ff 100%);
+  background: var(--accent-progress-fill);
   transition: width 220ms ease;
 }
 
@@ -1970,18 +2133,18 @@ onBeforeUnmount(() => {
   min-height: auto;
   padding: 10px 12px;
   border-radius: 14px;
-  border: 1px solid #dce6f3;
-  background: #fff;
-  color: #667085;
+  border: 1px solid var(--color-border-soft);
+  background: var(--surface-table-content);
+  color: var(--text-secondary);
   font-size: 13px;
   font-weight: 600;
   cursor: pointer;
 }
 
 .middle-filter-btn.active {
-  border-color: #c5dcff;
-  background: #eaf3ff;
-  color: #0f6cbd;
+  border-color: var(--accent-border-strong);
+  background: rgba(var(--accent-rgb), 0.12);
+  color: var(--accent-primary);
 }
 
 .middle-exception-item {
@@ -2000,7 +2163,7 @@ onBeforeUnmount(() => {
 }
 
 .middle-subtext {
-  color: #667085;
+  color: var(--text-secondary);
   font-size: 12px;
   font-weight: 500;
 }
@@ -2023,15 +2186,15 @@ onBeforeUnmount(() => {
 }
 
 .middle-status-pill.off {
-  background: #fff1f2;
-  border: 1px solid #fbcdd2;
-  color: #d1435b;
+  background: var(--color-danger-soft);
+  border: 1px solid rgba(182, 68, 68, 0.2);
+  color: var(--color-danger);
 }
 
 .middle-status-pill.on {
-  background: #ecfdf3;
-  border: 1px solid #b7e4c7;
-  color: #15803d;
+  background: var(--color-success-soft);
+  border: 1px solid rgba(68, 113, 92, 0.24);
+  color: var(--color-success);
 }
 
 .subject-menu {
@@ -2069,11 +2232,16 @@ onBeforeUnmount(() => {
 }
 
 @media (max-width: 1200px) {
+  .hero-card,
   .grid-two,
   .summary-grid,
   .subsidy-row,
   .time-row,
   .schedule-row {
+    grid-template-columns: 1fr;
+  }
+
+  .hero-stats {
     grid-template-columns: 1fr;
   }
 
@@ -2086,3 +2254,4 @@ onBeforeUnmount(() => {
   }
 }
 </style>
+
