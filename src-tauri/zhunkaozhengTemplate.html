@@ -63,7 +63,7 @@
 
     .ticket-subtitle {
       margin-top: 2mm;
-      font-size: 10pt;
+      font-size: 15pt;
       color: #526579;
       letter-spacing: 2px;
     }
@@ -117,8 +117,12 @@
       width: 18%;
     }
 
-    .schedule-table col.time-col {
-      width: 47%;
+    .schedule-table col.time-date-col {
+      width: 17%;
+    }
+
+    .schedule-table col.time-range-col {
+      width: 30%;
     }
 
     .schedule-table col.room-col {
@@ -146,7 +150,8 @@
       font-weight: 700;
     }
 
-    .schedule-table tbody td:nth-child(2) {
+    .schedule-table tbody td:nth-child(2),
+    .schedule-table tbody td:nth-child(3) {
       line-height: 1.42;
       padding-top: 8px;
       padding-bottom: 8px;
@@ -218,14 +223,15 @@
         <table class="schedule-table">
           <colgroup>
             <col class="subject-col" />
-            <col class="time-col" />
+            <col class="time-date-col" />
+            <col class="time-range-col" />
             <col class="room-col" />
             <col class="seat-col" />
           </colgroup>
           <thead>
             <tr>
               <th>考试科目</th>
-              <th>考试时间</th>
+              <th colspan="2">考试时间</th>
               <th>考场</th>
               <th>座号</th>
             </tr>

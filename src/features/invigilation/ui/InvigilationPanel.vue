@@ -73,12 +73,15 @@
     </ConfigCard>
 
     <div class="grid-two summary-grid-row">
-      <ConfigCard class="summary-card self-study-card" title="全员自习" description="统一设置自习时段与班级科目摘要。">
+      <ConfigCard class="summary-card self-study-card" title="全员自习" description="统一设置自习时段与班级自习科目。">
         <div class="card-stack">
           <div class="summary-grid">
-            <div class="summary-chip">
+            <div class="summary-chip time-summary-chip">
               <span class="field-label">时间范围</span>
-              <strong class="summary-value" v-html="selfStudyScheduleText"></strong>
+              <strong class="summary-value time-summary-value">
+                <span class="time-summary-date">{{ selfStudyMonthDay }}</span>
+                <span class="time-summary-range">{{ selfStudyStartTime }} - {{ selfStudyEndTime }}</span>
+              </strong>
             </div>
             <div class="summary-chip">
               <span class="field-label">已配置班级</span>
@@ -503,12 +506,6 @@ const normalizedSelfStudyDate = computed(() => {
   const value = selfStudyMonthDay.value.trim();
   if (!/^\d{2}-\d{2}$/.test(value)) return "";
   return `${inferredSelfStudyYear.value}-${value}`;
-});
-const selfStudyScheduleText = computed(() => {
-  if (!selfStudyMonthDay.value || !selfStudyStartTime.value || !selfStudyEndTime.value) {
-    return "未设置";
-  }
-  return `${selfStudyMonthDay.value}<br>${selfStudyStartTime.value} - ${selfStudyEndTime.value}`;
 });
 const selfStudyScopeText = computed(() => {
   const sessionCount = store.viewState.sessionTimes.length;
@@ -1105,6 +1102,7 @@ onBeforeUnmount(() => {
 
 .summary-grid-row {
   align-items: stretch;
+  grid-template-columns: minmax(0, 1fr) 440px;
 }
 
 .top-card {
@@ -1200,15 +1198,41 @@ onBeforeUnmount(() => {
 
 .allowance-card :deep(.config-card) {
   gap: 12px;
+  width: 100%;
+  min-width: 0;
 }
 
 .allowance-card :deep(.body) {
   gap: 12px;
+  width: 100%;
 }
 
 .allowance-card .card-stack {
   gap: 12px;
   justify-content: space-between;
+}
+
+.allowance-card {
+  width: 440px;
+  max-width: 440px;
+  justify-self: start;
+}
+
+.allowance-card .subsidy-row {
+  grid-template-columns: repeat(2, max-content);
+  gap: 30px;
+  max-width: none;
+}
+
+.allowance-card .display-field {
+  width: auto;
+  min-height: 74px;
+  padding: 12px 10px 12px 14px;
+}
+
+.allowance-card .field-value-row {
+  gap: 6px;
+  white-space: nowrap;
 }
 
 .display-field,
@@ -1301,7 +1325,7 @@ onBeforeUnmount(() => {
 }
 
 .subsidy-input {
-  width: 40px;
+  width: 34px;
 }
 
 .time-input {
@@ -1543,6 +1567,16 @@ onBeforeUnmount(() => {
   gap: 10px;
 }
 
+.self-study-card .summary-grid {
+  grid-template-columns: minmax(0, 1.18fr) minmax(0, 0.92fr) minmax(0, 0.96fr);
+}
+
+.subsidy-row {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  justify-content: start;
+  gap: 12px;
+}
+
 .summary-chip.warning,
 .subject-badge.empty,
 .status-badge.pending {
@@ -1564,6 +1598,25 @@ onBeforeUnmount(() => {
   display: flex;
   flex-direction: column;
   gap: 6px;
+}
+
+.time-summary-chip {
+  min-width: 0;
+  padding-right: 22px;
+}
+
+.time-summary-value {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 14px;
+  white-space: nowrap;
+  font-size: 15px;
+  letter-spacing: -0.01em;
+}
+
+.time-summary-date,
+.time-summary-range {
+  display: inline-block;
 }
 
 .summary-chip2 {
