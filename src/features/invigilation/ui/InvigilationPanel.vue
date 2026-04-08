@@ -1,31 +1,5 @@
 <template>
   <section class="panel">
-    <section class="hero-card card-shell">
-      <div class="hero-copy">
-        <span class="section-kicker">监考配置</span>
-        <h3>设置监考人数、禁排规则和津贴标准</h3>
-        <p>请先确认基础规则，再进行监考分配和导出，系统会按当前设置执行。</p>
-      </div>
-      <div class="hero-stats">
-        <article class="hero-stat">
-          <span>默认监考人数</span>
-          <strong>{{ defaultExamRoomRequiredCount }} 人</strong>
-        </article>
-        <article class="hero-stat">
-          <span>禁排规则</span>
-          <strong>{{ store.viewState.staffExclusions.length }} 条</strong>
-        </article>
-        <article class="hero-stat">
-          <span>中层例外</span>
-          <strong>{{ middleManagerExceptionCount }} 位</strong>
-        </article>
-        <article class="hero-stat">
-          <span>待补班级</span>
-          <strong>{{ pendingClassCount }} 个</strong>
-        </article>
-      </div>
-    </section>
-
     <div class="grid-two top-grid">
       <ConfigCard class="top-card exam-count-card" title="监考人数配置" description="统一设置每个考场所需监考老师个数，分配时自动按此规则执行。">
         <div class="card-stack">
@@ -1109,23 +1083,6 @@ onBeforeUnmount(() => {
   isolation: isolate;
 }
 
-.hero-card {
-  padding: 22px 24px;
-  display: grid;
-  grid-template-columns: minmax(0, 1.5fr) minmax(340px, 1fr);
-  gap: 18px;
-  align-items: stretch;
-  background:
-    linear-gradient(135deg, rgba(255, 255, 255, 0.9), rgba(244, 248, 255, 0.82)),
-    radial-gradient(circle at top right, rgba(var(--accent-rgb), 0.14), rgba(var(--accent-rgb), 0));
-}
-
-.hero-copy {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-}
-
 .section-kicker {
   color: var(--text-tertiary);
   font-size: 11px;
@@ -1134,51 +1091,6 @@ onBeforeUnmount(() => {
   text-transform: uppercase;
 }
 
-.hero-copy h3 {
-  margin: 0;
-  font-size: 26px;
-  line-height: 1.15;
-  letter-spacing: -0.03em;
-}
-
-.hero-copy p {
-  margin: 0;
-  max-width: 64ch;
-  color: var(--text-secondary);
-  font-size: 13px;
-  line-height: 1.6;
-}
-
-.hero-stats {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 12px;
-}
-
-.hero-stat {
-  min-height: 102px;
-  padding: 16px;
-  border-radius: 20px;
-  border: 1px solid rgba(174, 194, 216, 0.18);
-  background: rgba(255, 255, 255, 0.6);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.68);
-  display: flex;
-  flex-direction: column;
-  justify-content: space-between;
-  gap: 12px;
-}
-
-.hero-stat span {
-  color: var(--text-secondary);
-  font-size: 12px;
-}
-
-.hero-stat strong {
-  color: var(--text-primary);
-  font-size: 18px;
-  font-weight: 700;
-  line-height: 1.25;
-}
 
 .grid-two {
   display: grid;
@@ -1302,11 +1214,11 @@ onBeforeUnmount(() => {
 .display-field,
 .summary-chip,
 .summary-box {
-  border: 1px solid rgba(174, 194, 216, 0.18);
+  border: 1px solid var(--color-border-soft);
   border-radius: 18px;
-  background: rgba(255, 255, 255, 0.56);
+  background: color-mix(in srgb, var(--surface-panel) 84%, white);
   padding: 12px 14px;
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.62);
+  box-shadow: var(--shadow-soft);
 }
 
 .display-field {
@@ -1415,9 +1327,9 @@ onBeforeUnmount(() => {
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 8px;
   padding: 6px;
-  background: rgba(255, 255, 255, 0.48);
+  background: color-mix(in srgb, var(--surface-panel) 76%, white);
   border-radius: 20px;
-  border: 1px solid rgba(174, 194, 216, 0.18);
+  border: 1px solid var(--color-border-soft);
 }
 
 .segment-btn {
@@ -1432,9 +1344,9 @@ onBeforeUnmount(() => {
 }
 
 .segment-btn.active {
-  background: rgba(255, 255, 255, 0.86);
+  background: var(--surface-panel-strong);
   color: var(--accent-primary);
-  box-shadow: 0 8px 18px rgba(var(--accent-rgb), 0.12);
+  box-shadow: 0 10px 22px rgba(var(--accent-rgb), 0.1);
 }
 
 .summary-box,
@@ -1562,8 +1474,8 @@ onBeforeUnmount(() => {
   align-items: center;
   padding: 10px 12px;
   border-radius: 16px;
-  border: 1px dashed rgba(174, 194, 216, 0.3);
-  background: rgba(255, 255, 255, 0.5);
+  border: 1px dashed color-mix(in srgb, var(--color-border-soft) 86%, var(--accent-border-soft));
+  background: color-mix(in srgb, var(--surface-panel) 82%, white);
   color: var(--color-text-muted);
   font-size: 13px;
 }
@@ -1754,15 +1666,15 @@ onBeforeUnmount(() => {
 }
 
 .class-table-head {
-  background: rgba(255, 255, 255, 0.52);
+  background: color-mix(in srgb, var(--surface-elevated) 84%, white);
   color: var(--text-secondary);
   font-size: 13px;
   font-weight: 700;
 }
 
 .class-table-row {
-  border: 1px solid rgba(174, 194, 216, 0.18);
-  background: rgba(255, 255, 255, 0.58);
+  border: 1px solid var(--color-border-soft);
+  background: color-mix(in srgb, var(--surface-panel) 86%, white);
 }
 
 .class-table-row.selected {
@@ -1822,7 +1734,7 @@ onBeforeUnmount(() => {
   padding: 10px 14px;
   border-radius: 16px;
   border: 1px solid var(--accent-border-soft);
-  background: rgba(255, 255, 255, 0.56);
+  background: var(--surface-panel);
   color: var(--text-secondary);
   font-size: 13px;
   font-weight: 700;
@@ -1833,7 +1745,7 @@ onBeforeUnmount(() => {
   min-height: 40px;
   border-radius: 14px;
   border: 1px solid var(--accent-border-soft);
-  background: rgba(255, 255, 255, 0.62);
+  background: var(--surface-panel-strong);
   color: var(--text-secondary);
   font-size: 14px;
   font-weight: 700;
@@ -1870,7 +1782,7 @@ onBeforeUnmount(() => {
   width: min(560px, calc(100vw - 24px));
   padding: 24px;
   border-radius: 28px;
-  border: 1px solid rgba(220, 230, 243, 0.92);
+  border: 1px solid color-mix(in srgb, var(--color-border-soft) 84%, white);
   background: var(--surface-panel-strong);
   box-shadow: var(--shadow-strong);
   z-index: 999;
@@ -1879,8 +1791,8 @@ onBeforeUnmount(() => {
 .soft-panel {
   padding: 20px;
   border-radius: 24px;
-  border: 1px solid rgba(174, 194, 216, 0.18);
-  background: rgba(255, 255, 255, 0.56);
+  border: 1px solid var(--color-border-soft);
+  background: color-mix(in srgb, var(--surface-panel) 84%, white);
 }
 
 .class-config-section {
