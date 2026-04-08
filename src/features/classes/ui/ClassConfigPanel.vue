@@ -1,27 +1,5 @@
 <template>
   <section class="panel">
-    <section class="overview-card card-shell">
-      <div class="overview-copy">
-        <span class="section-kicker">班级配置</span>
-        <h3>维护班级名称、选课和楼层信息</h3>
-        <p>可在此查询已有班级，或新增班级并填写教室类型、科目和教学位置。</p>
-      </div>
-      <div class="overview-stats">
-        <article class="overview-stat">
-          <span>当前模式</span>
-          <strong>{{ store.viewState.mode === "new" ? "新建配置" : "编辑已有" }}</strong>
-        </article>
-        <article class="overview-stat">
-          <span>班级总数</span>
-          <strong>{{ store.viewState.rows.length }}</strong>
-        </article>
-        <article class="overview-stat">
-          <span>当前类型</span>
-          <strong>{{ store.viewState.form.configType === "teaching_class" ? "教学教室" : "考试教室" }}</strong>
-        </article>
-      </div>
-    </section>
-
     <div class="search-card card-shell">
       <div class="search-block">
         <span class="picker-label">查询班级</span>
@@ -65,6 +43,24 @@
         </div>
       </div>
     </div>
+
+    <section class="context-card card-shell" aria-label="当前配置上下文">
+      <div class="context-copy">
+        <span class="section-kicker">当前上下文</span>
+        <strong>{{ currentModeLabel }}</strong>
+        <p>{{ stateDescription }}</p>
+      </div>
+      <div class="context-badges">
+        <div class="context-badge">
+          <span>当前模式</span>
+          <strong>{{ currentModeLabel }}</strong>
+        </div>
+        <div class="context-badge">
+          <span>当前类型</span>
+          <strong>{{ currentTypeLabel }}</strong>
+        </div>
+      </div>
+    </section>
 
     <ConfigCard class="current-card" title="当前配置班级">
       <div class="current-head">
@@ -247,6 +243,10 @@ const dialogToneClass = computed(() => {
 });
 const subjectDescription = computed(
   () => `点击科目标签可启用或取消，当前班级已选择 ${store.viewState.form.subjects.length} 门课程。`,
+);
+const currentModeLabel = computed(() => (store.viewState.mode === "new" ? "新建配置" : "编辑已有班级"));
+const currentTypeLabel = computed(() =>
+  store.viewState.form.configType === "teaching_class" ? "教学班" : "考试教室",
 );
 const stateDescription = computed(() => {
   if (store.viewState.mode === "new") {
@@ -601,23 +601,6 @@ onMounted(async () => {
   z-index: 1;
 }
 
-.overview-card {
-  padding: 22px 24px;
-  display: grid;
-  grid-template-columns: minmax(0, 1.4fr) minmax(320px, 0.95fr);
-  gap: 18px;
-  align-items: stretch;
-  background:
-    linear-gradient(135deg, rgba(255, 255, 255, 0.88), rgba(245, 249, 255, 0.78)),
-    radial-gradient(circle at top right, rgba(var(--accent-rgb), 0.14), rgba(var(--accent-rgb), 0));
-}
-
-.overview-copy {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-}
-
 .section-kicker {
   margin: 0;
   color: var(--text-tertiary);
@@ -625,53 +608,6 @@ onMounted(async () => {
   font-weight: 700;
   letter-spacing: 0.08em;
   text-transform: uppercase;
-}
-
-.overview-copy h3 {
-  margin: 0;
-  font-size: 26px;
-  font-weight: 800;
-  letter-spacing: -0.03em;
-  line-height: 1.15;
-}
-
-.overview-copy p {
-  margin: 0;
-  max-width: 62ch;
-  color: var(--text-secondary);
-  font-size: 13px;
-  line-height: 1.6;
-}
-
-.overview-stats {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 12px;
-}
-
-.overview-stat {
-  min-height: 98px;
-  padding: 16px;
-  border-radius: 20px;
-  border: 1px solid rgba(174, 194, 216, 0.18);
-  background: rgba(255, 255, 255, 0.58);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.66);
-  display: flex;
-  flex-direction: column;
-  justify-content: space-between;
-  gap: 10px;
-}
-
-.overview-stat span {
-  color: var(--text-secondary);
-  font-size: 12px;
-}
-
-.overview-stat strong {
-  color: var(--text-primary);
-  font-size: 18px;
-  font-weight: 700;
-  line-height: 1.25;
 }
 
 .search-card {
@@ -683,6 +619,73 @@ onMounted(async () => {
   z-index: 20;
   overflow: visible;
   border-radius: 24px;
+}
+
+.context-card {
+  padding: 16px 18px;
+  display: grid;
+  grid-template-columns: minmax(0, 1.2fr) auto;
+  gap: 16px;
+  align-items: center;
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--surface-panel) 86%, white), color-mix(in srgb, var(--surface-elevated) 90%, white)),
+    radial-gradient(circle at top right, rgba(var(--accent-rgb), 0.08), rgba(var(--accent-rgb), 0));
+}
+
+.context-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+.context-copy strong {
+  color: var(--text-primary);
+  font-size: 18px;
+  font-weight: 700;
+  line-height: 1.2;
+}
+
+.context-copy p {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.context-badges {
+  display: flex;
+  align-items: stretch;
+  gap: 10px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.context-badge {
+  min-width: 132px;
+  padding: 12px 14px;
+  border-radius: 18px;
+  border: 1px solid var(--color-border-soft);
+  background: color-mix(in srgb, var(--surface-panel) 84%, white);
+  box-shadow: var(--shadow-soft);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.context-badge span {
+  color: var(--text-secondary);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.context-badge strong {
+  color: var(--accent-primary-strong);
+  font-size: 15px;
+  font-weight: 700;
+  line-height: 1.3;
 }
 
 .search-block {
@@ -709,15 +712,15 @@ onMounted(async () => {
 .class-input-shell {
   width: 100%;
   min-height: 44px;
-  border: 1px solid rgba(174, 194, 216, 0.22);
+  border: 1px solid var(--color-border-soft);
   border-radius: 16px;
-  background: rgba(255, 255, 255, 0.68);
+  background: var(--surface-input);
   padding: 0 14px;
   display: flex;
   align-items: center;
   gap: 10px;
   position: relative;
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.68);
+  box-shadow: 0 10px 22px rgba(var(--accent-rgb), 0.06);
 }
 
 .clear-btn {
@@ -778,9 +781,9 @@ onMounted(async () => {
 
 .type-toggle-btn {
   min-height: 44px;
-  border: 1px solid rgba(174, 194, 216, 0.18);
+  border: 1px solid var(--color-border-soft);
   border-radius: 16px;
-  background: rgba(255, 255, 255, 0.56);
+  background: var(--surface-panel);
   color: var(--color-text-muted);
   font-size: 14px;
   font-weight: 700;
@@ -794,9 +797,9 @@ onMounted(async () => {
 
 .type-toggle-btn.active {
   border-color: var(--accent-border-strong);
-  background: rgba(var(--accent-rgb), 0.12);
+  background: color-mix(in srgb, rgba(var(--accent-rgb), 0.12) 72%, var(--surface-panel-strong));
   color: var(--accent-primary-strong);
-  box-shadow: 0 8px 18px rgba(var(--accent-rgb), 0.08);
+  box-shadow: 0 10px 22px rgba(var(--accent-rgb), 0.1);
 }
 
 .suggestion-list {
@@ -806,12 +809,10 @@ onMounted(async () => {
   width: 100%;
   max-height: 256px;
   overflow: auto;
-  border: 1px solid var(--border-inverse);
+  border: 1px solid var(--color-border-soft);
   border-radius: 18px;
-  background: var(--surface-panel-strong);
-  box-shadow:
-    0 12px 30px rgba(151, 169, 194, 0.18),
-    0 0 0 1px rgba(255, 255, 255, 0.22) inset;
+  background: var(--surface-input-strong);
+  box-shadow: var(--shadow-strong);
   backdrop-filter: blur(18px);
   z-index: 40;
   padding: 8px;
@@ -822,7 +823,7 @@ onMounted(async () => {
   min-height: 42px;
   border: 1px solid transparent;
   border-radius: 14px;
-  background: rgba(255, 255, 255, 0.62);
+  background: var(--surface-elevated);
   color: var(--color-text);
   font-size: 14px;
   font-weight: 600;
@@ -960,9 +961,9 @@ onMounted(async () => {
   min-height: 84px;
   padding: 14px 16px;
   border-radius: 18px;
-  border: 1px solid rgba(174, 194, 216, 0.18);
-  background: rgba(255, 255, 255, 0.52);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.64);
+  border: 1px solid var(--color-border-soft);
+  background: color-mix(in srgb, var(--surface-panel) 82%, white);
+  box-shadow: var(--shadow-soft);
 }
 
 .subject-row {
@@ -975,8 +976,8 @@ onMounted(async () => {
   width: 124px;
   height: 40px;
   border-radius: 16px;
-  border: 1px solid rgba(174, 194, 216, 0.18);
-  background: rgba(255, 255, 255, 0.56);
+  border: 1px solid var(--color-border-soft);
+  background: var(--surface-panel);
   color: var(--color-text-muted);
   font-size: 14px;
   font-weight: 600;
@@ -992,7 +993,7 @@ onMounted(async () => {
 .subject-pill:hover {
   transform: translateY(-1px);
   border-color: rgba(var(--accent-rgb), 0.24);
-  box-shadow: 0 10px 20px rgba(var(--accent-rgb), 0.08);
+  box-shadow: 0 10px 22px rgba(var(--accent-rgb), 0.1);
 }
 
 .subject-pill.active {
@@ -1113,12 +1114,12 @@ onMounted(async () => {
 }
 
 @media (max-width: 900px) {
-  .overview-card {
+  .context-card {
     grid-template-columns: 1fr;
   }
 
-  .overview-stats {
-    grid-template-columns: 1fr;
+  .context-badges {
+    justify-content: flex-start;
   }
 
   .class-input-wrap,

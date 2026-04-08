@@ -63,7 +63,6 @@ struct StudentBase {
 #[derive(Debug, Clone)]
 struct TicketExamItem {
     subject_label: &'static str,
-    exam_date: String,
     exam_time: String,
     room: String,
     seat: i64,
@@ -155,6 +154,39 @@ fn escape_html(value: &str) -> String {
         .replace('>', "&gt;")
         .replace('"', "&quot;")
         .replace('\'', "&#39;")
+}
+
+fn strip_notice_leading_index(value: &str) -> String {
+    let trimmed = value.trim();
+    let chars = trimmed.char_indices().collect::<Vec<_>>();
+    let mut end = 0usize;
+    let mut has_digit = false;
+
+    for (idx, ch) in &chars {
+        if ch.is_ascii_digit() {
+            has_digit = true;
+            end = idx + ch.len_utf8();
+            continue;
+        }
+        break;
+    }
+
+    if !has_digit {
+        return trimmed.to_string();
+    }
+
+    for (idx, ch) in chars {
+        if idx < end {
+            continue;
+        }
+        if matches!(ch, '.' | '．' | '、' | ')' | '）' | ' ' | '\t') {
+            end = idx + ch.len_utf8();
+            continue;
+        }
+        break;
+    }
+
+    trimmed[end..].trim_start().to_string()
 }
 
 fn settings_from_db(conn: &rusqlite::Connection) -> Result<(String, Vec<String>), AppError> {
@@ -418,13 +450,13 @@ fn build_tickets_html(
     let mut pages_html = String::new();
 
     for (student, exams) in students {
+        // 这里按新版准考证模板生成四列表格：科目、考试时间、考场、座号。
         let exam_rows = exams
             .iter()
             .map(|item| {
                 format!(
-                    r#"<tr><td class="subject">{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td></tr>"#,
+                    r#"<tr><td>{}</td><td>{}</td><td>{}</td><td>{}</td></tr>"#,
                     escape_html(item.subject_label),
-                    escape_html(&item.exam_date),
                     escape_html(&item.exam_time),
                     escape_html(&item.room),
                     item.seat
@@ -434,7 +466,9 @@ fn build_tickets_html(
             .join("");
         let notice_rows = notices
             .iter()
-            .map(|notice| format!(r#"<li>{}</li>"#, escape_html(notice)))
+            .map(|notice| strip_notice_leading_index(notice))
+            .filter(|notice| !notice.is_empty())
+            .map(|notice| format!(r#"<li>{}</li>"#, escape_html(&notice)))
             .collect::<Vec<_>>()
             .join("");
 
@@ -775,8 +809,13 @@ where
                         ) {
                             exams.push(TicketExamItem {
                                 subject_label: session.subject_label,
-                                exam_date: format_ticket_date(start).unwrap_or_default(),
-                                exam_time: format_ticket_time(start, end).unwrap_or_default(),
+                                exam_time: format!(
+                                    "{} {}",
+                                    format_ticket_date(start).unwrap_or_default(),
+                                    format_ticket_time(start, end).unwrap_or_default()
+                                )
+                                .trim()
+                                .to_string(),
                                 room: room.clone(),
                                 seat: *seat,
                                 start_ts,
