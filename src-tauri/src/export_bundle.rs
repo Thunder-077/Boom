@@ -63,7 +63,8 @@ struct StudentBase {
 #[derive(Debug, Clone)]
 struct TicketExamItem {
     subject_label: &'static str,
-    exam_time: String,
+    exam_date: String,
+    exam_time_range: String,
     room: String,
     seat: i64,
     start_ts: i64,
@@ -122,7 +123,7 @@ fn format_hm(value: &str) -> Option<String> {
 }
 
 fn period_label(hour: u32, minute: u32) -> &'static str {
-    if hour < 12 {
+    if hour < 12 || (hour == 12 && minute == 0) {
         "上午"
     } else if hour < 18 || (hour == 18 && minute < 30) {
         "下午"
@@ -141,10 +142,14 @@ fn format_ticket_time(start: &str, end: &str) -> Option<String> {
     let e = parse_datetime(end)?;
     let left_period = period_label(s.hour(), s.minute());
     let right_period = period_label(e.hour(), e.minute());
-    Some(format!(
-        "{}{} — {}{}",
-        left_period, s.format("%H:%M"), right_period, e.format("%H:%M")
-    ))
+    if left_period == right_period {
+        Some(format!("{}{} — {}", left_period, s.format("%H:%M"), e.format("%H:%M")))
+    } else {
+        Some(format!(
+            "{}{} — {}{}",
+            left_period, s.format("%H:%M"), right_period, e.format("%H:%M")
+        ))
+    }
 }
 
 fn escape_html(value: &str) -> String {
@@ -450,14 +455,15 @@ fn build_tickets_html(
     let mut pages_html = String::new();
 
     for (student, exams) in students {
-        // 这里按新版准考证模板生成四列表格：科目、考试时间、考场、座号。
+        // 准考证表格中“考试时间”拆成日期与时段两个子列，便于打印查看。
         let exam_rows = exams
             .iter()
             .map(|item| {
                 format!(
-                    r#"<tr><td>{}</td><td>{}</td><td>{}</td><td>{}</td></tr>"#,
+                    r#"<tr><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td></tr>"#,
                     escape_html(item.subject_label),
-                    escape_html(&item.exam_time),
+                    escape_html(&item.exam_date),
+                    escape_html(&item.exam_time_range),
                     escape_html(&item.room),
                     item.seat
                 )
@@ -809,13 +815,8 @@ where
                         ) {
                             exams.push(TicketExamItem {
                                 subject_label: session.subject_label,
-                                exam_time: format!(
-                                    "{} {}",
-                                    format_ticket_date(start).unwrap_or_default(),
-                                    format_ticket_time(start, end).unwrap_or_default()
-                                )
-                                .trim()
-                                .to_string(),
+                                exam_date: format_ticket_date(start).unwrap_or_default(),
+                                exam_time_range: format_ticket_time(start, end).unwrap_or_default(),
                                 room: room.clone(),
                                 seat: *seat,
                                 start_ts,
@@ -900,4 +901,27 @@ pub fn export_latest_exam_allocation_bundle(
         );
         e.to_string()
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::format_ticket_time;
+
+    #[test]
+    fn test_format_ticket_time_omits_duplicate_period_label() {
+        let actual = format_ticket_time("2026-03-25T07:30", "2026-03-25T10:00");
+        assert_eq!(actual.as_deref(), Some("上午07:30 — 10:00"));
+    }
+
+    #[test]
+    fn test_format_ticket_time_keeps_cross_period_label() {
+        let actual = format_ticket_time("2026-03-25T11:30", "2026-03-25T13:00");
+        assert_eq!(actual.as_deref(), Some("上午11:30 — 下午13:00"));
+    }
+
+    #[test]
+    fn test_format_ticket_time_treats_noon_boundary_as_morning_end() {
+        let actual = format_ticket_time("2026-03-25T10:30", "2026-03-25T12:00");
+        assert_eq!(actual.as_deref(), Some("上午10:30 — 12:00"));
+    }
 }

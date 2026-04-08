@@ -1302,7 +1302,9 @@ fn build_teacher_symmetry_groups(
     groups
 }
 
-fn clear_latest_staff_plan(tx: &rusqlite::Transaction<'_>) -> Result<(), AppError> {
+pub(crate) fn clear_latest_staff_plan_snapshot(
+    tx: &rusqlite::Transaction<'_>,
+) -> Result<(), AppError> {
     tx.execute("DELETE FROM latest_exam_staff_assignments", [])?;
     tx.execute("DELETE FROM latest_exam_staff_tasks", [])?;
     tx.execute("DELETE FROM latest_teacher_duty_stats", [])?;
@@ -2580,7 +2582,7 @@ fn persist_solved_plan(
     plan: &SolvedPlan,
 ) -> Result<GenerateLatestExamStaffPlanResult, AppError> {
     let tx = conn.transaction()?;
-    clear_latest_staff_plan(&tx)?;
+    clear_latest_staff_plan_snapshot(&tx)?;
 
     let teacher_by_id: HashMap<i64, &TeacherInfo> = teachers
         .iter()

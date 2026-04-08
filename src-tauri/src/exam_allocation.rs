@@ -372,6 +372,7 @@ struct Participant {
     admission_no: String,
     student_name: String,
     class_name: String,
+    total_score: f64,
     score: Option<f64>,
 }
 
@@ -902,7 +903,7 @@ fn load_selected_participants(
 ) -> Result<Vec<Participant>, AppError> {
     let mut stmt = conn.prepare(
         r#"
-        SELECT s.admission_no, s.student_name, s.class_name, ss.score
+        SELECT s.admission_no, s.student_name, s.class_name, s.total_score, ss.score
         FROM latest_student_scores s
         JOIN latest_subject_scores ss ON ss.admission_no = s.admission_no
         WHERE s.grade_name = ?1 AND ss.subject = ?2 AND ss.is_selected = 1
@@ -913,7 +914,8 @@ fn load_selected_participants(
             admission_no: row.get(0)?,
             student_name: row.get(1)?,
             class_name: row.get(2)?,
-            score: row.get(3)?,
+            total_score: row.get(3)?,
+            score: row.get(4)?,
         })
     })?;
     let mut out = Vec::new();
@@ -930,7 +932,7 @@ fn load_not_selected_students(
 ) -> Result<Vec<Participant>, AppError> {
     let mut stmt = conn.prepare(
         r#"
-        SELECT s.admission_no, s.student_name, s.class_name, ss.score
+        SELECT s.admission_no, s.student_name, s.class_name, s.total_score, ss.score
         FROM latest_student_scores s
         JOIN latest_subject_scores ss ON ss.admission_no = s.admission_no
         WHERE s.grade_name = ?1 AND ss.subject = ?2 AND ss.is_selected = 0
@@ -941,7 +943,8 @@ fn load_not_selected_students(
             admission_no: row.get(0)?,
             student_name: row.get(1)?,
             class_name: row.get(2)?,
-            score: row.get(3)?,
+            total_score: row.get(3)?,
+            score: row.get(4)?,
         })
     })?;
     let mut out = Vec::new();
@@ -972,9 +975,9 @@ fn build_round_robin_order(participants: &[Participant]) -> Vec<Participant> {
     }
     for list in groups.values_mut() {
         list.sort_by(|a, b| {
-            b.score
-                .unwrap_or(0.0)
-                .partial_cmp(&a.score.unwrap_or(0.0))
+            // 班内按总分从高到低排序，保证座位编排以综合成绩为准。
+            b.total_score
+                .partial_cmp(&a.total_score)
                 .unwrap_or(Ordering::Equal)
                 .then(a.admission_no.cmp(&b.admission_no))
         });
@@ -1003,13 +1006,28 @@ fn build_round_robin_order(participants: &[Participant]) -> Vec<Participant> {
     ordered
 }
 
-fn clear_latest_plan(tx: &rusqlite::Transaction<'_>) -> Result<(), AppError> {
+pub(crate) fn clear_latest_plan_snapshot(tx: &rusqlite::Transaction<'_>) -> Result<(), AppError> {
     tx.execute("DELETE FROM latest_exam_plan_staff_assignments", [])?;
     tx.execute("DELETE FROM latest_exam_plan_student_allocations", [])?;
     tx.execute("DELETE FROM latest_exam_plan_spaces", [])?;
     tx.execute("DELETE FROM latest_exam_plan_sessions", [])?;
     tx.execute("DELETE FROM latest_exam_plan_meta", [])?;
     Ok(())
+}
+
+pub(crate) fn reset_exam_generation_progress(conn: &Connection) -> Result<(), AppError> {
+    // 关闭应用后回到初始空闲态，避免下次启动仍显示旧进度或运行中状态。
+    update_exam_generation_progress(
+        conn,
+        "idle",
+        "idle",
+        "等待开始",
+        0,
+        "等待开始分配考场",
+        None,
+        0,
+        0,
+    )
 }
 
 fn fill_with_configured_exam_rooms(
@@ -1455,7 +1473,7 @@ fn generate_latest_exam_plan_internal(
 
     let generated_at = Utc::now().to_rfc3339();
     let tx = conn.transaction()?;
-    clear_latest_plan(&tx)?;
+    clear_latest_plan_snapshot(&tx)?;
     update_exam_generation_progress(
         &tx,
         "running",
@@ -1981,23 +1999,55 @@ mod tests {
                 admission_no: "1".to_string(),
                 student_name: "A".to_string(),
                 class_name: "高一1班".to_string(),
+                total_score: 600.0,
                 score: Some(95.0),
             },
             Participant {
                 admission_no: "2".to_string(),
                 student_name: "B".to_string(),
                 class_name: "高一1班".to_string(),
+                total_score: 590.0,
                 score: Some(90.0),
             },
             Participant {
                 admission_no: "3".to_string(),
                 student_name: "C".to_string(),
                 class_name: "高一2班".to_string(),
+                total_score: 595.0,
                 score: Some(92.0),
             },
         ]);
         let ids: Vec<String> = ordered.into_iter().map(|p| p.admission_no).collect();
         assert_eq!(ids, vec!["1", "3", "2"]);
+    }
+
+    #[test]
+    fn test_round_robin_order_uses_total_score_within_class() {
+        let ordered = build_round_robin_order(&[
+            Participant {
+                admission_no: "1".to_string(),
+                student_name: "A".to_string(),
+                class_name: "高一1班".to_string(),
+                total_score: 580.0,
+                score: Some(98.0),
+            },
+            Participant {
+                admission_no: "2".to_string(),
+                student_name: "B".to_string(),
+                class_name: "高一1班".to_string(),
+                total_score: 600.0,
+                score: Some(90.0),
+            },
+            Participant {
+                admission_no: "3".to_string(),
+                student_name: "C".to_string(),
+                class_name: "高一2班".to_string(),
+                total_score: 590.0,
+                score: Some(95.0),
+            },
+        ]);
+        let ids: Vec<String> = ordered.into_iter().map(|p| p.admission_no).collect();
+        assert_eq!(ids, vec!["2", "3", "1"]);
     }
 
     #[test]
@@ -2162,7 +2212,8 @@ mod tests {
                 admission_no TEXT PRIMARY KEY,
                 student_name TEXT NOT NULL,
                 class_name TEXT NOT NULL,
-                grade_name TEXT NOT NULL
+                grade_name TEXT NOT NULL,
+                total_score REAL NOT NULL
             );
             CREATE TABLE latest_subject_scores (
                 admission_no TEXT NOT NULL,
@@ -2174,7 +2225,7 @@ mod tests {
         )
         .unwrap();
         conn.execute(
-            "INSERT INTO latest_student_scores (admission_no, student_name, class_name, grade_name) VALUES ('s1', '张三', '高一1班', '高一')",
+            "INSERT INTO latest_student_scores (admission_no, student_name, class_name, grade_name, total_score) VALUES ('s1', '张三', '高一1班', '高一', 600)",
             [],
         )
         .unwrap();
