@@ -139,6 +139,12 @@ export function createClassConfigStore(service: ClassConfigService = classConfig
     recalculateDirty();
   }
 
+  function discardChanges() {
+    // Restore the current editing session back to the last loaded/saved baseline.
+    state.form = cloneForm(state.baselineForm);
+    recalculateDirty();
+  }
+
   async function loadList() {
     state.loading = true;
     state.errorMessage = "";
@@ -285,6 +291,7 @@ export function createClassConfigStore(service: ClassConfigService = classConfig
     setFormField,
     toggleSubject,
     startCreate,
+    discardChanges,
     get viewState() {
       return viewState.value;
     },

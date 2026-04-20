@@ -1,170 +1,185 @@
 <template>
-  <section class="panel">
-    <div class="search-card card-shell">
-      <div class="search-block">
-        <span class="picker-label">查询班级</span>
-        <div class="class-input-wrap">
-          <label class="class-input-shell" @keydown.enter.prevent="onSearchCommit">
+  <section class="class-config-page">
+    <section class="workspace">
+      <aside class="sidebar card-shell">
+        <div class="sidebar-toolbar">
+          <div class="type-switch">
+            <button
+              v-for="option in configTypeOptions"
+              :key="option.value"
+              type="button"
+              class="type-btn"
+              :class="{ active: store.viewState.filters.configType === option.value }"
+              @click="switchConfigType(option.value)"
+            >
+              {{ option.label }}
+            </button>
+          </div>
+
+          <div class="search-anchor">
+            <div class="search-wrap">
+            <span class="material-symbols-rounded search-icon" aria-hidden="true">search</span>
             <input
+              ref="searchInputRef"
               v-model="searchKeyword"
               class="search-input"
-              placeholder="请输入班级名称"
-              @input="onSearchInput"
-              @focus="onSearchFocus"
-              @click="onSearchFocus"
+              :placeholder="searchPlaceholder"
+              @focus="openSearchPanel"
+              @click="openSearchPanel"
               @blur="onSearchBlur"
             />
-            <button
-              v-if="searchKeyword"
-              type="button"
-              class="clear-btn"
-              @mousedown.prevent
-              @click="clearSearchKeyword"
-            >
-              <span class="material-symbols-rounded" aria-hidden="true">close</span>
-            </button>
-          </label>
-          <div v-if="showSuggestionList" ref="suggestionListRef" class="suggestion-list" @scroll.passive="onSuggestionScroll">
-            <button
-              v-for="row in suggestionRows"
-              :key="row.id"
-              type="button"
-              class="suggestion-item"
-              @mousedown.prevent="onSuggestionMouseDown"
-              @click="selectSuggestion(row.id)"
-            >
-              <span>{{ row.className }}</span>
-              <span class="suggestion-meta">{{ row.gradeName || "未设置年级" }}</span>
-            </button>
-            <div v-if="hasMoreSuggestions" class="suggestion-load-more">
-              向下滚动加载更多班级...
+            </div>
+
+            <div v-if="isSearchPanelOpen" class="search-panel" @mousedown.prevent="onSearchPanelMouseDown">
+              <div class="list-head">
+                <strong>{{ listTitle }}</strong>
+                <span>{{ filteredRows.length }} / {{ store.viewState.rows.length }}</span>
+              </div>
+
+              <div class="config-list">
+                <button
+                  v-for="row in filteredRows"
+                  :key="row.id"
+                  type="button"
+                  class="config-item"
+                  :class="{ active: row.id === store.viewState.editingId && store.viewState.mode === 'existing' }"
+                  @click="selectRow(row)"
+                >
+                  <div class="config-item-top">
+                    <strong>{{ row.className }}</strong>
+                    <span class="item-tag">{{ row.gradeName || currentTypeLabel }}</span>
+                  </div>
+                  <p class="config-item-subtitle">{{ compactLocation(row) }}</p>
+                </button>
+
+                <div v-if="filteredRows.length === 0" class="empty-list">
+                  <span class="material-symbols-rounded" aria-hidden="true">inventory_2</span>
+                  <strong>{{ emptyListTitle }}</strong>
+                  <p>{{ emptyListSummary }}</p>
+                </div>
+              </div>
             </div>
           </div>
-        </div>
-      </div>
-    </div>
 
-    <section class="context-card card-shell" aria-label="当前配置上下文">
-      <div class="context-copy">
-        <span class="section-kicker">当前上下文</span>
-        <strong>{{ currentModeLabel }}</strong>
-        <p>{{ stateDescription }}</p>
-      </div>
-      <div class="context-badges">
-        <div class="context-badge">
-          <span>当前模式</span>
-          <strong>{{ currentModeLabel }}</strong>
+          <button class="primary-btn create-btn" type="button" @click="createNewConfig">
+            <span class="material-symbols-rounded" aria-hidden="true">add</span>
+            {{ createButtonLabel }}
+          </button>
         </div>
-        <div class="context-badge">
-          <span>当前类型</span>
-          <strong>{{ currentTypeLabel }}</strong>
-        </div>
-      </div>
-    </section>
+      </aside>
 
-    <ConfigCard class="current-card" title="当前配置班级">
-      <div class="current-head">
-        <div class="current-inputs-wrap">
-          <div class="current-input-wrap">
-            <p class="picker-label">教室名</p>
-            <label class="class-input-shell current-input-shell">
+      <div class="editor">
+        <ConfigCard title="基础信息" :description="editorDescription">
+          <div class="form-grid">
+            <label class="field field-wide">
+              <span class="field-label">{{ nameLabel }}</span>
               <input
-                class="current-input"
+                class="field-input field-input-strong"
                 :value="store.viewState.form.className"
-                placeholder="请输入班级名称"
-                @input="onCurrentClassInput"
+                :placeholder="namePlaceholder"
+                @input="onFormInput('className', $event)"
               />
             </label>
-            <p class="status-copy" :class="{ 'status-copy-new': store.viewState.mode === 'new' }">
-              {{ stateDescription }}
-            </p>
-          </div>
-          <div class="current-input-wrap room-label-wrap">
-            <p class="picker-label">教室标签</p>
-            <label class="class-input-shell current-input-shell room-label-input-shell">
+
+            <label class="field">
+              <span class="field-label">教室标签</span>
               <input
-                class="room-label-input"
+                class="field-input"
                 :value="store.viewState.form.roomLabel || ''"
-                placeholder="请输入教室标签"
+                placeholder="例如：高一1班"
                 @input="onRoomLabelInput"
               />
             </label>
           </div>
-        </div>
+        </ConfigCard>
 
-        <button
-          class="secondary-btn delete-btn"
-          type="button"
-          :disabled="store.viewState.mode !== 'existing' || store.viewState.saving || store.viewState.deleting"
-          @click="deleteCurrent"
+        <ConfigCard
+          v-if="store.viewState.form.configType === 'teaching_class'"
+          title="所学科目"
+          :description="`当前已选择 ${store.viewState.form.subjects.length} 门课程。`"
         >
-          <span class="material-symbols-rounded" aria-hidden="true">delete</span>
-          {{ store.viewState.deleting ? "删除中..." : "删除" }}
-        </button>
-      </div>
-    </ConfigCard>
+          <div class="subject-grid">
+            <button
+              v-for="subject in leadingSubjects"
+              :key="subject.value"
+              type="button"
+              class="subject-chip"
+              :class="{ active: store.viewState.form.subjects.includes(subject.value) }"
+              @click="toggleSubject(subject.value)"
+            >
+              {{ subject.label }}
+            </button>
 
-    <ConfigCard title="教室类型" description="选择当前维护的是教学教室还是考试教室，系统会按类型校验科目配置。">
-      <div class="type-toggle-row">
-        <button
-          v-for="option in configTypeOptions"
-          :key="option.value"
-          type="button"
-          class="type-toggle-btn"
-          :class="{ active: store.viewState.filters.configType === option.value }"
-          @click="switchConfigType(option.value)"
-        >
-          {{ option.label }}
-        </button>
-      </div>
-    </ConfigCard>
+            <div class="subject-curve-group">
+              <button
+                v-for="subject in foreignLanguageSubjects"
+                :key="subject.value"
+                type="button"
+                class="subject-chip"
+                :class="{ active: store.viewState.form.subjects.includes(subject.value) }"
+                @click="toggleSubject(subject.value)"
+              >
+                {{ subject.label }}
+              </button>
+            </div>
 
-    <ConfigCard
-      v-if="store.viewState.form.configType === 'teaching_class'"
-      title="所学科目配置"
-      :description="subjectDescription"
-    >
-      <div class="subject-row">
-        <button
-          v-for="subject in visibleSubjects"
-          :key="subject.value"
-          type="button"
-          class="subject-pill"
-          :class="{ active: store.viewState.form.subjects.includes(subject.value) }"
-          @click="toggleSubject(subject.value)"
-        >
-          {{ subject.label }}
-        </button>
-      </div>
-    </ConfigCard>
-
-    <ConfigCard title="楼号与楼层信息" description="维护班级所在教学楼与楼层，保存后可用于后续考试与排班配置。">
-      <div class="editor-grid">
-        <label class="metric-field">
-          <span class="metric-label">班级楼号</span>
-          <input class="metric-input" :value="store.viewState.form.building" @input="onFormInput('building', $event)" />
-        </label>
-        <label class="metric-field">
-          <span class="metric-label">楼层信息</span>
-          <input class="metric-input" :value="store.viewState.form.floor" @input="onFormInput('floor', $event)" />
-        </label>
-      </div>
-      <p v-if="store.viewState.errorMessage" class="error-copy">{{ store.viewState.errorMessage }}</p>
-    </ConfigCard>
-
-    <div class="footer-actions">
-      <button class="primary-btn save-btn" type="button" :disabled="store.viewState.saving" @click="saveCurrent">
-        {{ store.viewState.saving ? "保存中..." : "保存配置" }}
-      </button>
-    </div>
-
-    <div v-if="dialogState.visible" class="fluent-mask" @click.self="closeDialog(false)">
-      <section class="fluent-dialog card-shell" :class="dialogToneClass">
-        <header class="dialog-head">
-          <div class="dialog-title-wrap">
-            <span class="dialog-icon material-symbols-rounded" aria-hidden="true">{{ dialogState.icon }}</span>
-            <h3>{{ dialogState.title }}</h3>
+            <button
+              v-for="subject in remainingSubjects"
+              :key="subject.value"
+              type="button"
+              class="subject-chip"
+              :class="{ active: store.viewState.form.subjects.includes(subject.value) }"
+              @click="toggleSubject(subject.value)"
+            >
+              {{ subject.label }}
+            </button>
           </div>
+        </ConfigCard>
+
+        <ConfigCard title="位置配置" description="填写教室所在的楼栋与楼层。">
+          <div class="form-grid form-grid-compact">
+            <label class="field">
+              <span class="field-label">楼号</span>
+              <input
+                class="field-input"
+                :value="store.viewState.form.building"
+                placeholder="例如：向远楼"
+                @input="onFormInput('building', $event)"
+              />
+            </label>
+
+            <label class="field">
+              <span class="field-label">楼层</span>
+              <input
+                class="field-input"
+                :value="store.viewState.form.floor"
+                placeholder="例如：3层"
+                @input="onFormInput('floor', $event)"
+              />
+            </label>
+          </div>
+          <div class="config-footer">
+            <button
+              class="secondary-btn danger-btn"
+              type="button"
+              :disabled="store.viewState.mode !== 'existing' || store.viewState.deleting"
+              @click="deleteCurrent"
+            >
+              {{ store.viewState.deleting ? "删除中..." : "删除当前配置" }}
+            </button>
+            <button class="primary-btn" type="button" :disabled="store.viewState.saving" @click="saveCurrent">
+              {{ store.viewState.saving ? "保存中..." : saveButtonLabel }}
+            </button>
+          </div>
+          <p v-if="store.viewState.errorMessage" class="error-text">{{ store.viewState.errorMessage }}</p>
+        </ConfigCard>
+      </div>
+    </section>
+
+    <div v-if="dialogState.visible" class="dialog-mask" @click.self="closeDialog(false)">
+      <section class="dialog card-shell">
+        <header class="dialog-head">
+          <h3>{{ dialogState.title }}</h3>
           <button class="dialog-close" type="button" @click="closeDialog(false)">×</button>
         </header>
         <p class="dialog-summary">{{ dialogState.summary }}</p>
@@ -175,7 +190,7 @@
           <button v-if="dialogState.kind === 'confirm'" class="secondary-btn" type="button" @click="closeDialog(false)">
             {{ dialogState.cancelText }}
           </button>
-          <button :class="dialogState.kind === 'confirm' ? 'primary-btn' : 'secondary-btn'" type="button" @click="closeDialog(true)">
+          <button class="primary-btn" type="button" @click="closeDialog(true)">
             {{ dialogState.confirmText }}
           </button>
         </footer>
@@ -186,22 +201,18 @@
 
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from "vue";
-import { CLASS_CONFIG_TYPE_OPTIONS } from "../../../entities/class-config/model";
+import { CLASS_CONFIG_TYPE_OPTIONS, SUBJECT_OPTIONS } from "../../../entities/class-config/model";
 import type { ClassConfigRow, ClassConfigType } from "../../../entities/class-config/model";
-import type { Subject } from "../../../entities/score/model";
-import { SUBJECT_OPTIONS } from "../../../entities/class-config/model";
+import { Subject } from "../../../entities/score/model";
 import ConfigCard from "../../../widgets/common/ConfigCard.vue";
 import { useClassConfigStore } from "../store";
 
 const store = useClassConfigStore();
 const searchKeyword = ref("");
-const isSuggestionOpen = ref(false);
-const isSelectingSuggestion = ref(false);
-const suggestionPage = ref(1);
-const suggestionListRef = ref<HTMLElement | null>(null);
+const isSearchPanelOpen = ref(false);
+const isInteractingWithSearchPanel = ref(false);
+const searchInputRef = ref<HTMLInputElement | null>(null);
 let dialogResolver: ((value: boolean) => void) | null = null;
-const SUGGESTION_PAGE_SIZE = 30;
-const gradeRankMap: Record<string, number> = { 高一: 1, 高二: 2, 高三: 3 };
 
 const dialogState = reactive({
   visible: false,
@@ -211,136 +222,77 @@ const dialogState = reactive({
   details: [] as string[],
   confirmText: "确认",
   cancelText: "取消",
-  tone: "neutral" as "neutral" | "danger" | "success",
-  icon: "info",
 });
 
-const visibleSubjects = computed(() => SUBJECT_OPTIONS);
 const configTypeOptions = CLASS_CONFIG_TYPE_OPTIONS;
-const normalizedSearchKeyword = computed(() => searchKeyword.value.trim().replace(/\s+/g, ""));
-const sortedRows = computed(() => [...store.viewState.rows].sort(compareClassRows));
-const filteredSuggestionRows = computed(() => {
+const subjectMap = new Map(SUBJECT_OPTIONS.map((subject) => [subject.value, subject]));
+// Teaching subjects are split into a fixed editor-style order so foreign languages stay grouped visually.
+const leadingSubjects = computed(() => [Subject.Chinese, Subject.Math].map((value) => subjectMap.get(value)!));
+const foreignLanguageSubjects = computed(() =>
+  [Subject.English, Subject.Russian, Subject.Japanese].map((value) => subjectMap.get(value)!),
+);
+const remainingSubjects = computed(() =>
+  [Subject.Physics, Subject.Chemistry, Subject.Biology, Subject.Politics, Subject.History, Subject.Geography].map(
+    (value) => subjectMap.get(value)!,
+  ),
+);
+const normalizedSearchKeyword = computed(() => searchKeyword.value.trim().replace(/\s+/g, "").toLowerCase());
+const filteredRows = computed(() => {
   if (!normalizedSearchKeyword.value) {
-    return sortedRows.value;
+    return store.viewState.rows;
   }
-  return sortedRows.value.filter((row) =>
-    normalizeClassName(row.className).includes(normalizedSearchKeyword.value),
-  );
+  return store.viewState.rows.filter((row) => {
+    const text = [row.className, row.gradeName, row.roomLabel ?? "", row.building, row.floor]
+      .join(" ")
+      .replace(/\s+/g, "")
+      .toLowerCase();
+    return text.includes(normalizedSearchKeyword.value);
+  });
 });
-const suggestionRows = computed(() => {
-  return filteredSuggestionRows.value.slice(0, suggestionPage.value * SUGGESTION_PAGE_SIZE);
-});
-const hasMoreSuggestions = computed(() => suggestionRows.value.length < filteredSuggestionRows.value.length);
-const showSuggestionList = computed(() => isSuggestionOpen.value && suggestionRows.value.length > 0);
-const dialogToneClass = computed(() => {
-  if (dialogState.tone === "danger") {
-    return "dialog-danger";
-  }
-  if (dialogState.tone === "success") {
-    return "dialog-success";
-  }
-  return "dialog-neutral";
-});
-const subjectDescription = computed(
-  () => `点击科目标签可启用或取消，当前班级已选择 ${store.viewState.form.subjects.length} 门课程。`,
-);
-const currentModeLabel = computed(() => (store.viewState.mode === "new" ? "新建配置" : "编辑已有班级"));
 const currentTypeLabel = computed(() =>
-  store.viewState.form.configType === "teaching_class" ? "教学班" : "考试教室",
+  store.viewState.filters.configType === "teaching_class" ? "教学班" : "考试教室",
 );
-const stateDescription = computed(() => {
-  if (store.viewState.mode === "new") {
-    return "将作为新班级配置保存，当前楼号、楼层和科目内容均为空。";
-  }
-  return "正在编辑已有班级，保存后将更新至当前班级。";
-});
+const searchPlaceholder = computed(() =>
+  store.viewState.filters.configType === "teaching_class" ? "搜索班级名称、年级、楼层" : "搜索教室名称、标签、楼层",
+);
+const listTitle = computed(() => `${currentTypeLabel.value}列表`);
+const createButtonLabel = computed(() => `新建${currentTypeLabel.value}`);
+const saveButtonLabel = computed(() => (store.viewState.mode === "new" ? "创建配置" : "保存修改"));
+const nameLabel = computed(() => (store.viewState.filters.configType === "teaching_class" ? "班级名称" : "教室名称"));
+const namePlaceholder = computed(() => (store.viewState.filters.configType === "teaching_class" ? "请输入班级名称" : "请输入教室名称"));
+const editorDescription = computed(() =>
+  store.viewState.mode === "new"
+    ? `当前正在创建新的${currentTypeLabel.value}配置。`
+    : `当前正在编辑 ${store.viewState.loadedClassName || "已选记录"}。`,
+);
+const emptyListTitle = computed(() => (normalizedSearchKeyword.value ? "没有匹配结果" : `暂无${currentTypeLabel.value}配置`));
+const emptyListSummary = computed(() =>
+  normalizedSearchKeyword.value ? "试试换个关键词，或者点击上方按钮创建新配置。" : "点击“新建”后即可开始录入。",
+);
 
-function syncSearchToCurrentClass() {
-  searchKeyword.value = store.viewState.form.className;
+function compactLocation(row: ClassConfigRow) {
+  const building = row.building?.trim() || "未填楼号";
+  const floor = row.floor?.trim() || "未填楼层";
+  return `${building} / ${floor}`;
 }
 
-function normalizeClassName(name: string) {
-  return name.trim().replace(/\s+/g, "");
+function openSearchPanel() {
+  isSearchPanelOpen.value = true;
 }
 
-function extractClassSortNumber(className: string) {
-  const match = className.match(/(\d+)/g);
-  return match && match.length > 0 ? Number(match[match.length - 1]) : Number.POSITIVE_INFINITY;
+function onSearchPanelMouseDown() {
+  isInteractingWithSearchPanel.value = true;
 }
 
-function extractGradeName(value: string) {
-  const source = value.trim();
-  if (source) {
-    const match = source.match(/^(高[一二三]|高中[一二三]|初[一二三]|初中[一二三])/);
-    if (match?.[0]) {
-      return match[0];
+function onSearchBlur() {
+  window.setTimeout(() => {
+    if (isInteractingWithSearchPanel.value) {
+      isInteractingWithSearchPanel.value = false;
+      searchInputRef.value?.focus();
+      return;
     }
-  }
-  return "";
-}
-
-function gradeSortRank(gradeName: string, className: string) {
-  const normalizedGrade = gradeName.trim() || extractGradeName(className);
-  return gradeRankMap[normalizedGrade] ?? 99;
-}
-
-function compareClassRows(a: ClassConfigRow, b: ClassConfigRow) {
-  const gradeDiff = gradeSortRank(a.gradeName, a.className) - gradeSortRank(b.gradeName, b.className);
-  if (gradeDiff !== 0) {
-    return gradeDiff;
-  }
-  const classDiff = extractClassSortNumber(a.className) - extractClassSortNumber(b.className);
-  if (classDiff !== 0) {
-    return classDiff;
-  }
-  return a.className.localeCompare(b.className, "zh-CN", { numeric: true });
-}
-
-function resetSuggestionPaging() {
-  suggestionPage.value = 1;
-  if (suggestionListRef.value) {
-    suggestionListRef.value.scrollTop = 0;
-  }
-}
-
-function loadMoreSuggestions() {
-  if (hasMoreSuggestions.value) {
-    suggestionPage.value += 1;
-  }
-}
-
-function onSuggestionScroll(event: Event) {
-  // 在接近列表底部时增量加载下一页，避免一次渲染过多班级项。
-  const target = event.target as HTMLElement;
-  if (target.scrollTop + target.clientHeight >= target.scrollHeight - 24) {
-    loadMoreSuggestions();
-  }
-}
-
-function findExactRowByName(name: string): ClassConfigRow | undefined {
-  const normalizedName = normalizeClassName(name);
-  if (!normalizedName) {
-    return undefined;
-  }
-  return sortedRows.value.find((row) => normalizeClassName(row.className) === normalizedName);
-}
-
-function inferGradeName(className: string) {
-  const trimmed = className.trim();
-  const match = trimmed.match(/^(高[一二三四五六七八九十]+|初[一二三四五六七八九]|初中[一二三]|高中[一二三])/);
-  return match?.[1] ?? "";
-}
-
-function syncInferredGradeName(className: string) {
-  if (store.viewState.mode !== "new") {
-    return;
-  }
-  store.setFormField("gradeName", inferGradeName(className));
-}
-
-function onFormInput(field: "building" | "floor", event: Event) {
-  const value = (event.target as HTMLInputElement).value;
-  store.setFormField(field, value);
+    isSearchPanelOpen.value = false;
+  }, 0);
 }
 
 function openDialog(options: {
@@ -350,8 +302,6 @@ function openDialog(options: {
   details?: string[];
   confirmText?: string;
   cancelText?: string;
-  tone?: "neutral" | "danger" | "success";
-  icon?: string;
 }) {
   dialogState.visible = true;
   dialogState.kind = options.kind;
@@ -360,8 +310,6 @@ function openDialog(options: {
   dialogState.details = options.details ?? [];
   dialogState.confirmText = options.confirmText ?? (options.kind === "confirm" ? "确认" : "知道了");
   dialogState.cancelText = options.cancelText ?? "取消";
-  dialogState.tone = options.tone ?? "neutral";
-  dialogState.icon = options.icon ?? "info";
   return new Promise<boolean>((resolve) => {
     dialogResolver = resolve;
   });
@@ -375,150 +323,61 @@ function closeDialog(result: boolean) {
   dialogState.visible = false;
 }
 
-function onSearchFocus() {
-  isSuggestionOpen.value = true;
-  resetSuggestionPaging();
-}
-
-function onSearchInput() {
-  isSuggestionOpen.value = true;
-  resetSuggestionPaging();
-}
-
-function onSuggestionMouseDown() {
-  isSelectingSuggestion.value = true;
-}
-
-function onSearchBlur() {
-  window.setTimeout(async () => {
-    if (isSelectingSuggestion.value) {
-      isSelectingSuggestion.value = false;
-      return;
-    }
-    isSuggestionOpen.value = false;
-    await onSearchCommit();
-  }, 0);
-}
-
-async function handleSwitchToRow(row: ClassConfigRow) {
-  const currentName = store.viewState.loadedClassName || store.viewState.form.className || "当前班级";
-  if (
-    store.viewState.isDirty &&
-    (store.viewState.mode === "new" || row.id !== store.viewState.editingId)
-  ) {
-    const abandon = await openDialog({
-      kind: "confirm",
-      tone: "danger",
-      icon: "warning",
-      title: "检测到未保存修改",
-      summary: "切换班级前需要先放弃当前页面中尚未保存的配置变更。",
-      details: [`当前编辑：${currentName}`, "若继续切换，当前页面里的修改将不会保留。"],
-      confirmText: "放弃并切换",
-      cancelText: "继续编辑",
-    });
-    if (!abandon) {
-      if (store.viewState.mode === "existing") {
-        syncSearchToCurrentClass();
-      }
-      return;
-    }
+async function confirmDiscardIfNeeded(nextAction: string) {
+  if (!store.viewState.isDirty) {
+    return true;
   }
-
-  await store.loadDetail(row.id);
-  syncSearchToCurrentClass();
+  return openDialog({
+    kind: "confirm",
+    title: "检测到未保存修改",
+    summary: "继续操作前需要先放弃当前未保存的内容。",
+    details: [
+      `当前内容：${store.viewState.form.className || `未命名${currentTypeLabel.value}`}`,
+      `后续操作：${nextAction}`,
+    ],
+    confirmText: "放弃修改",
+    cancelText: "继续编辑",
+  });
 }
 
 async function switchConfigType(configType: ClassConfigType) {
   if (store.viewState.filters.configType === configType) {
     return;
   }
-  if (store.viewState.isDirty) {
-    const abandon = await openDialog({
-      kind: "confirm",
-      tone: "danger",
-      icon: "warning",
-      title: "检测到未保存修改",
-      summary: "切换教室类型前需要先放弃当前页面中尚未保存的配置变更。",
-      details: [
-        `当前编辑：${store.viewState.form.className || "当前配置"}`,
-        `切换到：${configType === "teaching_class" ? "教学教室" : "考试教室"}`,
-      ],
-      confirmText: "放弃并切换",
-      cancelText: "继续编辑",
-    });
-    if (!abandon) {
-      return;
-    }
+  const allowSwitch = await confirmDiscardIfNeeded(`切换到${configType === "teaching_class" ? "教学班" : "考试教室"}`);
+  if (!allowSwitch) {
+    return;
   }
+  searchKeyword.value = "";
+  isSearchPanelOpen.value = false;
   await store.setFilters({ configType, gradeName: "", keyword: "" });
-  syncSearchToCurrentClass();
 }
 
-async function selectSuggestion(id: number) {
-  const row = store.viewState.rows.find((item) => item.id === id);
-  if (!row) {
+async function createNewConfig() {
+  const allowCreate = await confirmDiscardIfNeeded(`新建${currentTypeLabel.value}`);
+  if (!allowCreate) {
     return;
   }
-  isSuggestionOpen.value = false;
-  searchKeyword.value = row.className;
-  await handleSwitchToRow(row);
+  isSearchPanelOpen.value = false;
+  store.startCreate("");
 }
 
-async function onSearchCommit() {
-  const keyword = searchKeyword.value.trim();
-  if (!keyword) {
-    if (store.viewState.mode === "existing") {
-      syncSearchToCurrentClass();
-    }
+async function selectRow(row: ClassConfigRow) {
+  if (store.viewState.mode === "existing" && store.viewState.editingId === row.id) {
+    isSearchPanelOpen.value = false;
     return;
   }
-
-  const exactRow = findExactRowByName(keyword);
-  const normalizedKeyword = keyword.replace(/\s+/g, "");
-  const normalizedCurrentClass = store.viewState.form.className.trim().replace(/\s+/g, "");
-  if (exactRow) {
-    if (exactRow.id === store.viewState.editingId && store.viewState.mode === "existing") {
-      syncSearchToCurrentClass();
-      return;
-    }
-    await handleSwitchToRow(exactRow);
+  const allowSwitch = await confirmDiscardIfNeeded(`切换到 ${row.className}`);
+  if (!allowSwitch) {
     return;
   }
-
-  if (store.viewState.mode === "new" && normalizedKeyword && normalizedKeyword === normalizedCurrentClass) {
-    syncSearchToCurrentClass();
-    return;
-  }
-
-  if (store.viewState.isDirty) {
-    const abandon = await openDialog({
-      kind: "confirm",
-      tone: "danger",
-      icon: "warning",
-      title: "检测到未保存修改",
-      summary: "创建新班级前需要先放弃当前页面中尚未保存的配置变更。",
-      details: [`当前编辑：${store.viewState.form.className || "当前班级"}`, `新班级：${keyword}`],
-      confirmText: "放弃并新建",
-      cancelText: "继续编辑",
-    });
-    if (!abandon) {
-      syncSearchToCurrentClass();
-      return;
-    }
-  }
-
-  store.startCreate(keyword);
-  syncInferredGradeName(keyword);
-  syncSearchToCurrentClass();
+  await store.loadDetail(row.id);
+  isSearchPanelOpen.value = false;
 }
 
-function onCurrentClassInput(event: Event) {
+function onFormInput(field: "className" | "building" | "floor", event: Event) {
   const value = (event.target as HTMLInputElement).value;
-  store.setFormField("className", value);
-  if (store.viewState.mode === "new") {
-    syncInferredGradeName(value);
-    searchKeyword.value = value;
-  }
+  store.setFormField(field, value);
 }
 
 function onRoomLabelInput(event: Event) {
@@ -526,499 +385,397 @@ function onRoomLabelInput(event: Event) {
   store.setFormField("roomLabel", value || null);
 }
 
-function clearSearchKeyword() {
-  searchKeyword.value = "";
-  isSuggestionOpen.value = true;
-  resetSuggestionPaging();
+function toggleSubject(subject: Subject) {
+  const checked = !store.viewState.form.subjects.includes(subject);
+  store.toggleSubject(subject, checked);
+}
+
+async function saveCurrent() {
+  const wasCreating = store.viewState.mode === "new";
+  try {
+    if (wasCreating) {
+      await store.create();
+    } else {
+      await store.update();
+    }
+    await openDialog({
+      kind: "alert",
+      title: "保存成功",
+      summary: wasCreating ? "配置已创建。" : "配置已更新。",
+      details: [`名称：${store.viewState.form.className || `未命名${currentTypeLabel.value}`}`],
+    });
+  } catch {
+    // Errors are surfaced through store.viewState.errorMessage.
+  }
 }
 
 async function deleteCurrent() {
   if (!store.viewState.editingId) {
     return;
   }
-  const className = store.viewState.loadedClassName || store.viewState.form.className.trim();
+  const confirmed = await openDialog({
+    kind: "confirm",
+    title: "确认删除",
+    summary: "删除后当前配置无法恢复，请确认是否继续。",
+    details: [`当前记录：${store.viewState.form.className || `未命名${currentTypeLabel.value}`}`],
+    confirmText: "确认删除",
+    cancelText: "取消",
+  });
+  if (!confirmed) {
+    return;
+  }
   try {
     await store.remove(store.viewState.editingId);
-    syncSearchToCurrentClass();
     await openDialog({
       kind: "alert",
-      tone: "success",
-      icon: "check_circle",
       title: "删除成功",
-      summary: "班级配置已删除。",
-      details: className ? [`已删除：${className}`] : [],
-      confirmText: "知道了",
+      summary: "当前配置已经删除。",
     });
   } catch {
-    // Error message is provided by store.viewState.errorMessage.
+    // Errors are surfaced through store.viewState.errorMessage.
   }
-}
-
-async function saveCurrent() {
-  const wasExisting = store.viewState.mode === "existing";
-  try {
-    if (wasExisting) {
-      await store.update();
-    } else {
-      await store.create();
-    }
-    syncSearchToCurrentClass();
-    await openDialog({
-      kind: "alert",
-      tone: "success",
-      icon: "check_circle",
-      title: "保存成功",
-      summary: wasExisting ? "班级配置已更新。" : "新班级配置已创建。",
-      details: [
-        `班级：${store.viewState.form.className.trim() || "未命名班级"}`,
-        `楼号：${store.viewState.form.building || "未填写"}，楼层：${store.viewState.form.floor || "未填写"}`,
-      ],
-      confirmText: "知道了",
-    });
-  } catch {
-    // Error message is provided by store.viewState.errorMessage.
-  }
-}
-
-function toggleSubject(subject: Subject) {
-  const checked = !store.viewState.form.subjects.includes(subject);
-  store.toggleSubject(subject, checked);
 }
 
 onMounted(async () => {
+  // Initialize with teaching class records so the page always opens into a valid CRUD context.
   await store.setFilters({ configType: "teaching_class", gradeName: "", keyword: "" });
-  syncSearchToCurrentClass();
 });
 </script>
 
 <style scoped>
-.panel {
+.class-config-page {
   display: flex;
   flex-direction: column;
-  gap: 20px;
-  overflow: visible;
-  position: relative;
-  z-index: 1;
-}
-
-.section-kicker {
-  margin: 0;
-  color: var(--text-tertiary);
-  font-size: 11px;
-  font-weight: 700;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-}
-
-.search-card {
-  min-height: 92px;
-  padding: 16px 18px;
-  display: flex;
-  align-items: center;
-  position: relative;
-  z-index: 20;
-  overflow: visible;
-  border-radius: 24px;
-}
-
-.context-card {
-  padding: 16px 18px;
-  display: grid;
-  grid-template-columns: minmax(0, 1.2fr) auto;
-  gap: 16px;
-  align-items: center;
-  background:
-    linear-gradient(180deg, color-mix(in srgb, var(--surface-panel) 86%, white), color-mix(in srgb, var(--surface-elevated) 90%, white)),
-    radial-gradient(circle at top right, rgba(var(--accent-rgb), 0.08), rgba(var(--accent-rgb), 0));
-}
-
-.context-copy {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
+  gap: 18px;
   min-width: 0;
 }
 
-.context-copy strong {
-  color: var(--text-primary);
-  font-size: 18px;
-  font-weight: 700;
-  line-height: 1.2;
-}
-
-.context-copy p {
-  margin: 0;
-  color: var(--text-secondary);
-  font-size: 13px;
-  line-height: 1.5;
-}
-
-.context-badges {
-  display: flex;
+.workspace {
+  display: grid;
+  grid-template-columns: 360px minmax(0, 1fr);
+  gap: 18px;
   align-items: stretch;
+  min-width: 1280px;
+}
+
+.sidebar {
+  padding: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  min-height: 100%;
+  overflow: visible;
+}
+
+.sidebar-toolbar {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.type-switch {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 10px;
-  flex-wrap: wrap;
-  justify-content: flex-end;
 }
 
-.context-badge {
-  min-width: 132px;
-  padding: 12px 14px;
-  border-radius: 18px;
-  border: 1px solid var(--color-border-soft);
-  background: color-mix(in srgb, var(--surface-panel) 84%, white);
-  box-shadow: var(--shadow-soft);
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-
-.context-badge span {
+.type-btn {
+  min-height: 42px;
+  border: 1px solid var(--border-default);
+  border-radius: 14px;
+  background: var(--surface-panel);
   color: var(--text-secondary);
-  font-size: 11px;
+  font-size: 14px;
   font-weight: 700;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
+  cursor: pointer;
+  transition: border-color 0.18s ease, background-color 0.18s ease, color 0.18s ease;
 }
 
-.context-badge strong {
+.type-btn.active {
+  border-color: var(--accent-border-strong);
+  background: rgba(var(--accent-rgb), 0.12);
   color: var(--accent-primary-strong);
-  font-size: 15px;
-  font-weight: 700;
-  line-height: 1.3;
 }
 
-.search-block {
-  width: 100%;
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-
-.picker-label {
-  color: var(--color-text-muted);
-  font-size: 13px;
-  font-weight: 600;
-  line-height: 1.2;
-  min-height: 18px;
-}
-
-.class-input-wrap {
-  width: 380px;
+.search-anchor {
   position: relative;
-  z-index: 24;
 }
 
-.class-input-shell {
-  width: 100%;
+.search-wrap {
   min-height: 44px;
-  border: 1px solid var(--color-border-soft);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 14px;
+  border: 1px solid var(--border-default);
   border-radius: 16px;
   background: var(--surface-input);
-  padding: 0 14px;
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  position: relative;
-  box-shadow: 0 10px 22px rgba(var(--accent-rgb), 0.06);
 }
 
-.clear-btn {
-  border: 0;
-  background: transparent;
-  color: var(--color-text-muted);
-  cursor: pointer;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  padding: 0;
-  margin-left: auto;
-  flex-shrink: 0;
+.search-panel {
+  position: absolute;
+  top: calc(100% + 10px);
+  left: 0;
+  right: 0;
+  z-index: 40;
+  padding: 12px;
+  border: 1px solid var(--border-default);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--surface-panel-strong) 86%, white);
+  box-shadow: var(--shadow-medium);
+  backdrop-filter: blur(14px);
 }
 
-.clear-btn .material-symbols-rounded {
-  font-size: 20px;
-}
-
-.clear-btn:hover {
-  color: var(--color-text);
-}
-
-.class-input-shell:focus-within {
-  border-color: var(--accent-border-strong);
-  box-shadow: 0 0 0 3px var(--accent-focus-ring), 0 10px 24px rgba(var(--accent-rgb), 0.08);
+.search-icon {
+  color: var(--text-tertiary);
+  font-size: 18px;
 }
 
 .search-input,
-.current-input {
-  min-width: 0;
+.field-input {
   width: 100%;
   border: 0;
   background: transparent;
-  color: var(--color-text);
+  color: var(--text-primary);
 }
 
 .search-input {
-  font-size: 16px;
+  font-size: 14px;
 }
 
-.current-input {
-  font-size: 18px;
-  font-weight: 700;
+.field-input {
+  font-size: 15px;
+  font-weight: 600;
 }
 
 .search-input:focus,
-.current-input:focus,
-.metric-input:focus {
+.field-input:focus {
   outline: none;
 }
 
-.type-toggle-row {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 12px;
-}
-
-.type-toggle-btn {
-  min-height: 44px;
-  border: 1px solid var(--color-border-soft);
-  border-radius: 16px;
-  background: var(--surface-panel);
-  color: var(--color-text-muted);
-  font-size: 14px;
-  font-weight: 700;
-  cursor: pointer;
-  transition:
-    border-color 0.18s ease,
-    background-color 0.18s ease,
-    color 0.18s ease,
-    box-shadow 0.18s ease;
-}
-
-.type-toggle-btn.active {
-  border-color: var(--accent-border-strong);
-  background: color-mix(in srgb, rgba(var(--accent-rgb), 0.12) 72%, var(--surface-panel-strong));
-  color: var(--accent-primary-strong);
-  box-shadow: 0 10px 22px rgba(var(--accent-rgb), 0.1);
-}
-
-.suggestion-list {
-  position: absolute;
-  top: 48px;
-  left: 0;
-  width: 100%;
-  max-height: 256px;
-  overflow: auto;
-  border: 1px solid var(--color-border-soft);
-  border-radius: 18px;
-  background: var(--surface-input-strong);
-  box-shadow: var(--shadow-strong);
-  backdrop-filter: blur(18px);
-  z-index: 40;
-  padding: 8px;
-}
-
-.suggestion-item {
-  width: 100%;
-  min-height: 42px;
-  border: 1px solid transparent;
-  border-radius: 14px;
-  background: var(--surface-elevated);
-  color: var(--color-text);
-  font-size: 14px;
-  font-weight: 600;
-  text-align: left;
-  padding: 0 12px;
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  transition: background-color 0.16s ease, border-color 0.16s ease, color 0.16s ease;
-}
-
-.suggestion-item:hover {
-  background: rgba(var(--accent-rgb), 0.12);
-  border-color: var(--accent-border-strong);
-  color: var(--accent-primary);
-}
-
-.suggestion-item + .suggestion-item {
-  margin-top: 4px;
-}
-
-.suggestion-load-more {
-  margin-top: 6px;
-  min-height: 30px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: var(--color-text-muted);
-  font-size: 12px;
-}
-
-.suggestion-meta {
-  color: var(--color-text-muted);
-  font-size: 12px;
-  font-weight: 500;
-}
-
-.current-card :deep(.body) {
-  gap: 0;
-}
-
-.current-head {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 16px;
-}
-
-.current-inputs-wrap {
-  display: flex;
-  gap: 16px;
-  flex: 1;
-  min-width: 0;
-}
-
-.current-input-wrap {
-  width: 280px;
-  max-width: 100%;
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  align-items: flex-start;
-  flex-shrink: 0;
-}
-
-.room-label-wrap {
-  width: 280px;
-  align-items: flex-start;
-  margin-left: auto;
-  margin-right: 32px;
-}
-
-.room-label-input-shell {
-  padding-right: 18px;
-}
-
-.room-label-input {
-  min-width: 0;
-  width: 100%;
-  border: 0;
-  background: transparent;
-  color: var(--color-text);
-  font-size: 18px;
-  font-weight: 600;
-}
-
-.room-label-input:focus {
-  outline: none;
-}
-
-.current-input-shell {
-  padding-right: 18px;
-}
-
-.status-copy {
-  margin: 0;
-  color: var(--color-text-muted);
-  font-size: 13px;
-  line-height: 1.5;
-  white-space: normal;
-}
-
-.status-copy-new {
-  color: var(--color-brand);
-}
-
-.delete-btn {
-  min-width: 100px;
+.create-btn {
   display: inline-flex;
   align-items: center;
   justify-content: center;
   gap: 6px;
-  color: var(--color-danger);
-  border-color: rgba(209, 52, 56, 0.2);
-  background: linear-gradient(180deg, color-mix(in srgb, var(--color-danger-soft) 84%, white), var(--color-danger-soft) 100%);
 }
 
-.editor-grid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 14px;
+.list-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  color: var(--text-secondary);
+  font-size: 13px;
 }
 
-.metric-input {
-  border: 0;
-  padding: 0;
-  background: transparent;
-  color: var(--color-text);
-  font-size: 18px;
-  font-weight: 600;
+.list-head strong {
+  color: var(--text-primary);
+  font-size: 15px;
 }
 
-.metric-field {
-  min-height: 84px;
-  padding: 14px 16px;
-  border-radius: 18px;
-  border: 1px solid var(--color-border-soft);
+.config-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  max-height: 520px;
+  overflow: auto;
+  padding-right: 4px;
+  margin-top: 12px;
+}
+
+.config-item {
+  border: 1px solid var(--border-default);
+  border-radius: 16px;
   background: color-mix(in srgb, var(--surface-panel) 82%, white);
+  padding: 12px 13px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 0.18s ease, transform 0.18s ease, box-shadow 0.18s ease;
+}
+
+.config-item:hover {
+  transform: translateY(-1px);
   box-shadow: var(--shadow-soft);
 }
 
-.subject-row {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 12px;
-}
-
-.subject-pill {
-  width: 124px;
-  height: 40px;
-  border-radius: 16px;
-  border: 1px solid var(--color-border-soft);
-  background: var(--surface-panel);
-  color: var(--color-text-muted);
-  font-size: 14px;
-  font-weight: 600;
-  cursor: pointer;
-  transition:
-    border-color 0.18s ease,
-    background-color 0.18s ease,
-    color 0.18s ease,
-    box-shadow 0.18s ease,
-    transform 0.18s ease;
-}
-
-.subject-pill:hover {
-  transform: translateY(-1px);
-  border-color: rgba(var(--accent-rgb), 0.24);
-  box-shadow: 0 10px 22px rgba(var(--accent-rgb), 0.1);
-}
-
-.subject-pill.active {
+.config-item.active {
   border-color: var(--accent-border-strong);
+  background: linear-gradient(180deg, rgba(var(--accent-rgb), 0.12), rgba(255, 255, 255, 0.96));
+  box-shadow: 0 0 0 1px rgba(var(--accent-rgb), 0.08);
+}
+
+.config-item-top strong {
+  color: var(--text-primary);
+  font-size: 15px;
+  line-height: 1.3;
+}
+
+.config-item p {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.config-item-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.config-item-subtitle {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.item-tag {
+  padding: 3px 10px;
+  border-radius: 999px;
   background: rgba(var(--accent-rgb), 0.12);
   color: var(--accent-primary-strong);
+  font-size: 11px;
+  font-weight: 700;
+  flex-shrink: 0;
+}
+
+.empty-list {
+  min-height: 220px;
+  border: 1px dashed var(--border-strong);
+  border-radius: 18px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 24px;
+  text-align: center;
+}
+
+.empty-list .material-symbols-rounded {
+  font-size: 28px;
+  color: var(--text-tertiary);
+}
+
+.empty-list strong {
+  color: var(--text-primary);
+  font-size: 16px;
+}
+
+.empty-list p {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.editor {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  min-width: 0;
+}
+
+.form-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.5fr) minmax(280px, 1fr);
+  gap: 14px;
+}
+
+.form-grid-compact {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.field {
+  min-height: 82px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px 16px;
+  border: 1px solid var(--border-default);
+  border-radius: 16px;
+  background: color-mix(in srgb, var(--surface-panel) 82%, white);
+}
+
+.field-wide {
+  min-width: 0;
+}
+
+.field-label {
+  color: var(--text-secondary);
+  font-size: 12px;
   font-weight: 700;
 }
 
-.footer-actions {
+.field-input-strong {
+  font-size: 18px;
+  font-weight: 700;
+}
+
+.subject-grid {
   display: flex;
-  justify-content: flex-start;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
 }
 
-.save-btn {
-  width: 132px;
+.subject-curve-group {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 8px;
+  border: 1px dashed rgba(var(--accent-rgb), 0.6);
+  border-radius: 24px;
+  background: rgba(255, 255, 255, 0.76);
 }
 
-.error-copy {
+.subject-chip {
+  min-width: 96px;
+  min-height: 40px;
+  padding: 0 14px;
+  border: 1px solid var(--border-default);
+  border-radius: 14px;
+  background: var(--surface-panel);
+  color: var(--text-secondary);
+  font-size: 14px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: border-color 0.18s ease, background-color 0.18s ease, color 0.18s ease;
+}
+
+.subject-chip.active {
+  border-color: var(--accent-border-strong);
+  background: rgba(var(--accent-rgb), 0.14);
+  color: var(--accent-primary-strong);
+}
+
+.config-footer {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 4px;
+  padding-top: 4px;
+}
+
+.danger-btn {
+  color: var(--color-danger);
+  border-color: rgba(209, 52, 56, 0.24);
+}
+
+.error-text {
   margin: 0;
   color: var(--color-danger);
   font-size: 13px;
 }
 
-.fluent-mask {
+.dialog-mask {
   position: fixed;
   inset: 0;
   background: var(--surface-overlay);
@@ -1028,32 +785,20 @@ onMounted(async () => {
   z-index: 600;
 }
 
-.fluent-dialog {
-  width: 520px;
+.dialog {
+  width: 480px;
   max-width: calc(100vw - 32px);
   padding: 20px;
   display: flex;
   flex-direction: column;
   gap: 12px;
-  border-radius: 24px;
-  position: relative;
-  z-index: 610;
 }
 
 .dialog-head {
   display: flex;
   align-items: center;
   justify-content: space-between;
-}
-
-.dialog-title-wrap {
-  display: inline-flex;
-  align-items: center;
-  gap: 10px;
-}
-
-.dialog-icon {
-  font-size: 20px;
+  gap: 16px;
 }
 
 .dialog-head h3 {
@@ -1063,24 +808,19 @@ onMounted(async () => {
 }
 
 .dialog-close {
-  border: 0;
   width: 30px;
   height: 30px;
+  border: 0;
   border-radius: 8px;
   background: transparent;
-  color: var(--color-text-muted);
+  color: var(--text-secondary);
   cursor: pointer;
   font-size: 20px;
-  line-height: 1;
-}
-
-.dialog-close:hover {
-  background: var(--surface-panel);
 }
 
 .dialog-summary {
   margin: 0;
-  color: var(--color-text);
+  color: var(--text-primary);
   font-size: 14px;
   line-height: 1.55;
 }
@@ -1088,56 +828,29 @@ onMounted(async () => {
 .dialog-details {
   margin: 0;
   padding-left: 18px;
-  color: var(--color-text-muted);
+  color: var(--text-secondary);
   font-size: 13px;
   display: grid;
   gap: 4px;
 }
 
 .dialog-actions {
-  margin-top: 4px;
   display: flex;
   justify-content: flex-end;
   gap: 10px;
 }
 
-.dialog-neutral .dialog-icon {
-  color: var(--accent-primary);
-}
-
-.dialog-danger .dialog-icon {
-  color: var(--color-danger);
-}
-
-.dialog-success .dialog-icon {
-  color: var(--color-success);
-}
-
-@media (max-width: 900px) {
-  .context-card {
-    grid-template-columns: 1fr;
+@media (max-width: 1100px) {
+  .page-head {
+    align-items: flex-start;
   }
 
-  .context-badges {
-    justify-content: flex-start;
+  .form-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
-  .class-input-wrap,
-  .current-input-wrap {
-    width: 100%;
-  }
-
-  .current-head,
-  .current-inputs-wrap {
-    flex-direction: column;
-  }
-
-  .room-label-wrap {
-    width: 100%;
-  }
-
-  .editor-grid {
-    grid-template-columns: 1fr;
+  .field-wide {
+    grid-column: 1 / -1;
   }
 }
 </style>

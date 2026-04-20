@@ -21,7 +21,26 @@ body {
     radial-gradient(circle at top left, var(--page-glow-left), transparent 26%),
     radial-gradient(circle at 88% 12%, var(--page-glow-right), transparent 22%),
     linear-gradient(180deg, var(--page-gradient-top) 0%, var(--surface-page) 38%, var(--surface-page-accent) 100%);
-  background-attachment: fixed;
+  /* Stable rendering in desktop WebView: avoid fixed background re-composition on hover/mouse move. */
+  background-attachment: scroll;
+}
+
+/* Material Symbols 使用 ligature 文本映射图标，需全局统一字体声明。 */
+.material-symbols-rounded {
+  font-family: "Material Symbols Rounded";
+  font-weight: normal;
+  font-style: normal;
+  font-size: 1em;
+  line-height: 1;
+  letter-spacing: normal;
+  text-transform: none;
+  display: inline-block;
+  white-space: nowrap;
+  direction: ltr;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+  font-feature-settings: "liga";
+  -webkit-font-feature-settings: "liga";
 }
 
 body::before {
@@ -32,8 +51,8 @@ body::before {
   background-image: linear-gradient(rgba(255, 255, 255, 0.24) 1px, transparent 1px),
     linear-gradient(90deg, rgba(255, 255, 255, 0.24) 1px, transparent 1px);
   background-size: 40px 40px;
-  mask-image: linear-gradient(180deg, rgba(0, 0, 0, 0.22), transparent 90%);
-  opacity: 0.45;
+  /* mask-image is expensive in some GPU/driver combos and may cause intermittent flashing. */
+  opacity: 0.24;
 }
 
 button,
@@ -67,8 +86,6 @@ textarea {
   border: 1px solid var(--color-card-line);
   background: var(--surface-panel);
   box-shadow: var(--shadow-soft);
-  backdrop-filter: blur(22px);
-  -webkit-backdrop-filter: blur(22px);
   transition:
     border-color 0.2s ease,
     box-shadow 0.2s ease,
@@ -80,12 +97,12 @@ textarea {
   position: absolute;
   inset: 0;
   border-radius: inherit;
-  border: 1px solid rgba(255, 255, 255, 0.4);
+  border: 1px solid var(--color-card-highlight);
   pointer-events: none;
 }
 
 .card-shell:hover {
-  border-color: rgba(158, 184, 214, 0.34);
+  border-color: var(--border-strong);
   box-shadow: var(--shadow-medium);
 }
 
@@ -114,6 +131,28 @@ textarea {
   font-size: var(--font-size-body);
   line-height: 1.5;
   resize: none;
+  overflow-x: hidden;
+  overflow-y: auto;
+  /* 为纵向滚动条预留槽位，避免滚动条视觉上挤出圆角边框。 */
+  scrollbar-gutter: stable;
+}
+
+.glass-area::-webkit-scrollbar {
+  width: 8px;
+}
+
+.glass-area::-webkit-scrollbar-track {
+  background: transparent;
+  margin: 8px 0;
+}
+
+.glass-area::-webkit-scrollbar-thumb {
+  background: rgba(79, 109, 145, 0.24);
+  border-radius: 999px;
+}
+
+.glass-area::-webkit-scrollbar-thumb:hover {
+  background: rgba(63, 89, 121, 0.38);
 }
 
 .glass-field::placeholder,
@@ -258,7 +297,9 @@ button:disabled {
   font-weight: 700;
   letter-spacing: 0.04em;
   text-transform: uppercase;
-  background: var(--surface-elevated);
+  background:
+    linear-gradient(180deg, rgba(var(--accent-rgb), 0.08), rgba(var(--accent-rgb), 0.04)),
+    linear-gradient(90deg, rgba(255, 255, 255, 0.82), rgba(255, 255, 255, 0.94));
 }
 
 .table thead tr {
@@ -270,6 +311,10 @@ button:disabled {
   transition: background-color 0.15s ease;
 }
 
-.table tbody tr:hover {
+.table tbody tr:nth-child(even) > td {
+  background: var(--surface-table-stripe);
+}
+
+.table tbody tr:hover > td {
   background: var(--accent-fill-softer);
 }

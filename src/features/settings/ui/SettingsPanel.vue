@@ -136,8 +136,9 @@ function previewStyle(theme: ThemeOption) {
 .settings-layout {
   display: grid;
   grid-template-columns: 240px minmax(0, 1fr);
-  gap: 20px;
+  gap: 12px;
   min-height: 0;
+  min-width: 980px;
 }
 
 .settings-nav,
@@ -308,7 +309,14 @@ function previewStyle(theme: ThemeOption) {
   display: block;
   height: 116px;
   border-radius: 16px;
-  background: linear-gradient(180deg, color-mix(in srgb, var(--preview-surface) 86%, white), var(--preview-surface));
+  border: 1px solid color-mix(in srgb, var(--preview-accent) 22%, rgba(15, 23, 42, 0.16));
+  background:
+    radial-gradient(circle at 82% 18%, color-mix(in srgb, var(--preview-accent) 16%, transparent), transparent 45%),
+    linear-gradient(
+      180deg,
+      color-mix(in srgb, var(--preview-surface) 88%, white),
+      color-mix(in srgb, var(--preview-surface) 90%, rgba(15, 23, 42, 0.06))
+    );
   overflow: hidden;
 }
 
@@ -324,8 +332,8 @@ function previewStyle(theme: ThemeOption) {
   left: 12px;
   width: 32px;
   bottom: 12px;
-  background: color-mix(in srgb, var(--preview-surface) 74%, white);
-  border: 1px solid rgba(255, 255, 255, 0.6);
+  background: color-mix(in srgb, var(--preview-surface) 78%, var(--preview-accent) 22%);
+  border: 1px solid color-mix(in srgb, var(--preview-accent) 24%, white);
 }
 
 .preview-panel {
@@ -333,8 +341,8 @@ function previewStyle(theme: ThemeOption) {
   left: 56px;
   right: 12px;
   bottom: 12px;
-  background: var(--surface-nav-panel);
-  border: 1px solid rgba(255, 255, 255, 0.66);
+  background: color-mix(in srgb, var(--preview-surface) 86%, white);
+  border: 1px solid color-mix(in srgb, var(--preview-accent) 20%, white);
 }
 
 .preview-accent {
@@ -343,6 +351,7 @@ function previewStyle(theme: ThemeOption) {
   width: 70px;
   height: 30px;
   background: var(--preview-accent);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.32);
 }
 
 .theme-text {
@@ -393,9 +402,4 @@ function previewStyle(theme: ThemeOption) {
   padding-left: 18px;
 }
 
-@media (max-width: 1080px) {
-  .settings-layout {
-    grid-template-columns: 1fr;
-  }
-}
 </style>

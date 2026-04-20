@@ -140,19 +140,19 @@ function onAfterSecondaryLeave(element: Element) {
 
 <style scoped>
 .page-shell {
-  width: min(100%, 1560px);
-  margin: 0 auto;
+  width: 100%;
+  margin: 0;
   min-height: 100%;
   display: flex;
-  gap: 18px;
-  padding: 30px 28px 36px;
+  gap: 10px;
+  padding: 30px 18px 36px 12px;
   align-items: stretch;
 }
 
 .nav-stack {
   display: flex;
   align-items: stretch;
-  gap: 10px;
+  gap: 0;
   flex-shrink: 0;
   transition: gap 0.22s ease;
 }
@@ -179,18 +179,18 @@ function onAfterSecondaryLeave(element: Element) {
 
 @media (max-width: 1280px) {
   .page-shell {
-    padding-inline: 18px;
+    padding-inline: 12px;
   }
 }
 
 @media (max-width: 1100px) {
   .page-shell {
-    gap: 14px;
-    padding: 18px 14px 24px;
+    gap: 8px;
+    padding: 18px 12px 24px 10px;
   }
 
   .nav-stack {
-    gap: 8px;
+    gap: 0;
   }
 }
 </style>

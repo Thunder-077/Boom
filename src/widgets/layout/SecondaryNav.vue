@@ -51,8 +51,6 @@ defineEmits<{
   background: var(--surface-nav-panel);
   border: 1px solid var(--border-default);
   box-shadow: 0 12px 28px rgba(31, 60, 103, 0.06);
-  backdrop-filter: blur(14px);
-  -webkit-backdrop-filter: blur(14px);
   position: relative;
 }
 
@@ -117,7 +115,7 @@ defineEmits<{
 
 .desc {
   margin: 0;
-  color: var(--text-secondary);
+  color: color-mix(in srgb, var(--text-secondary) 72%, var(--text-primary));
   font-size: 12px;
   line-height: 1.45;
 }
@@ -134,7 +132,7 @@ defineEmits<{
   min-height: 24px;
   padding: 4px 10px;
   border-radius: 999px;
-  background: rgba(var(--accent-rgb), 0.1);
+  background: rgba(var(--accent-rgb), 0.2);
   color: var(--accent-primary);
   font-size: 11px;
   font-weight: 700;
@@ -215,13 +213,17 @@ defineEmits<{
 }
 
 .nav-item.active {
-  color: var(--accent-primary-strong);
+  color: var(--text-primary);
   border-color: var(--accent-border-soft);
   background: var(--surface-nav-item-active);
   transform: none;
   box-shadow:
     inset 0 1px 0 rgba(255, 255, 255, 0.58),
     0 8px 18px rgba(var(--accent-rgb), 0.06);
+}
+
+.nav-item.active .nav-icon {
+  color: var(--accent-primary);
 }
 
 .nav-item.active::before {
