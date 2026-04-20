@@ -349,6 +349,7 @@ onUnmounted(() => {
   min-height: 0;
   gap: 22px;
   position: relative;
+  min-width: 1220px;
 }
 
 .panel :deep(.table-card) {

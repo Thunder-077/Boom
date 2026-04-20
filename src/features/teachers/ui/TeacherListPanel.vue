@@ -258,6 +258,7 @@ onUnmounted(() => {
   min-height: 0;
   gap: 22px;
   position: relative;
+  min-width: 1160px;
 }
 
 .panel :deep(.table-card) {
@@ -352,13 +353,15 @@ onUnmounted(() => {
 
 .teacher-grid-head {
   min-height: 48px;
-  background: var(--surface-elevated);
+  background:
+    linear-gradient(180deg, rgba(var(--accent-rgb), 0.08), rgba(var(--accent-rgb), 0.04)),
+    linear-gradient(90deg, rgba(255, 255, 255, 0.82), rgba(255, 255, 255, 0.94));
   border-bottom: 1px solid var(--color-border-soft);
 }
 
 .teacher-grid-row {
   min-height: 72px;
-  background: var(--surface-panel-strong);
+  background: var(--surface-table-content);
   border-bottom: 1px solid var(--border-default);
 }
 
@@ -404,7 +407,7 @@ onUnmounted(() => {
 }
 
 .row-alt {
-  background: var(--surface-elevated);
+  background: var(--surface-table-stripe);
 }
 
 .import-status {

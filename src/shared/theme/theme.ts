@@ -1,6 +1,6 @@
 import { ref } from "vue";
 
-export type ThemeId = "mist-blue" | "apricot-cream" | "mint-frost" | "sky-bloom" | "rose-dawn" | "lavender-mist";
+export type ThemeId = "mist-blue" | "sand-dune-mist" | "glacier-dew" | "sky-bloom" | "peach-blush" | "lavender-mist";
 
 export interface ThemeOption {
   id: ThemeId;
@@ -21,18 +21,18 @@ export const THEME_OPTIONS: ThemeOption[] = [
     surface: "#eff4fb",
   },
   {
-    id: "apricot-cream",
-    label: "晴杏奶油",
-    description: "更明亮温暖，像清晨阳光落在纸面上的办公桌，轻快但不甜腻。",
-    accent: "#d7864d",
-    surface: "#f8efe3",
+    id: "sand-dune-mist",
+    label: "简白清蓝",
+    description: "纯白基底配合清远蓝色点缀，整体更安静克制，边界清晰利落。",
+    accent: "#0078d4",
+    surface: "#fbfcfe",
   },
   {
-    id: "mint-frost",
-    label: "薄荷云白",
-    description: "更清新透亮，像带一口凉意的早春空气，适合长时间盯着看。",
-    accent: "#47a08b",
-    surface: "#eaf8f3",
+    id: "glacier-dew",
+    label: "冰川晨露",
+    description: "冷白与浅青蓝的通透路线，像清晨冰川空气，视觉更干净克制。",
+    accent: "#4a9ab3",
+    surface: "#f3fbfe",
   },
   {
     id: "sky-bloom",
@@ -42,11 +42,11 @@ export const THEME_OPTIONS: ThemeOption[] = [
     surface: "#edf5ff",
   },
   {
-    id: "rose-dawn",
-    label: "玫瑰晨曦",
-    description: "偏粉金的柔亮路线，像晨光落在浅色纸张上，明快又有一点精致感。",
-    accent: "#db7b95",
-    surface: "#fdf0f4",
+    id: "peach-blush",
+    label: "白桃雾粉",
+    description: "更浅更淡的白桃粉雾感，减少甜度，保持柔和精致。",
+    accent: "#d68ea2",
+    surface: "#fff8fb",
   },
   {
     id: "lavender-mist",

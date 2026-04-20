@@ -1078,6 +1078,7 @@ onBeforeUnmount(() => {
   flex-direction: column;
   gap: 20px;
   isolation: isolate;
+  min-width: 1240px;
 }
 
 .section-kicker {
@@ -1358,19 +1359,21 @@ onBeforeUnmount(() => {
 
 .segment-btn {
   min-height: 44px;
-  border: 0;
+  border: 2px solid transparent;
   border-radius: 14px;
   background: transparent;
   color: var(--text-secondary);
-  font-size: 14px;
+  font-size: 15px;
   font-weight: 700;
   cursor: pointer;
+  transition: all 0.2s ease;
 }
 
 .segment-btn.active {
-  background: var(--surface-panel-strong);
+  background: rgba(var(--accent-rgb), 0.12);
   color: var(--accent-primary);
-  box-shadow: 0 10px 22px rgba(var(--accent-rgb), 0.1);
+  border-color: var(--accent-primary);
+  box-shadow: 0 2px 8px rgba(var(--accent-rgb), 0.18), inset 0 1px 0 rgba(255, 255, 255, 0.5);
 }
 
 .summary-box,
@@ -2196,27 +2199,5 @@ onBeforeUnmount(() => {
   transform: translateX(18px);
 }
 
-@media (max-width: 1200px) {
-  .hero-card,
-  .grid-two,
-  .summary-grid,
-  .subsidy-row,
-  .time-row,
-  .schedule-row {
-    grid-template-columns: 1fr;
-  }
-
-  .hero-stats {
-    grid-template-columns: 1fr;
-  }
-
-  .footer-row,
-  .toolbar-row,
-  .action-row,
-  .pagination-row {
-    flex-direction: column;
-    align-items: flex-start;
-  }
-}
 </style>
 

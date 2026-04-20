@@ -6,7 +6,7 @@
         class="toggle-btn"
         :aria-label="isSecondaryNavVisible ? '收起二级菜单' : '展开二级菜单'"
         :aria-pressed="isSecondaryNavVisible"
-        :title="isSecondaryNavVisible ? '收起二级菜单' : '展开二级菜单'"
+        :data-tooltip="isSecondaryNavVisible ? '收起二级菜单' : '展开二级菜单'"
         @click="$emit('toggleSecondaryNav')"
       >
         <span class="material-symbols-rounded" aria-hidden="true">menu</span>
@@ -19,9 +19,11 @@
         type="button"
         class="rail-btn"
         :class="{ active: item.key === activeKey }"
-        :title="item.label"
+        :aria-label="item.label"
+        :data-tooltip="item.label"
         @click="$emit('select', item.key)"
       >
+        <span class="hover-glow" aria-hidden="true" />
         <span class="icon material-symbols-rounded" aria-hidden="true">{{ item.icon }}</span>
         <span class="sr-only">{{ item.label }}</span>
       </button>
@@ -31,10 +33,11 @@
         type="button"
         class="rail-btn utility-btn"
         :class="{ active: isSettingsActive }"
-        title="系统设置"
         aria-label="打开系统设置"
+        data-tooltip="系统设置"
         @click="$emit('openSettings')"
       >
+        <span class="hover-glow" aria-hidden="true" />
         <span class="icon material-symbols-rounded" aria-hidden="true">settings</span>
         <span class="sr-only">系统设置</span>
       </button>
@@ -61,6 +64,9 @@ defineEmits<{
 
 <style scoped>
 .primary-rail {
+  position: relative;
+  z-index: 3;
+  overflow: visible;
   width: 64px;
   padding: 10px 8px;
   display: flex;
@@ -72,8 +78,6 @@ defineEmits<{
   background: var(--surface-nav-gradient);
   border: 1px solid var(--border-default);
   box-shadow: 0 16px 36px rgba(31, 60, 103, 0.08);
-  backdrop-filter: blur(18px);
-  -webkit-backdrop-filter: blur(18px);
 }
 
 .rail-top {
@@ -102,6 +106,7 @@ defineEmits<{
 }
 
 .toggle-btn {
+  position: relative;
   width: 32px;
   height: 32px;
   display: inline-flex;
@@ -136,6 +141,44 @@ defineEmits<{
   font-size: 18px;
 }
 
+.toggle-btn::before,
+.rail-btn::before {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+  transition:
+    opacity 0.14s ease,
+    transform 0.14s ease;
+}
+
+.toggle-btn::before,
+.rail-btn::before {
+  content: attr(data-tooltip);
+  left: calc(100% + 8px);
+  top: 50%;
+  transform: translate(2px, -50%);
+  padding: 6px 9px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--surface-panel-strong) 88%, white 12%);
+  color: var(--text-primary);
+  border: 1px solid var(--border-default);
+  box-shadow: 0 6px 16px rgba(20, 36, 64, 0.14);
+  font-size: 12px;
+  font-weight: 500;
+  letter-spacing: 0;
+  line-height: 1;
+  white-space: nowrap;
+  z-index: 18;
+}
+
+.toggle-btn:hover::before,
+.toggle-btn:focus-visible::before,
+.rail-btn:hover::before,
+.rail-btn:focus-visible::before {
+  opacity: 1;
+  transform: translate(0, -50%);
+}
+
 .rail-btn {
   position: relative;
   width: 40px;
@@ -156,8 +199,7 @@ defineEmits<{
     box-shadow 0.18s ease;
 }
 
-.rail-btn::after {
-  content: "";
+.hover-glow {
   position: absolute;
   inset: 7px;
   border-radius: 10px;
@@ -173,7 +215,7 @@ defineEmits<{
   transform: none;
 }
 
-.rail-btn:hover::after {
+.rail-btn:hover .hover-glow {
   opacity: 0.55;
   transform: scale(1);
 }
@@ -221,7 +263,7 @@ defineEmits<{
   margin-bottom: 2px;
 }
 
-.rail-btn.active::after {
+.rail-btn.active .hover-glow {
   opacity: 0.8;
   transform: scale(1);
 }

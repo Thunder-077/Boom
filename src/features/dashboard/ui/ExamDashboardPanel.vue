@@ -656,6 +656,7 @@ onUnmounted(() => {
   grid-template-columns: minmax(0, 1.75fr) minmax(320px, 1fr);
   gap: 20px;
   min-height: calc(100vh - 170px);
+  min-width: 1180px;
 }
 
 .exam-table-scroll {
@@ -670,7 +671,9 @@ onUnmounted(() => {
   position: sticky;
   top: 0;
   z-index: 1;
-  background: var(--surface-elevated);
+  background:
+    linear-gradient(180deg, rgba(var(--accent-rgb), 0.08), rgba(var(--accent-rgb), 0.04)),
+    linear-gradient(90deg, rgba(255, 255, 255, 0.82), rgba(255, 255, 255, 0.94));
 }
 
 .global-hint {
@@ -1243,19 +1246,6 @@ onUnmounted(() => {
 .icon-btn.disabled {
   color: var(--color-text-muted);
   cursor: not-allowed;
-}
-
-@media (max-width: 1180px) {
-  .dashboard-grid {
-    grid-template-columns: 1fr;
-    min-height: auto;
-  }
-}
-
-@media (max-width: 900px) {
-  .hero-metrics {
-    grid-template-columns: 1fr;
-  }
 }
 
 </style>

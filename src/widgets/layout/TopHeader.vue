@@ -71,15 +71,6 @@ defineProps<{
   gap: 12px;
   min-height: 44px;
   padding-top: 10px;
-}
-
-@media (max-width: 900px) {
-  .header {
-    flex-direction: column;
-  }
-
-  .right {
-    padding-top: 0;
-  }
+  flex-shrink: 0;
 }
 </style>

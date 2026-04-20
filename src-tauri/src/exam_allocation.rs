@@ -862,7 +862,7 @@ fn load_grade_contexts(conn: &Connection) -> Result<HashMap<String, GradeContext
 
     let mut exam_stmt = conn.prepare(
         r#"
-        SELECT grade_name, class_name, room_label, building, floor
+        SELECT grade_name, class_name, building, floor
         FROM class_configs
         WHERE config_type = 'exam_room'
         ORDER BY grade_name ASC, class_name ASC, id ASC
@@ -872,16 +872,16 @@ fn load_grade_contexts(conn: &Connection) -> Result<HashMap<String, GradeContext
         Ok((
             row.get::<_, String>(0)?,
             row.get::<_, String>(1)?,
-            row.get::<_, Option<String>>(2)?,
+            row.get::<_, String>(2)?,
             row.get::<_, String>(3)?,
-            row.get::<_, String>(4)?,
         ))
     })?;
     for row in exam_rows {
-        let (grade_name, class_name, room_label, building, floor) = row?;
+        let (grade_name, class_name, building, floor) = row?;
         let grade_ctx = ctx_map.entry(grade_name).or_default();
+        // Exam-room allocation now always uses the configured class_name as the exported room name.
         grade_ctx.exam_rooms.push(ExamRoomResource {
-            room_name: room_label.unwrap_or(class_name),
+            room_name: class_name,
             building,
             floor,
         });

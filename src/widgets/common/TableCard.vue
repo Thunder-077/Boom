@@ -76,14 +76,4 @@ defineProps<{
   border: 1px solid var(--color-border-soft);
   background: var(--surface-table-content);
 }
-
-@media (max-width: 900px) {
-  .head {
-    flex-direction: column;
-  }
-
-  .meta-wrap {
-    justify-content: flex-start;
-  }
-}
 </style>
