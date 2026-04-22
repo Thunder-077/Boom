@@ -402,7 +402,7 @@ interface SelfStudyClassRow {
 }
 
 interface AssignmentNotice {
-  type: "success" | "error";
+  type: "success" | "warning" | "error";
   text: string;
   linkPath?: string;
   linkLabel?: string;
@@ -571,7 +571,8 @@ const displayedAssignmentNotice = computed(() => assignmentNotice.value ?? persi
 const assignmentProgress = computed(() => store.viewState.assignmentProgress);
 const assignmentNoticeIcon = computed(() => {
   if (isAssignmentProgressVisible.value) return "hourglass_top";
-  return displayedAssignmentNotice.value?.type === "success" ? "check_circle" : "info";
+  const noticeType = displayedAssignmentNotice.value?.type;
+  return noticeType === "success" ? "check_circle" : noticeType === "warning" ? "warning" : "info";
 });
 const assignmentNoticeText = computed(() => {
   if (isAssignmentProgressVisible.value) {
@@ -1009,9 +1010,14 @@ async function assignTeachers() {
       result.fallbackPoolAssignments > 0
         ? `，其他老师补位 ${result.fallbackPoolAssignments} 项`
         : "";
+    const mainMessage = `${summary}：已分配 ${result.assignedCount} 项，未分配 ${result.unassignedCount} 项，${optimality}，耗时 ${formatSolveDuration(result.solveDurationMs)}${fallbackPart}。`;
+    const unassignedPart =
+      result.unassignedDetails.length > 0
+        ? `\n未分配的任务：${result.unassignedDetails.join("、")}。`
+        : "";
     await showAssignmentNotice(
-      "success",
-      `${summary}：已分配 ${result.assignedCount} 项，未分配 ${result.unassignedCount} 项，${optimality}，耗时 ${formatSolveDuration(result.solveDurationMs)}${fallbackPart}。`,
+      result.unassignedCount > 0 ? "warning" : "success",
+      `${mainMessage}${unassignedPart}`,
     );
   } catch (error) {
     store.setAssignmentProgress(null);
@@ -2034,6 +2040,7 @@ onBeforeUnmount(() => {
 .assignment-notice-text {
   min-width: 0;
   overflow-wrap: anywhere;
+  white-space: pre-line;
 }
 
 .assignment-notice-link {

@@ -55,6 +55,7 @@ struct SlotDef {
     left_header: &'static str,
     right_header: &'static str,
     start_ts: i64,
+    teacher_cols: usize,
 }
 
 #[derive(Debug, Default, Clone)]
@@ -505,7 +506,20 @@ fn load_accounting_config(conn: &rusqlite::Connection) -> Result<AccountingConfi
         .collect::<HashSet<_>>();
 
     let total_exam_minutes: i64 = conn.query_row(
-        "SELECT COALESCE(SUM(CAST((julianday(end_at) - julianday(start_at)) * 24 * 60 AS INTEGER)), 0) FROM exam_session_times",
+        r#"
+        SELECT COALESCE(MAX(grade_total), 0)
+        FROM (
+            SELECT
+                grade_name,
+                SUM(CAST((julianday(end_at) - julianday(start_at)) * 24 * 60 AS INTEGER)) as grade_total
+            FROM (
+                SELECT DISTINCT grade_name, start_at, end_at
+                FROM exam_session_times
+                WHERE start_at IS NOT NULL AND end_at IS NOT NULL AND start_at != '' AND end_at != ''
+            )
+            GROUP BY grade_name
+        )
+        "#,
         [],
         |row| row.get(0),
     )?;
@@ -664,6 +678,7 @@ fn build_slots(rows: &[TaskExportRow]) -> Result<Vec<SlotDef>, AppError> {
                 left_header: if is_self_study_group { "班级" } else { "考生数" },
                 right_header: if is_self_study_group { "教师" } else { "监考员" },
                 start_ts: row.start_ts,
+                teacher_cols: 1,
             });
         }
     }
@@ -796,22 +811,35 @@ fn write_headers(
                 && slots[date_index].key.subject_group == subject_label
                 && slots[date_index].date_label == date_label
             {
+                let t_cols = slots[date_index].teacher_cols;
+                let col_span = 1 + t_cols as u16;
                 sheet.merge_range(
                     2,
                     col,
                     2,
-                    col + 1,
+                    col + col_span - 1,
                     &slots[date_index].time_label,
                     group_fmt,
                 )?;
                 sheet.write_string_with_format(3, col, slots[date_index].left_header, group_fmt)?;
-                sheet.write_string_with_format(
-                    3,
-                    col + 1,
-                    slots[date_index].right_header,
-                    group_fmt,
-                )?;
-                col += 2;
+                if t_cols == 1 {
+                    sheet.write_string_with_format(
+                        3,
+                        col + 1,
+                        slots[date_index].right_header,
+                        group_fmt,
+                    )?;
+                } else {
+                    sheet.merge_range(
+                        3,
+                        col + 1,
+                        3,
+                        col + t_cols as u16,
+                        slots[date_index].right_header,
+                        group_fmt,
+                    )?;
+                }
+                col += col_span;
                 date_index += 1;
             }
             sheet.merge_range(1, date_start, 1, col - 1, &date_label, group_fmt)?;
@@ -839,6 +867,7 @@ fn write_room_section(
         sheet.write_string_with_format(row, 0, room_name, body_fmt)?;
         let mut col = 1_u16;
         for slot in slots {
+            let t_cols = slot.teacher_cols;
             let cell = cells.get(&(room_name.clone(), slot.key.clone()));
             let left = if let Some(item) = cell {
                 if !item.left.is_empty() {
@@ -851,14 +880,9 @@ fn write_room_section(
             } else {
                 String::new()
             };
-            let right = cell
-                .map(|item| join_teacher_names(&item.teachers))
-                .unwrap_or_default();
-            let is_empty_cell = left.is_empty() && right.is_empty();
+            let is_empty_cell = left.is_empty() && cell.map_or(true, |c| c.teachers.is_empty());
             let is_self_study_cell = slot.key.subject_group == "自习"
-                || cell
-                    .map(|item| !item.left.is_empty())
-                    .unwrap_or(false);
+                || cell.map_or(false, |item| !item.left.is_empty());
             let left_fmt = if is_self_study_cell {
                 plain_body_fmt
             } else if is_empty_cell {
@@ -874,8 +898,19 @@ fn write_room_section(
                 wrap_fmt
             };
             sheet.write_string_with_format(row, col, &left, left_fmt)?;
-            sheet.write_string_with_format(row, col + 1, &right, right_fmt)?;
-            col += 2;
+            
+            let mut t_written = 0;
+            if let Some(item) = cell {
+                for i in 0..item.teachers.len() {
+                    sheet.write_string_with_format(row, col + 1 + i as u16, &item.teachers[i], right_fmt)?;
+                    t_written += 1;
+                }
+            }
+            while t_written < t_cols {
+                sheet.write_string_with_format(row, col + 1 + t_written as u16, "", right_fmt)?;
+                t_written += 1;
+            }
+            col += 1 + t_cols as u16;
         }
         row += 1;
     }
@@ -908,17 +943,26 @@ fn write_floor_section(
     for floor in floors {
         let mut col = 1_u16;
         for slot in slots {
+            let t_cols = slot.teacher_cols;
             let cell = cells.get(&(floor.clone(), slot.key.clone()));
             let left = cell.map(|item| item.left.as_str()).unwrap_or("");
-            let right = cell
-                .map(|item| join_teacher_names(&item.teachers))
-                .unwrap_or_default();
-            let is_empty_cell = left.is_empty() && right.is_empty();
+            let is_empty_cell = left.is_empty() && cell.map_or(true, |c| c.teachers.is_empty());
             let left_fmt = if is_empty_cell { plain_body_fmt } else { body_fmt };
             let right_fmt = if is_empty_cell { plain_wrap_fmt } else { wrap_fmt };
             sheet.write_string_with_format(row, col, left, left_fmt)?;
-            sheet.write_string_with_format(row, col + 1, &right, right_fmt)?;
-            col += 2;
+            
+            let mut t_written = 0;
+            if let Some(item) = cell {
+                for i in 0..item.teachers.len() {
+                    sheet.write_string_with_format(row, col + 1 + i as u16, &item.teachers[i], right_fmt)?;
+                    t_written += 1;
+                }
+            }
+            while t_written < t_cols {
+                sheet.write_string_with_format(row, col + 1 + t_written as u16, "", right_fmt)?;
+                t_written += 1;
+            }
+            col += 1 + t_cols as u16;
         }
         row += 1;
     }
@@ -933,7 +977,8 @@ fn apply_column_widths(
     room_cells: &HashMap<(String, SlotKey), CellValue>,
     floor_cells: &HashMap<(String, SlotKey), CellValue>,
 ) -> Result<(), XlsxError> {
-    let mut widths = vec![display_width("流动监考").max(display_width("考场")); 1 + slots.len() * 2];
+        let total_cols = 1 + slots.iter().map(|s| 1 + s.teacher_cols).sum::<usize>();
+    let mut widths = vec![display_width("流动监考").max(display_width("考场")); total_cols];
     for room in room_names {
         widths[0] = widths[0].max(display_width(room));
     }
@@ -941,17 +986,29 @@ fn apply_column_widths(
         widths[0] = widths[0].max(display_width(floor));
     }
 
-    for (slot_index, slot) in slots.iter().enumerate() {
-        let left_col = 1 + slot_index * 2;
-        let right_col = left_col + 1;
+    let mut current_col = 1;
+    for slot in slots {
+        let left_col = current_col;
         widths[left_col] = widths[left_col].max(display_width(slot.left_header));
-        widths[right_col] = widths[right_col].max(display_width(slot.right_header));
+        
+        if slot.teacher_cols == 1 {
+            widths[left_col + 1] = widths[left_col + 1].max(display_width(slot.right_header));
+        } else {
+            let merged_width = display_width(slot.right_header);
+            let per_col = ((merged_width + 1) / slot.teacher_cols).max(4);
+            for i in 0..slot.teacher_cols {
+                widths[left_col + 1 + i] = widths[left_col + 1 + i].max(per_col);
+            }
+        }
+
         let merged_hint = display_width(&slot.time_label)
             .max(display_width(&slot.date_label))
             .max(display_width(&slot.key.subject_group));
-        let per_col_hint = ((merged_hint + 1) / 2).max(4);
+        let per_col_hint = ((merged_hint + 1) / (1 + slot.teacher_cols)).max(4);
         widths[left_col] = widths[left_col].max(per_col_hint);
-        widths[right_col] = widths[right_col].max(per_col_hint);
+        for i in 0..slot.teacher_cols {
+            widths[left_col + 1 + i] = widths[left_col + 1 + i].max(per_col_hint);
+        }
 
         for room in room_names {
             if let Some(cell) = room_cells.get(&(room.clone(), slot.key.clone())) {
@@ -962,19 +1019,26 @@ fn apply_column_widths(
                 } else {
                     String::new()
                 };
-                let right = join_teacher_names(&cell.teachers);
                 widths[left_col] = widths[left_col].max(display_width(&left));
-                widths[right_col] = widths[right_col].max(display_width(&right));
+                for (i, t_name) in cell.teachers.iter().enumerate() {
+                    if i < slot.teacher_cols {
+                        widths[left_col + 1 + i] = widths[left_col + 1 + i].max(display_width(t_name));
+                    }
+                }
             }
         }
 
         for floor in floors {
             if let Some(cell) = floor_cells.get(&(floor.clone(), slot.key.clone())) {
                 widths[left_col] = widths[left_col].max(display_width(&cell.left));
-                widths[right_col] =
-                    widths[right_col].max(display_width(&join_teacher_names(&cell.teachers)));
+                for (i, t_name) in cell.teachers.iter().enumerate() {
+                    if i < slot.teacher_cols {
+                        widths[left_col + 1 + i] = widths[left_col + 1 + i].max(display_width(t_name));
+                    }
+                }
             }
         }
+        current_col += 1 + slot.teacher_cols;
     }
 
     for (index, width) in widths.iter().enumerate() {
@@ -1229,9 +1293,25 @@ fn build_formats() -> (Format, Format, Format, Format, Format, Format, Format) {
 fn build_workbook_from_connection(conn: &rusqlite::Connection) -> Result<Workbook, AppError> {
     let rows = load_export_rows(&conn)?;
     let exam_counts = load_exam_counts(&conn)?;
-    let slots = build_slots(&rows)?;
+    let mut slots = build_slots(&rows)?;
     let (room_names, room_cells) = collect_room_cells(&rows, &slots, &exam_counts);
     let (floors, floor_cells) = collect_floor_cells(&rows, &slots);
+    
+    let mut max_teachers = HashMap::<SlotKey, usize>::new();
+    for (room_name, slot_key) in room_cells.keys() {
+        let cell = &room_cells[&(room_name.clone(), slot_key.clone())];
+        let current = max_teachers.entry(slot_key.clone()).or_insert(1);
+        *current = (*current).max(cell.teachers.len()).max(1);
+    }
+    for (floor_label, slot_key) in floor_cells.keys() {
+        let cell = &floor_cells[&(floor_label.clone(), slot_key.clone())];
+        let current = max_teachers.entry(slot_key.clone()).or_insert(1);
+        *current = (*current).max(cell.teachers.len()).max(1);
+    }
+    for slot in &mut slots {
+        slot.teacher_cols = *max_teachers.get(&slot.key).unwrap_or(&1);
+    }
+
     let accounting_teacher_rows = load_accounting_teacher_rows(conn)?;
     let accounting_task_rows = load_accounting_task_rows(conn)?;
     let accounting_config = load_accounting_config(conn)?;

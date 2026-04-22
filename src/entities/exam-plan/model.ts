@@ -150,6 +150,7 @@ export interface GenerateLatestExamStaffPlanResult {
   solveDurationMs: number;
   fallbackReason: FallbackReason | null;
   fallbackPoolAssignments: number;
+  unassignedDetails: string[];
 }
 
 export interface ExportLatestInvigilationScheduleResult {
