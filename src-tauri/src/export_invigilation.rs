@@ -467,6 +467,37 @@ fn load_accounting_task_rows(
     Ok(out)
 }
 
+fn load_total_exam_minutes(conn: &rusqlite::Connection) -> Result<i64, AppError> {
+    // exam_session_times only stores session_id and timestamps now, so grade_name
+    // must be resolved from latest_exam_plan_sessions before grouping by grade.
+    Ok(conn.query_row(
+        r#"
+        SELECT COALESCE(MAX(grade_total), 0)
+        FROM (
+            SELECT
+                grade_name,
+                SUM(duration_minutes) AS grade_total
+            FROM (
+                SELECT DISTINCT
+                    s.grade_name,
+                    t.start_at,
+                    t.end_at,
+                    CAST(ROUND((julianday(t.end_at) - julianday(t.start_at)) * 24 * 60) AS INTEGER) AS duration_minutes
+                FROM exam_session_times t
+                JOIN latest_exam_plan_sessions s ON s.id = t.session_id
+                WHERE t.start_at IS NOT NULL
+                  AND t.end_at IS NOT NULL
+                  AND t.start_at != ''
+                  AND t.end_at != ''
+            )
+            GROUP BY grade_name
+        )
+        "#,
+        [],
+        |row| row.get(0),
+    )?)
+}
+
 fn load_accounting_config(conn: &rusqlite::Connection) -> Result<AccountingConfig, AppError> {
     let (outdoor_allowance_per_minute, middle_manager_default_enabled, exception_ids_json, self_study_date, self_study_start_time, self_study_end_time): (
         f64,
@@ -505,24 +536,7 @@ fn load_accounting_config(conn: &rusqlite::Connection) -> Result<AccountingConfi
         .into_iter()
         .collect::<HashSet<_>>();
 
-    let total_exam_minutes: i64 = conn.query_row(
-        r#"
-        SELECT COALESCE(MAX(grade_total), 0)
-        FROM (
-            SELECT
-                grade_name,
-                SUM(CAST((julianday(end_at) - julianday(start_at)) * 24 * 60 AS INTEGER)) as grade_total
-            FROM (
-                SELECT DISTINCT grade_name, start_at, end_at
-                FROM exam_session_times
-                WHERE start_at IS NOT NULL AND end_at IS NOT NULL AND start_at != '' AND end_at != ''
-            )
-            GROUP BY grade_name
-        )
-        "#,
-        [],
-        |row| row.get(0),
-    )?;
+    let total_exam_minutes = load_total_exam_minutes(conn)?;
 
     let total_self_study_minutes = if !self_study_date.trim().is_empty()
         && !self_study_start_time.trim().is_empty()
@@ -1462,6 +1476,48 @@ mod tests {
             sanitize_file_name_segment(" 2026/03:月考? "),
             "2026_03_月考_"
         );
+    }
+
+    #[test]
+    fn test_load_total_exam_minutes_joins_session_grade_name() {
+        let conn = Connection::open_in_memory().expect("open memory db");
+        conn.execute_batch(
+            r#"
+            CREATE TABLE latest_exam_plan_sessions (
+                id INTEGER PRIMARY KEY,
+                grade_name TEXT NOT NULL,
+                subject TEXT NOT NULL,
+                is_foreign_group INTEGER NOT NULL,
+                foreign_order INTEGER,
+                participant_count INTEGER NOT NULL,
+                exam_room_count INTEGER NOT NULL,
+                self_study_room_count INTEGER NOT NULL
+            );
+            CREATE TABLE exam_session_times (
+                session_id INTEGER PRIMARY KEY,
+                subject TEXT NOT NULL,
+                start_at TEXT NOT NULL,
+                end_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
+            INSERT INTO latest_exam_plan_sessions
+                (id, grade_name, subject, is_foreign_group, foreign_order, participant_count, exam_room_count, self_study_room_count)
+            VALUES
+                (1, '高一', 'math', 0, NULL, 100, 4, 0),
+                (2, '高一', 'chinese', 0, NULL, 100, 4, 0),
+                (3, '高二', 'english', 0, NULL, 100, 4, 0);
+            INSERT INTO exam_session_times (session_id, subject, start_at, end_at, updated_at)
+            VALUES
+                (1, 'math', '2026-04-09T08:00', '2026-04-09T10:00', '2026-04-08T08:00:00'),
+                (2, 'chinese', '2026-04-09T10:30', '2026-04-09T12:00', '2026-04-08T08:00:00'),
+                (3, 'english', '2026-04-09T08:00', '2026-04-09T09:00', '2026-04-08T08:00:00');
+            "#,
+        )
+        .expect("seed session time data");
+
+        let total_exam_minutes = load_total_exam_minutes(&conn).expect("load total exam minutes");
+
+        assert_eq!(total_exam_minutes, 210);
     }
 
     #[test]

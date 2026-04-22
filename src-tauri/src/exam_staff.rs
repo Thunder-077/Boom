@@ -2198,6 +2198,7 @@ fn solve_with_cp_sat(
         .max(1);
 
     let mut unassigned_expr = LinearExpr::default();
+    let mut unassigned_penalty_expr = LinearExpr::default();
     let mut fallback_expr = LinearExpr::default();
     let mut homeroom_expr = LinearExpr::default();
     let self_study_task_capacity = tasks
@@ -2237,6 +2238,12 @@ fn solve_with_cp_sat(
         exact_one_vars.push(unassigned);
         model.add_exactly_one(exact_one_vars);
         unassigned_expr += unassigned;
+        let penalty_weight = if task.role == StaffRole::FloorRover {
+            1_i64
+        } else {
+            10000_i64
+        };
+        unassigned_penalty_expr += (penalty_weight, unassigned);
         unassigned_vars.push(unassigned);
         candidate_bindings.push(bindings_for_task);
     }
@@ -2381,6 +2388,12 @@ fn solve_with_cp_sat(
     );
     model.add_eq(unassigned_count_var, unassigned_expr.clone());
 
+    let unassigned_penalty_var = model.new_int_var_with_name(
+        [(0, tasks.len() as i64 * 10000)],
+        "unassigned_penalty",
+    );
+    model.add_eq(unassigned_penalty_var, unassigned_penalty_expr);
+
     let fallback_count_var = model.new_int_var_with_name(
         [(0, self_study_task_capacity)],
         "fallback_pool_assignments",
@@ -2403,7 +2416,7 @@ fn solve_with_cp_sat(
     let hint_int_vars: Vec<IntVar> = total_load_vars
         .iter()
         .copied()
-        .chain([unassigned_count_var, fallback_count_var, homeroom_count_var])
+        .chain([unassigned_count_var, unassigned_penalty_var, fallback_count_var, homeroom_count_var])
         .chain(invigilation_load_vars.iter().copied())
         .chain(self_study_load_vars.iter().copied())
         .chain([
@@ -2414,9 +2427,9 @@ fn solve_with_cp_sat(
         .collect();
     let stage_objectives = vec![
         (
-            "unassigned_count",
-            "最小化未分配任务",
-            LinearExpr::from(unassigned_count_var),
+            "unassigned_penalty",
+            "优先分配考场监考",
+            LinearExpr::from(unassigned_penalty_var),
         ),
         (
             "fallback_pool_assignments",
@@ -4560,6 +4573,83 @@ mod tests {
         assert_eq!(cp_sat_plan.metrics.imbalance_minutes, 0);
         assert_eq!(cp_sat_plan.metrics.invigilation_minutes_gap, 0);
         assert_eq!(cp_sat_plan.metrics.self_study_minutes_gap, 0);
+    }
+
+    #[test]
+    fn test_cp_sat_prioritizes_exam_room_over_floor_rover_when_teachers_are_insufficient() {
+        let teachers = vec![TeacherInfo {
+            id: 1,
+            name: "老师甲".to_string(),
+            subjects: HashSet::from([Subject::Chinese]),
+            class_names: HashSet::new(),
+            homeroom_classes: HashSet::new(),
+            is_middle_manager: false,
+        }];
+        let tasks = vec![
+            TaskBuild {
+                session_id: Some(1),
+                space_id: Some(1),
+                task_source: StaffTaskSource::Exam,
+                role: StaffRole::ExamRoomInvigilator,
+                grade_name: "高二".to_string(),
+                subject: Subject::Math,
+                space_name: "高二1场".to_string(),
+                floor: "4层".to_string(),
+                start_at: "2026-03-24T08:00".to_string(),
+                end_at: "2026-03-24T10:00".to_string(),
+                start_ts: 1_000,
+                end_ts: 2_000,
+                duration_minutes: 120,
+                recommended_self_study_topic: None,
+                priority_self_study_chain: Vec::new(),
+                day_key: "2026-03-24".to_string(),
+                half_day: HalfDay::Morning,
+            },
+            TaskBuild {
+                session_id: Some(1),
+                space_id: None,
+                task_source: StaffTaskSource::Exam,
+                role: StaffRole::FloorRover,
+                grade_name: "高二".to_string(),
+                subject: Subject::Math,
+                space_name: "4层 楼层流动".to_string(),
+                floor: "4层".to_string(),
+                start_at: "2026-03-24T08:00".to_string(),
+                end_at: "2026-03-24T10:00".to_string(),
+                start_ts: 1_000,
+                end_ts: 2_000,
+                duration_minutes: 120,
+                recommended_self_study_topic: None,
+                priority_self_study_chain: Vec::new(),
+                day_key: "2026-03-24".to_string(),
+                half_day: HalfDay::Morning,
+            },
+        ];
+
+        let cp_sat_attempt = solve_with_cp_sat(
+            &tasks,
+            &teachers,
+            &HashSet::new(),
+            &test_runtime_config(),
+            None,
+        );
+        let cp_sat_plan = cp_sat_attempt.plan.expect("cp-sat should produce a plan");
+
+        assert_eq!(cp_sat_plan.metrics.unassigned_count, 1);
+        assert!(
+            cp_sat_plan.records.iter().any(|record| {
+                record.task.role == StaffRole::ExamRoomInvigilator
+                    && record.teacher_id.is_some()
+            }),
+            "考场监考应优先被分配"
+        );
+        assert!(
+            cp_sat_plan.records.iter().any(|record| {
+                record.task.role == StaffRole::FloorRover
+                    && record.teacher_id.is_none()
+            }),
+            "楼层流动在老师不足时允许不分配"
+        );
     }
 
 
