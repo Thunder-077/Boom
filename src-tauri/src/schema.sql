@@ -214,11 +214,13 @@ CREATE TABLE IF NOT EXISTS exam_session_times (
     FOREIGN KEY(session_id) REFERENCES latest_exam_plan_sessions(id) ON DELETE CASCADE
 );
 
-CREATE TABLE IF NOT EXISTS exam_subject_time_templates (
-    subject TEXT PRIMARY KEY,
+CREATE TABLE IF NOT EXISTS exam_grade_subject_time_templates (
+    grade_name TEXT NOT NULL,
+    subject TEXT NOT NULL,
     start_at TEXT NOT NULL,
     end_at TEXT NOT NULL,
-    updated_at TEXT NOT NULL
+    updated_at TEXT NOT NULL,
+    PRIMARY KEY (grade_name, subject)
 );
 
 -- ---------------------------------------------------------------------------
@@ -320,7 +322,7 @@ CREATE TABLE IF NOT EXISTS invigilation_staff_exclusions (
 -- ---------------------------------------------------------------------------
 
 CREATE INDEX IF NOT EXISTS idx_exam_session_times_subject ON exam_session_times(subject);
-CREATE INDEX IF NOT EXISTS idx_exam_subject_time_templates_subject ON exam_subject_time_templates(subject);
+CREATE INDEX IF NOT EXISTS idx_exam_grade_subject_time_templates_grade_subject ON exam_grade_subject_time_templates(grade_name, subject);
 CREATE INDEX IF NOT EXISTS idx_latest_exam_staff_tasks_session ON latest_exam_staff_tasks(session_id);
 CREATE INDEX IF NOT EXISTS idx_latest_exam_staff_tasks_role_status ON latest_exam_staff_tasks(role, status);
 CREATE INDEX IF NOT EXISTS idx_latest_exam_staff_assignments_task ON latest_exam_staff_assignments(task_id);

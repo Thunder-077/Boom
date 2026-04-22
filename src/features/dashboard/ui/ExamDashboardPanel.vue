@@ -2,6 +2,9 @@
   <section class="dashboard-grid">
     <div class="left-col">
       <ConfigCard title="当前考试配置" description="统一设置考试标题、须知与各科目时间，修改后自动保存本页配置。">
+        <p v-if="store.viewState.errorMessage" class="page-error-note" aria-live="polite">
+          数据加载异常：{{ store.viewState.errorMessage }}
+        </p>
         <div class="field-stack" :style="{ opacity: store.viewState.loading ? 0 : 1, pointerEvents: store.viewState.loading ? 'none' : 'auto', transition: 'opacity 0.3s ease' }">
           <label class="field-block">
             <span class="metric-label">考试标题</span>
@@ -28,9 +31,15 @@
 
       <TableCard title="考试时间">
         <template #description>
-          <p class="table-hint">统一配置各科目考试时间。</p>
+          <p class="table-hint">按年级配置各科目考试时间，已按最新考试安排预置高一/高二数据。</p>
         </template>
         <template #actions>
+          <FluentSelect
+            :model-value="store.viewState.selectedSessionTimeGradeName"
+            :options="sessionTimeGradeOptions"
+            style="width: 150px; min-height: 38px;"
+            @update:model-value="onSessionTimeGradeChange"
+          />
           <button class="secondary-btn" type="button" :disabled="store.viewState.loading" @click="addManualSubjectRow">新增科目</button>
         </template>
         <div class="exam-table-scroll" :style="{ opacity: store.viewState.loading ? 0 : 1, transition: 'opacity 0.3s ease' }">
@@ -46,7 +55,7 @@
             </thead>
             <tbody>
               <tr v-for="item in store.viewState.sessionTimes" :key="item.sessionId">
-                <td>{{ SUBJECT_LABELS[item.subject] }}</td>
+                <td>{{ examTimeSubjectLabel(item.subject) }}</td>
                 <td class="date-cell" :class="{ editing: dateEditState.sessionId === item.sessionId }" @dblclick="beginDateEdit(item.sessionId)">
                   <input
                     v-if="dateEditState.sessionId === item.sessionId"
@@ -70,7 +79,7 @@
                   <input class="time-input" type="time" :value="formatTimeInput(store.viewState.sessionTimeDrafts[item.sessionId]?.endAt)" @input="onTimeInput(item.sessionId, 'endAt', $event)" />
                 </td>
                 <td>
-                  <button class="icon-btn" type="button" :disabled="store.viewState.savingTimes" :title="`删除${SUBJECT_LABELS[item.subject]}考试时间配置`" @click="removeExistingSubjectTime(item.subject)">
+                  <button class="icon-btn" type="button" :disabled="store.viewState.savingTimes" :title="`删除${examTimeSubjectLabel(item.subject)}考试时间配置`" @click="removeExistingSubjectTime(item.subject)">
                     <span class="material-symbols-rounded" aria-hidden="true">delete</span>
                   </button>
                 </td>
@@ -80,7 +89,7 @@
                   <div class="manual-subject-row">
                     <FluentSelect
                       v-model="item.subject"
-                      :options="SUBJECT_OPTIONS.map(s => ({ label: SUBJECT_LABELS[s], value: s }))"
+                      :options="DISPLAY_SUBJECT_OPTIONS.map(s => ({ label: examTimeSubjectLabel(s), value: s }))"
                       style="width: 140px; min-height: 38px;"
                     />
                   </div>
@@ -167,7 +176,7 @@
             <span class="complete-eyebrow">结果中心</span>
             <div class="complete-head">
               <h3>{{ completeTitle }}</h3>
-              <span class="complete-badge" :class="{ pending: isCompletePending }">{{ completeBadgeText }}</span>
+              <span class="complete-badge" :class="{ pending: isCompletePending, error: isCompleteError }">{{ completeBadgeText }}</span>
             </div>
             <p class="complete-desc">{{ completeDescription }}</p>
             <div class="complete-kpi">
@@ -220,6 +229,9 @@ const capacityForm = reactive({
   examNoticesText: "",
 });
 const SUBJECT_OPTIONS: Subject[] = Object.values(Subject);
+const DISPLAY_SUBJECT_OPTIONS: Subject[] = SUBJECT_OPTIONS.filter(
+  (subject) => subject !== Subject.Russian && subject !== Subject.Japanese,
+);
 const manualSubjectRows = reactive<Array<{ id: number; subject: Subject; examMonthDay: string; startTime: string; endTime: string }>>([]);
 const dateEditState = reactive<{ sessionId: number | null; value: string }>({
   sessionId: null,
@@ -295,6 +307,9 @@ const progressStepText = computed(() => {
 });
 
 const completeBadgeText = computed(() => {
+  if (store.viewState.generationProgress.status === "error") {
+    return "失败";
+  }
   if (store.viewState.exporting) {
     return "导出中";
   }
@@ -308,6 +323,9 @@ const completeBadgeText = computed(() => {
 });
 
 const completeTitle = computed(() => {
+  if (store.viewState.generationProgress.status === "error") {
+    return "分配失败";
+  }
   if (store.viewState.generating) {
     return "分配进行中";
   }
@@ -318,6 +336,9 @@ const completeTitle = computed(() => {
 });
 
 const completeDescription = computed(() => {
+  if (store.viewState.generationProgress.status === "error") {
+    return store.viewState.generationProgress.message || "执行失败，请处理后重试。";
+  }
   if (!store.viewState.overview.generatedAt) {
     return "尚未生成考场分配结果，完成配置后点击“开始分配考场”即可执行。";
   }
@@ -325,6 +346,9 @@ const completeDescription = computed(() => {
 });
 
 const completeSummary = computed(() => "尚未导出分配文件");
+const sessionTimeGradeOptions = computed(() =>
+  store.viewState.sessionTimeGradeOptions.map((grade) => ({ label: grade, value: grade })),
+);
 const exportFileName = computed(() => {
   const raw = store.viewState.lastExportFolderPath;
   if (!raw) {
@@ -335,13 +359,21 @@ const exportFileName = computed(() => {
 });
 
 const isCompletePending = computed(() => store.viewState.generating || !store.viewState.overview.generatedAt);
+const isCompleteError = computed(() => store.viewState.generationProgress.status === "error");
+
+function examTimeSubjectLabel(subject: Subject): string {
+  if (subject === Subject.English || subject === Subject.Russian || subject === Subject.Japanese) {
+    return "外语";
+  }
+  return SUBJECT_LABELS[subject];
+}
 
 function addManualSubjectRow() {
   const used = new Set<Subject>([
     ...store.viewState.sessionTimes.map((item) => item.subject),
     ...manualSubjectRows.map((item) => item.subject),
   ]);
-  const nextSubject = SUBJECT_OPTIONS.find((subject) => !used.has(subject)) ?? SUBJECT_OPTIONS[0];
+  const nextSubject = DISPLAY_SUBJECT_OPTIONS.find((subject) => !used.has(subject)) ?? DISPLAY_SUBJECT_OPTIONS[0];
   manualSubjectRows.push({
     id: manualSubjectRowId++,
     subject: nextSubject,
@@ -506,11 +538,11 @@ async function persistDrafts(options: { strictManualRows?: boolean; clearManualR
     .filter((line) => line.length > 0);
   await store.saveSettings(capacityForm.defaultCapacity, capacityForm.maxCapacity, capacityForm.examTitle, examNotices);
 
-  const extraItems: Array<{ sessionId: number; subject: Subject; startAt: string; endAt: string }> = [];
+  const extraItems: Array<{ sessionId: number; gradeName: string; subject: Subject; startAt: string; endAt: string }> = [];
   for (const row of manualSubjectRows) {
     if (!row.examMonthDay || !row.startTime || !row.endTime) {
       if (strictManualRows) {
-        throw new Error(`请先完整填写 ${SUBJECT_LABELS[row.subject]} 的考试日期（月-日）、开始时间和结束时间`);
+        throw new Error(`请先完整填写 ${examTimeSubjectLabel(row.subject)} 的考试日期（月-日）、开始时间和结束时间`);
       }
       continue;
     }
@@ -525,6 +557,7 @@ async function persistDrafts(options: { strictManualRows?: boolean; clearManualR
     const targetDate = resolveFullDateFromMonthDay(row.examMonthDay, new Date().toISOString().slice(0, 10));
     extraItems.push({
       sessionId: -100 - manualSubjectRows.findIndex((item) => item.id === row.id),
+      gradeName: store.viewState.selectedSessionTimeGradeName,
       subject: row.subject,
       startAt: `${targetDate}T${row.startTime}`,
       endAt: `${targetDate}T${row.endTime}`,
@@ -631,6 +664,13 @@ watch(completeManualRowsSignature, (next, prev) => {
   scheduleAutoSave(850);
 });
 
+function onSessionTimeGradeChange(value: string | number) {
+  if (typeof value !== "string") {
+    return;
+  }
+  void store.setSessionTimeGrade(value);
+}
+
 onMounted(async () => {
   await store.loadAll();
   capacityForm.defaultCapacity = store.viewState.settings.defaultCapacity;
@@ -709,6 +749,12 @@ onUnmounted(() => {
 
 .left-col {
   gap: 16px;
+}
+
+.page-error-note {
+  margin: 0 0 10px;
+  color: #b42318;
+  font-size: 13px;
 }
 
 .right-col {
@@ -1065,6 +1111,11 @@ onUnmounted(() => {
 .complete-badge.pending {
   background: var(--color-warning-soft);
   color: var(--color-warning);
+}
+
+.complete-badge.error {
+  background: var(--color-danger-soft, rgba(180, 35, 24, 0.14));
+  color: var(--color-danger, #b42318);
 }
 
 .complete-meta {

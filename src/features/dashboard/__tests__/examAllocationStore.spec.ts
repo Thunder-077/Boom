@@ -88,8 +88,13 @@ const fakeService: ExamAllocationService = {
         subject: Subject.English,
         startAt: "2026-03-24T08:00",
         endAt: "2026-03-24T10:00",
+        sourceGradeName: "高一",
+        isInherited: false,
       },
     ];
+  },
+  async listSessionTimeGradeOptions() {
+    return ["高一", "高二"];
   },
   async upsertSessionTimes() {
     return { success: true };

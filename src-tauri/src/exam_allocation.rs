@@ -301,51 +301,6 @@ fn should_replace_exam_notices(current_json: &str) -> bool {
     }
 }
 
-fn default_session_time_for_subject(subject: Subject) -> Option<(&'static str, &'static str)> {
-    match subject {
-        Subject::Chinese => Some(("2026-03-25T07:30", "2026-03-25T10:00")),
-        Subject::Geography => Some(("2026-03-25T10:30", "2026-03-25T12:00")),
-        Subject::Math => Some(("2026-03-25T14:00", "2026-03-25T16:00")),
-        Subject::Biology => Some(("2026-03-25T16:30", "2026-03-25T18:00")),
-        Subject::Physics => Some(("2026-03-25T18:50", "2026-03-25T20:20")),
-        Subject::English => Some(("2026-03-26T08:00", "2026-03-26T10:00")),
-        Subject::History => Some(("2026-03-26T10:30", "2026-03-26T12:00")),
-        Subject::Chemistry => Some(("2026-03-26T14:10", "2026-03-26T15:40")),
-        Subject::Politics => Some(("2026-03-26T16:10", "2026-03-26T17:40")),
-        Subject::Russian => Some(("2026-03-26T08:00", "2026-03-26T10:00")),
-        Subject::Japanese => None,
-    }
-}
-
-fn seed_default_subject_time_templates(conn: &Connection) -> Result<(), AppError> {
-    let now = Utc::now().to_rfc3339();
-    for subject in [
-        Subject::Chinese,
-        Subject::Geography,
-        Subject::Math,
-        Subject::Biology,
-        Subject::Physics,
-        Subject::English,
-        Subject::Russian,
-        Subject::History,
-        Subject::Chemistry,
-        Subject::Politics,
-    ] {
-        let Some((start_at, end_at)) = default_session_time_for_subject(subject) else {
-            continue;
-        };
-        conn.execute(
-            r#"
-            INSERT INTO exam_subject_time_templates (subject, start_at, end_at, updated_at)
-            VALUES (?1, ?2, ?3, ?4)
-            ON CONFLICT(subject) DO NOTHING
-            "#,
-            params![subject.as_key(), start_at, end_at, now],
-        )?;
-    }
-    Ok(())
-}
-
 #[derive(Debug, Clone)]
 struct Classroom {
     class_name: String,
@@ -436,7 +391,9 @@ pub(crate) fn ensure_schema(conn: &Connection) -> Result<(), AppError> {
             params![default_exam_notices_json()?],
         )?;
     }
-    seed_default_subject_time_templates(conn)?;
+    // Drop legacy global subject template table after switching to grade-level templates.
+    conn.execute("DROP TABLE IF EXISTS exam_subject_time_templates", [])?;
+    seed_preset_grade_subject_time_templates(conn)?;
     Ok(())
 }
 
@@ -453,24 +410,128 @@ fn parse_schedule_timestamp(value: &str) -> Option<i64> {
     None
 }
 
-fn load_subject_schedule_order(conn: &Connection) -> Result<HashMap<Subject, i64>, AppError> {
-    let mut order_map = HashMap::new();
+fn load_grade_subject_schedule_order(
+    conn: &Connection,
+) -> Result<HashMap<String, HashMap<Subject, i64>>, AppError> {
+    let mut out = HashMap::<String, HashMap<Subject, i64>>::new();
     let mut stmt = conn.prepare(
-        "SELECT subject, start_at FROM exam_subject_time_templates ORDER BY subject ASC",
+        "SELECT grade_name, subject, start_at FROM exam_grade_subject_time_templates ORDER BY grade_name ASC, subject ASC",
     )?;
     let rows = stmt.query_map([], |row| {
-        Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        Ok((
+            row.get::<_, String>(0)?,
+            row.get::<_, String>(1)?,
+            row.get::<_, String>(2)?,
+        ))
     })?;
     for row in rows {
-        let (subject_key, start_at) = row?;
+        let (grade_name, subject_key, start_at) = row?;
         let Some(subject) = Subject::from_key(&subject_key) else {
             continue;
         };
-        if let Some(ts) = parse_schedule_timestamp(&start_at) {
-            order_map.insert(subject, ts);
+        let Some(ts) = parse_schedule_timestamp(&start_at) else {
+            continue;
+        };
+        out.entry(grade_name).or_default().insert(subject, ts);
+    }
+    Ok(out)
+}
+
+pub(crate) fn grade_order_key(grade_name: &str) -> (i32, &str) {
+    match grade_name {
+        "高一" => (1, grade_name),
+        "高二" => (2, grade_name),
+        "高三" => (3, grade_name),
+        _ => (4, grade_name),
+    }
+}
+
+pub(crate) fn load_distinct_teaching_grades(conn: &Connection) -> Result<Vec<String>, AppError> {
+    let mut stmt = conn.prepare(
+        "SELECT DISTINCT grade_name FROM class_configs WHERE config_type = 'teaching_class'",
+    )?;
+    let rows = stmt.query_map([], |row| row.get::<_, String>(0))?;
+    let mut grades = Vec::<String>::new();
+    for row in rows {
+        let grade = row?;
+        let trimmed = grade.trim();
+        if !trimmed.is_empty() {
+            grades.push(trimmed.to_string());
         }
     }
-    Ok(order_map)
+    grades.sort_by(|a, b| grade_order_key(a).cmp(&grade_order_key(b)).then(a.cmp(b)));
+    grades.dedup();
+    Ok(grades)
+}
+
+pub(crate) fn load_grade_time_template_grades(
+    conn: &Connection,
+) -> Result<Vec<String>, AppError> {
+    let mut stmt =
+        conn.prepare("SELECT DISTINCT grade_name FROM exam_grade_subject_time_templates")?;
+    let rows = stmt.query_map([], |row| row.get::<_, String>(0))?;
+    let mut grades = Vec::<String>::new();
+    for row in rows {
+        let grade = row?;
+        let trimmed = grade.trim();
+        if !trimmed.is_empty() {
+            grades.push(trimmed.to_string());
+        }
+    }
+    grades.sort_by(|a, b| grade_order_key(a).cmp(&grade_order_key(b)).then(a.cmp(b)));
+    grades.dedup();
+    Ok(grades)
+}
+
+fn seed_preset_grade_subject_time_templates(conn: &Connection) -> Result<(), AppError> {
+    let now = Utc::now().to_rfc3339();
+    // 根据用户提供的考试安排图片，预置高一/高二科目时间。
+    let presets: [(&str, Subject, &str, &str); 18] = [
+        ("高一", Subject::Chinese, "2026-04-28T08:00", "2026-04-28T10:30"),
+        ("高一", Subject::Physics, "2026-04-28T14:10", "2026-04-28T15:40"),
+        ("高一", Subject::Geography, "2026-04-28T16:10", "2026-04-28T17:40"),
+        ("高一", Subject::Math, "2026-04-29T08:00", "2026-04-29T10:00"),
+        ("高一", Subject::Biology, "2026-04-29T10:30", "2026-04-29T12:00"),
+        ("高一", Subject::Chemistry, "2026-04-29T14:10", "2026-04-29T15:40"),
+        ("高一", Subject::Politics, "2026-04-29T16:10", "2026-04-29T17:40"),
+        ("高一", Subject::History, "2026-04-30T08:00", "2026-04-30T09:30"),
+        ("高一", Subject::English, "2026-04-30T10:00", "2026-04-30T12:00"),
+        ("高二", Subject::Chinese, "2026-04-28T08:00", "2026-04-28T10:30"),
+        ("高二", Subject::Physics, "2026-04-28T14:10", "2026-04-28T15:40"),
+        ("高二", Subject::Geography, "2026-04-28T16:10", "2026-04-28T17:40"),
+        ("高二", Subject::English, "2026-04-29T08:00", "2026-04-29T10:00"),
+        ("高二", Subject::Biology, "2026-04-29T10:30", "2026-04-29T12:00"),
+        ("高二", Subject::Chemistry, "2026-04-29T14:10", "2026-04-29T15:40"),
+        ("高二", Subject::Politics, "2026-04-29T16:10", "2026-04-29T17:40"),
+        ("高二", Subject::History, "2026-04-30T08:00", "2026-04-30T09:30"),
+        ("高二", Subject::Math, "2026-04-30T10:00", "2026-04-30T12:00"),
+    ];
+    for (grade_name, subject, start_at, end_at) in presets {
+        conn.execute(
+            r#"
+            INSERT OR IGNORE INTO exam_grade_subject_time_templates (grade_name, subject, start_at, end_at, updated_at)
+            VALUES (?1, ?2, ?3, ?4, ?5)
+            "#,
+            params![grade_name, subject.as_key(), start_at, end_at, now],
+        )?;
+    }
+    Ok(())
+}
+
+fn resolve_grade_subject_schedule_order(
+    grade_name: &str,
+    subject: Subject,
+    grade_order_map: &HashMap<String, HashMap<Subject, i64>>,
+) -> i64 {
+    if let Some(ts) = grade_order_map
+        .get(grade_name)
+        .and_then(|map| map.get(&subject))
+        .copied()
+    {
+        return ts;
+    }
+    // Keep deterministic ordering when no time template is configured yet.
+    subject_order(subject) as i64
 }
 
 pub fn subject_label(subject: Subject) -> &'static str {
@@ -744,15 +805,6 @@ fn class_to_exam_room_name(class_name: &str) -> String {
         return format!("{stripped}场");
     }
     format!("{class_name}场")
-}
-
-fn grade_order_key(grade_name: &str) -> (i32, &str) {
-    match grade_name {
-        "高一" => (1, grade_name),
-        "高二" => (2, grade_name),
-        "高三" => (3, grade_name),
-        _ => (4, grade_name),
-    }
 }
 
 fn calculate_room_capacities(
@@ -1454,7 +1506,7 @@ fn generate_latest_exam_plan_internal(
     validate_capacity(default_capacity, max_capacity)?;
 
     let grade_contexts = load_grade_contexts(&conn)?;
-    let subject_schedule_order = load_subject_schedule_order(&conn)?;
+    let grade_subject_schedule_order = load_grade_subject_schedule_order(&conn)?;
     let mut grades: Vec<String> = grade_contexts.keys().cloned().collect();
     grades.sort_by(|a, b| grade_order_key(a).cmp(&grade_order_key(b)).then(a.cmp(b)));
     let total_grades = grades.len() as i64;
@@ -1515,12 +1567,23 @@ fn generate_latest_exam_plan_internal(
         }
         let mut subjects: Vec<Subject> = subject_set.into_iter().collect();
         subjects.sort_by_key(|s| subject_order(*s));
+        let mut current_grade_schedule_order = HashMap::<Subject, i64>::new();
+        for subject in &subjects {
+            current_grade_schedule_order.insert(
+                *subject,
+                resolve_grade_subject_schedule_order(
+                    grade_name,
+                    *subject,
+                    &grade_subject_schedule_order,
+                ),
+            );
+        }
         let grade_schedule_sessions = subjects
             .iter()
             .enumerate()
             .map(|(index, subject)| SelfStudyScheduleSession {
                 subject: *subject,
-                start_ts: subject_schedule_order
+                start_ts: current_grade_schedule_order
                     .get(subject)
                     .copied()
                     .unwrap_or_else(|| subject_order(*subject) as i64),
@@ -1531,7 +1594,7 @@ fn generate_latest_exam_plan_internal(
 
         let mut foreign_occupied = HashSet::new();
         for subject in subjects {
-            let current_start_ts = subject_schedule_order
+            let current_start_ts = current_grade_schedule_order
                 .get(&subject)
                 .copied()
                 .unwrap_or_else(|| subject_order(subject) as i64);

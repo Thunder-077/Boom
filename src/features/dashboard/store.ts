@@ -81,6 +81,30 @@ interface SessionTimeDraft {
   endAt: string;
 }
 
+const FOREIGN_SUBJECTS: Subject[] = [Subject.English, Subject.Russian, Subject.Japanese];
+
+function isForeignSubject(subject: Subject): boolean {
+  return FOREIGN_SUBJECTS.includes(subject);
+}
+
+function subjectOrder(subject: Subject): number {
+  const order: Subject[] = [
+    Subject.Chinese,
+    Subject.Math,
+    Subject.English,
+    Subject.Physics,
+    Subject.Chemistry,
+    Subject.Biology,
+    Subject.Politics,
+    Subject.History,
+    Subject.Geography,
+    Subject.Russian,
+    Subject.Japanese,
+  ];
+  const index = order.indexOf(subject);
+  return index >= 0 ? index : 99;
+}
+
 export function createExamAllocationStore(service: ExamAllocationService = examAllocationService) {
   const state = reactive({
     loading: false,
@@ -103,8 +127,11 @@ export function createExamAllocationStore(service: ExamAllocationService = examA
       page: 1,
       pageSize: 200,
     },
+    sessionTimeGradeOptions: [] as string[],
+    selectedSessionTimeGradeName: "",
     sessionTimes: [] as ExamSessionTime[],
     sessionTimeDrafts: {} as Record<number, SessionTimeDraft>,
+    foreignSessionBindings: [] as Array<{ subject: Subject; sessionId: number }>,
     staffOverview: { ...emptyStaffOverview } as ExamStaffPlanOverview,
     staffTasks: [] as ExamStaffTask[],
     teacherDutyStats: [] as TeacherDutyStat[],
@@ -119,6 +146,7 @@ export function createExamAllocationStore(service: ExamAllocationService = examA
     assignmentProgress: null as ExamStaffAssignmentProgress | null,
   });
   let progressPollTimer: number | null = null;
+  const isNoRowsError = (error: unknown) => String(error).includes("Query returned no rows");
 
   function normalizeTimeInput(value: string | null | undefined): string {
     if (!value) {
@@ -156,11 +184,61 @@ export function createExamAllocationStore(service: ExamAllocationService = examA
     state.teacherDutyStats = stats.items;
   }
 
+  async function loadSessionTimeGradeOptions() {
+    const options = await service.listSessionTimeGradeOptions();
+    state.sessionTimeGradeOptions = options;
+    if (!state.selectedSessionTimeGradeName || !options.includes(state.selectedSessionTimeGradeName)) {
+      state.selectedSessionTimeGradeName = options[0] ?? "";
+    }
+  }
+
   async function loadSessionTimes() {
-    const list = await service.listSessionTimes();
-    state.sessionTimes = list;
+    const list = await service.listSessionTimes(
+      state.selectedSessionTimeGradeName
+        ? { gradeName: state.selectedSessionTimeGradeName }
+        : undefined,
+    );
+    if (!state.selectedSessionTimeGradeName && list.length > 0) {
+      state.selectedSessionTimeGradeName = list[0].gradeName;
+      if (!state.sessionTimeGradeOptions.includes(list[0].gradeName)) {
+        state.sessionTimeGradeOptions = [...state.sessionTimeGradeOptions, list[0].gradeName];
+      }
+    }
+    if (list.length === 0) {
+      state.sessionTimes = [];
+      state.sessionTimeDrafts = {};
+      state.foreignSessionBindings = [];
+      return;
+    }
+    const foreignRows = list
+      .filter((item) => isForeignSubject(item.subject))
+      .sort((a, b) => subjectOrder(a.subject) - subjectOrder(b.subject));
+    state.foreignSessionBindings = foreignRows.map((item) => ({
+      subject: item.subject,
+      sessionId: item.sessionId,
+    }));
+    const mergedForeign = foreignRows.find((item) => item.startAt || item.endAt) ?? foreignRows[0];
+    const nextSessionTimes = list.filter((item) => !isForeignSubject(item.subject));
+    if (mergedForeign) {
+      nextSessionTimes.push({
+        ...mergedForeign,
+        subject: Subject.English,
+      });
+    }
+    nextSessionTimes.sort((a, b) => {
+      const aTime = normalizeTimeInput(a.startAt);
+      const bTime = normalizeTimeInput(b.startAt);
+      if (aTime && bTime) {
+        const compared = aTime.localeCompare(bTime);
+        if (compared !== 0) {
+          return compared;
+        }
+      }
+      return subjectOrder(a.subject) - subjectOrder(b.subject);
+    });
+    state.sessionTimes = nextSessionTimes;
     const nextDrafts: Record<number, SessionTimeDraft> = {};
-    for (const item of list) {
+    for (const item of nextSessionTimes) {
       nextDrafts[item.sessionId] = {
         startAt: normalizeTimeInput(item.startAt),
         endAt: normalizeTimeInput(item.endAt),
@@ -204,23 +282,100 @@ export function createExamAllocationStore(service: ExamAllocationService = examA
     state.loading = true;
     state.errorMessage = "";
     try {
-      const [settings, overview, generationProgress] = await Promise.all([
+      // Load core cards independently so one endpoint failure won't blank all fields.
+      const coreResults = await Promise.allSettled([
         service.getSettings(),
         service.getOverview(),
         service.getGenerationProgress(),
       ]);
-      state.settings = settings;
-      state.overview = overview;
-      state.generationProgress = generationProgress;
-      await Promise.all([loadSessions(), loadSessionTimes()]);
-      await Promise.all([loadTeachers(), loadExclusionSessionOptions(), loadPersistedInvigilationState()]);
-
-      if (state.selectedSessionId) {
-        await loadDetail(state.selectedSessionId);
-      } else if (state.sessions.length > 0) {
-        await loadDetail(state.sessions[0].id);
+      const coreErrors: string[] = [];
+      if (coreResults[0].status === "fulfilled") {
+        state.settings = coreResults[0].value;
+      } else {
+        coreErrors.push(`考试配置读取失败：${String(coreResults[0].reason)}`);
       }
-      await loadStaffOutputs();
+      if (coreResults[1].status === "fulfilled") {
+        state.overview = coreResults[1].value;
+      } else {
+        coreErrors.push(`分配总览读取失败：${String(coreResults[1].reason)}`);
+      }
+      if (coreResults[2].status === "fulfilled") {
+        state.generationProgress = coreResults[2].value;
+      } else {
+        coreErrors.push(`进度状态读取失败：${String(coreResults[2].reason)}`);
+      }
+      try {
+        await loadSessionTimeGradeOptions();
+      } catch {
+        // Degrade gracefully: session times can still be fetched without explicit grade param.
+        state.sessionTimeGradeOptions = [];
+        state.selectedSessionTimeGradeName = "";
+      }
+      const firstStage = await Promise.allSettled([loadSessions(), loadSessionTimes()]);
+      if (firstStage[0].status === "rejected") {
+        if (!isNoRowsError(firstStage[0].reason)) {
+          coreErrors.push(`场次列表读取失败：${String(firstStage[0].reason)}`);
+        }
+      }
+      if (firstStage[1].status === "rejected") {
+        if (!isNoRowsError(firstStage[1].reason)) {
+          coreErrors.push(`考试时间读取失败：${String(firstStage[1].reason)}`);
+        }
+      }
+      const secondStage = await Promise.allSettled([
+        loadTeachers(),
+        loadExclusionSessionOptions(),
+        loadPersistedInvigilationState(),
+      ]);
+      if (secondStage[0].status === "rejected") {
+        if (!isNoRowsError(secondStage[0].reason)) {
+          coreErrors.push(`教师列表读取失败：${String(secondStage[0].reason)}`);
+        }
+      }
+      if (secondStage[1].status === "rejected") {
+        if (!isNoRowsError(secondStage[1].reason)) {
+          coreErrors.push(`排除场次读取失败：${String(secondStage[1].reason)}`);
+        }
+      }
+      if (secondStage[2].status === "rejected") {
+        if (!isNoRowsError(secondStage[2].reason)) {
+          coreErrors.push(`监考配置读取失败：${String(secondStage[2].reason)}`);
+        }
+      }
+
+      const validSessionIds = new Set(state.sessions.map((item) => item.id));
+      let targetSessionId: number | null = null;
+      if (
+        state.selectedSessionId !== null
+        && validSessionIds.has(state.selectedSessionId)
+      ) {
+        targetSessionId = state.selectedSessionId;
+      } else if (state.sessions.length > 0) {
+        targetSessionId = state.sessions[0].id;
+      } else {
+        state.selectedSessionId = null;
+        state.detail = null;
+      }
+      if (targetSessionId !== null) {
+        try {
+          await loadDetail(targetSessionId);
+        } catch (error) {
+          if (!isNoRowsError(error)) {
+            coreErrors.push(`场次详情读取失败：${String(error)}`);
+          }
+        }
+      } else {
+        try {
+          await loadStaffOutputs();
+        } catch (error) {
+          if (!isNoRowsError(error)) {
+            coreErrors.push(`监考结果读取失败：${String(error)}`);
+          }
+        }
+      }
+      if (coreErrors.length > 0) {
+        state.errorMessage = coreErrors.join("；");
+      }
     } catch (error) {
       state.errorMessage = error instanceof Error ? error.message : String(error);
     } finally {
@@ -298,6 +453,18 @@ export function createExamAllocationStore(service: ExamAllocationService = examA
       await loadAll();
     } catch (error) {
       state.errorMessage = error instanceof Error ? error.message : String(error);
+      if (state.generationProgress.status !== "error") {
+        state.generationProgress = {
+          ...state.generationProgress,
+          status: "error",
+          stage: "error",
+          stageLabel: "执行失败",
+          message: state.errorMessage,
+          percent: 0,
+        };
+      }
+      // Keep stale overview from masking the current failed run in the UI.
+      state.overview.generatedAt = null;
       throw error;
     } finally {
       stopProgressPolling();
@@ -355,7 +522,9 @@ export function createExamAllocationStore(service: ExamAllocationService = examA
     state.sessionTimeDrafts[sessionId][field] = value;
   }
 
-  async function saveSessionTimes(extraItems: Array<{ sessionId: number; subject: Subject; startAt: string; endAt: string }> = []) {
+  async function saveSessionTimes(
+    extraItems: Array<{ sessionId: number; gradeName: string; subject: Subject; startAt: string; endAt: string }> = [],
+  ) {
     state.savingTimes = true;
     state.errorMessage = "";
     try {
@@ -367,13 +536,52 @@ export function createExamAllocationStore(service: ExamAllocationService = examA
           }
           return {
             sessionId: item.sessionId,
+            gradeName: state.selectedSessionTimeGradeName,
             subject: item.subject,
             startAt: draft.startAt,
             endAt: draft.endAt,
           };
         })
         .concat(extraItems)
-        .filter((item): item is { sessionId: number; subject: Subject; startAt: string; endAt: string } => !!item && !!item.startAt && !!item.endAt);
+        .filter(
+          (
+            item,
+          ): item is {
+            sessionId: number;
+            gradeName: string;
+            subject: Subject;
+            startAt: string;
+            endAt: string;
+          } =>
+            !!item &&
+            !!item.gradeName &&
+            !!item.startAt &&
+            !!item.endAt,
+        );
+      const foreignDisplayRow = state.sessionTimes.find((item) => item.subject === Subject.English);
+      const foreignDraft = foreignDisplayRow
+        ? state.sessionTimeDrafts[foreignDisplayRow.sessionId]
+        : undefined;
+      if (foreignDraft?.startAt && foreignDraft?.endAt) {
+        const bindingBySubject = new Map(
+          state.foreignSessionBindings.map((item) => [item.subject, item.sessionId]),
+        );
+        for (const subject of FOREIGN_SUBJECTS) {
+          const existingIndex = items.findIndex((item) => item.subject === subject);
+          const syncedItem = {
+            sessionId: bindingBySubject.get(subject) ?? foreignDisplayRow?.sessionId ?? -999,
+            gradeName: state.selectedSessionTimeGradeName,
+            subject,
+            startAt: foreignDraft.startAt,
+            endAt: foreignDraft.endAt,
+          };
+          if (existingIndex >= 0) {
+            items[existingIndex] = syncedItem;
+          } else {
+            items.push(syncedItem);
+          }
+        }
+      }
       await service.upsertSessionTimes(items);
       await loadSessionTimes();
     } catch (error) {
@@ -388,7 +596,15 @@ export function createExamAllocationStore(service: ExamAllocationService = examA
     state.savingTimes = true;
     state.errorMessage = "";
     try {
-      await service.deleteSessionTime(subject);
+      if (!state.selectedSessionTimeGradeName) {
+        return;
+      }
+      const subjectsToDelete = isForeignSubject(subject) ? FOREIGN_SUBJECTS : [subject];
+      await Promise.all(
+        subjectsToDelete.map((item) =>
+          service.deleteSessionTime(state.selectedSessionTimeGradeName, item),
+        ),
+      );
       await loadSessionTimes();
     } catch (error) {
       state.errorMessage = error instanceof Error ? error.message : String(error);
@@ -526,6 +742,14 @@ export function createExamAllocationStore(service: ExamAllocationService = examA
     await service.savePersistedSelfStudyClassSubjects(state.selfStudyClassSubjects);
   }
 
+  async function setSessionTimeGrade(gradeName: string) {
+    if (!gradeName || gradeName === state.selectedSessionTimeGradeName) {
+      return;
+    }
+    state.selectedSessionTimeGradeName = gradeName;
+    await loadSessionTimes();
+  }
+
   const viewState = readonly(
     computed(() => ({
       loading: state.loading,
@@ -543,6 +767,8 @@ export function createExamAllocationStore(service: ExamAllocationService = examA
       selectedSessionId: state.selectedSessionId,
       detail: state.detail,
       filters: state.filters,
+      sessionTimeGradeOptions: state.sessionTimeGradeOptions,
+      selectedSessionTimeGradeName: state.selectedSessionTimeGradeName,
       sessionTimes: state.sessionTimes,
       sessionTimeDrafts: state.sessionTimeDrafts,
       staffOverview: state.staffOverview,
@@ -571,6 +797,7 @@ export function createExamAllocationStore(service: ExamAllocationService = examA
     generate,
     loadDetail,
     setFilters,
+    setSessionTimeGrade,
     setSessionTimeDraft,
     saveSessionTimes,
     deleteSessionTime,

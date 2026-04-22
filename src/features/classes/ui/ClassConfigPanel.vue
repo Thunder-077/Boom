@@ -71,6 +71,17 @@
       <div class="editor">
         <ConfigCard title="基础信息" :description="editorDescription">
           <div class="form-grid">
+            <label class="field">
+              <span class="field-label">年级</span>
+              <input
+                class="field-input"
+                :value="store.viewState.form.gradeName"
+                placeholder="例如：高一"
+                list="class-grade-options"
+                @input="onFormInput('gradeName', $event)"
+              />
+            </label>
+
             <label class="field field-wide">
               <span class="field-label">{{ nameLabel }}</span>
               <input
@@ -86,11 +97,14 @@
               <input
                 class="field-input"
                 :value="store.viewState.form.roomLabel || ''"
-                placeholder="例如：高一1班"
+                placeholder="例如：X-505"
                 @input="onRoomLabelInput"
               />
             </label>
           </div>
+          <datalist id="class-grade-options">
+            <option v-for="grade in store.viewState.gradeOptions" :key="grade" :value="grade" />
+          </datalist>
         </ConfigCard>
 
         <ConfigCard
@@ -375,7 +389,7 @@ async function selectRow(row: ClassConfigRow) {
   isSearchPanelOpen.value = false;
 }
 
-function onFormInput(field: "className" | "building" | "floor", event: Event) {
+function onFormInput(field: "gradeName" | "className" | "building" | "floor", event: Event) {
   const value = (event.target as HTMLInputElement).value;
   store.setFormField(field, value);
 }
@@ -391,6 +405,25 @@ function toggleSubject(subject: Subject) {
 }
 
 async function saveCurrent() {
+  const gradeName = store.viewState.form.gradeName.trim();
+  const className = store.viewState.form.className.trim();
+  if (!gradeName || !className) {
+    const details: string[] = [];
+    if (!gradeName) {
+      details.push("请先填写年级。");
+    }
+    if (!className) {
+      details.push(`请先填写${nameLabel.value}。`);
+    }
+    await openDialog({
+      kind: "alert",
+      title: "缺少必填信息",
+      summary: "当前配置还不能保存。",
+      details,
+    });
+    return;
+  }
+
   const wasCreating = store.viewState.mode === "new";
   try {
     if (wasCreating) {

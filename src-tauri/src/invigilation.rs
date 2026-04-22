@@ -8,7 +8,7 @@ pub use crate::exam_allocation::SuccessResponse;
 pub use crate::exam_staff::{
     ExamSessionTime, ExamSessionTimeUpsert, ExamStaffPlanOverview, ExamStaffTask,
     GenerateExamStaffPlanPayload, GenerateLatestExamStaffPlanResult,
-    InvigilationExclusionSessionOption, ListExamStaffTasksParams, ListTeacherDutyStatsParams,
+    InvigilationExclusionSessionOption, ListExamSessionTimesParams, ListExamStaffTasksParams, ListTeacherDutyStatsParams,
     PersistedExamStaffExclusion, PersistedInvigilationConfig, PersistedInvigilationState,
     MonitorDrawImportResult,
     PersistedSelfStudyClassSubject, TeacherDutyStat,
@@ -16,8 +16,16 @@ pub use crate::exam_staff::{
 pub use crate::export_invigilation::ExportLatestInvigilationScheduleResult;
 
 #[tauri::command]
-pub fn list_exam_session_times(app: AppHandle) -> Result<Vec<ExamSessionTime>, String> {
-    exam_staff::list_exam_session_times(app)
+pub fn list_exam_session_time_grade_options(app: AppHandle) -> Result<Vec<String>, String> {
+    exam_staff::list_exam_session_time_grade_options(app)
+}
+
+#[tauri::command]
+pub fn list_exam_session_times(
+    app: AppHandle,
+    params: Option<ListExamSessionTimesParams>,
+) -> Result<Vec<ExamSessionTime>, String> {
+    exam_staff::list_exam_session_times(app, params)
 }
 
 #[tauri::command]
@@ -38,9 +46,10 @@ pub fn upsert_exam_session_times(
 #[tauri::command]
 pub fn delete_exam_session_time(
     app: AppHandle,
+    grade_name: String,
     subject: crate::score::Subject,
 ) -> Result<SuccessResponse, String> {
-    exam_staff::delete_exam_session_time(app, subject)
+    exam_staff::delete_exam_session_time(app, grade_name, subject)
 }
 
 #[tauri::command]
