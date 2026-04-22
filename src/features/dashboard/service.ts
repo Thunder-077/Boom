@@ -37,9 +37,10 @@ export interface ExamAllocationService {
   getOverview(): Promise<ExamPlanOverview>;
   listSessions(params: ExamPlanSessionQuery): Promise<ListResult<ExamPlanSession>>;
   getSessionDetail(sessionId: number): Promise<ExamPlanSessionDetail>;
-  listSessionTimes(): Promise<ExamSessionTime[]>;
+  listSessionTimeGradeOptions(): Promise<string[]>;
+  listSessionTimes(params?: { gradeName?: string }): Promise<ExamSessionTime[]>;
   upsertSessionTimes(items: ExamSessionTimeUpsert[]): Promise<{ success: boolean }>;
-  deleteSessionTime(subject: ExamSessionTime["subject"]): Promise<{ success: boolean }>;
+  deleteSessionTime(gradeName: string, subject: ExamSessionTime["subject"]): Promise<{ success: boolean }>;
   getPersistedInvigilationState(): Promise<{ config: InvigilationConfig; exclusions: ExamStaffExclusion[]; selfStudyClassSubjects: SelfStudyClassSubjectConfig[] }>;
   savePersistedInvigilationConfig(payload: InvigilationConfig): Promise<{ success: boolean }>;
   replacePersistedInvigilationExclusions(items: ExamStaffExclusion[]): Promise<{ success: boolean }>;
@@ -76,14 +77,17 @@ export const examAllocationService: ExamAllocationService = {
   getSessionDetail(sessionId) {
     return invoke<ExamPlanSessionDetail>("get_latest_exam_plan_session_detail", { sessionId });
   },
-  listSessionTimes() {
-    return invoke<ExamSessionTime[]>("list_exam_session_times");
+  listSessionTimeGradeOptions() {
+    return invoke<string[]>("list_exam_session_time_grade_options");
+  },
+  listSessionTimes(params = {}) {
+    return invoke<ExamSessionTime[]>("list_exam_session_times", { params });
   },
   upsertSessionTimes(items) {
     return invoke<{ success: boolean }>("upsert_exam_session_times", { items });
   },
-  deleteSessionTime(subject) {
-    return invoke<{ success: boolean }>("delete_exam_session_time", { subject });
+  deleteSessionTime(gradeName, subject) {
+    return invoke<{ success: boolean }>("delete_exam_session_time", { gradeName, subject });
   },
   getPersistedInvigilationState() {
     return invoke<{ config: InvigilationConfig; exclusions: ExamStaffExclusion[]; selfStudyClassSubjects: SelfStudyClassSubjectConfig[] }>("get_persisted_invigilation_state");

@@ -45,6 +45,7 @@ pub fn run() {
             exam_plan::list_latest_exam_plan_sessions,
             exam_plan::get_latest_exam_plan_session_detail,
             export_bundle::export_latest_exam_allocation_bundle,
+            invigilation::list_exam_session_time_grade_options,
             invigilation::list_exam_session_times,
             invigilation::list_invigilation_exclusion_session_options,
             invigilation::upsert_exam_session_times,
@@ -234,9 +235,13 @@ mod tests {
         );
 
         let template_count: i64 = conn
-            .query_row("SELECT COUNT(*) FROM exam_subject_time_templates", [], |row| row.get(0))
+            .query_row(
+                "SELECT COUNT(*) FROM exam_grade_subject_time_templates",
+                [],
+                |row| row.get(0),
+            )
             .unwrap();
-        assert!(template_count > 0, "科目时间模板应当保留");
+        assert_eq!(template_count, 0, "年级科目时间模板应保持用户手动配置");
 
         let config_count: i64 = conn
             .query_row("SELECT COUNT(*) FROM invigilation_config_settings", [], |row| row.get(0))

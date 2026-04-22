@@ -126,10 +126,13 @@ export interface ExamSessionTime {
   subject: Subject;
   startAt: string | null;
   endAt: string | null;
+  sourceGradeName: string | null;
+  isInherited: boolean;
 }
 
 export interface ExamSessionTimeUpsert {
   sessionId: number;
+  gradeName: string;
   subject: Subject;
   startAt: string;
   endAt: string;

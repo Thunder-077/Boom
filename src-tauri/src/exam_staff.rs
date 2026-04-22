@@ -284,15 +284,24 @@ pub struct ExamSessionTime {
     subject: Subject,
     start_at: Option<String>,
     end_at: Option<String>,
+    source_grade_name: Option<String>,
+    is_inherited: bool,
 }
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ExamSessionTimeUpsert {
     pub session_id: i64,
+    pub grade_name: String,
     pub subject: Subject,
     pub start_at: String,
     pub end_at: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ListExamSessionTimesParams {
+    pub grade_name: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -657,6 +666,84 @@ fn template_session_id(subject: Subject) -> i64 {
     -(subject_order(subject) as i64)
 }
 
+fn subject_from_template_session_id(session_id: i64) -> Option<Subject> {
+    let order = -session_id;
+    [
+        Subject::Chinese,
+        Subject::Math,
+        Subject::English,
+        Subject::Physics,
+        Subject::Chemistry,
+        Subject::Biology,
+        Subject::Politics,
+        Subject::History,
+        Subject::Geography,
+        Subject::Russian,
+        Subject::Japanese,
+    ]
+    .into_iter()
+    .find(|subject| (subject_order(*subject) as i64) == order)
+}
+
+fn sorted_grade_names(mut grades: Vec<String>) -> Vec<String> {
+    grades.sort_by(|a, b| {
+        exam_allocation::grade_order_key(a)
+            .cmp(&exam_allocation::grade_order_key(b))
+            .then(a.cmp(b))
+    });
+    grades.dedup();
+    grades
+}
+
+fn load_effective_session_time_grade_options(conn: &Connection) -> Result<Vec<String>, AppError> {
+    let mut grades = exam_allocation::load_distinct_teaching_grades(conn)?;
+    for grade in exam_allocation::load_grade_time_template_grades(conn)? {
+        grades.push(grade);
+    }
+    Ok(sorted_grade_names(grades))
+}
+
+fn load_grade_subject_template_map(
+    conn: &Connection,
+) -> Result<HashMap<String, HashMap<Subject, (String, String)>>, AppError> {
+    let mut out = HashMap::<String, HashMap<Subject, (String, String)>>::new();
+    let mut stmt = conn.prepare(
+        "SELECT grade_name, subject, start_at, end_at FROM exam_grade_subject_time_templates ORDER BY grade_name ASC, subject ASC",
+    )?;
+    let rows = stmt.query_map([], |row| {
+        Ok((
+            row.get::<_, String>(0)?,
+            row.get::<_, String>(1)?,
+            row.get::<_, String>(2)?,
+            row.get::<_, String>(3)?,
+        ))
+    })?;
+    for row in rows {
+        let (grade_name, subject_key, start_at, end_at) = row?;
+        let Some(subject) = Subject::from_key(&subject_key) else {
+            continue;
+        };
+        out.entry(grade_name).or_default().insert(subject, (start_at, end_at));
+    }
+    Ok(out)
+}
+
+fn resolve_effective_grade_subject_template(
+    grade_name: &str,
+    subject: Subject,
+    grade_templates: &HashMap<String, HashMap<Subject, (String, String)>>,
+) -> Option<(String, String, Option<String>, bool)> {
+    if let Some((start_at, end_at)) = grade_templates
+        .get(grade_name)
+        .and_then(|map| map.get(&subject))
+        .cloned()
+    {
+        return Some((start_at, end_at, Some(grade_name.to_string()), false));
+    }
+
+    None
+}
+
 fn parse_datetime_to_ts(value: &str) -> Result<i64, AppError> {
     if let Ok(dt) = DateTime::parse_from_rfc3339(value) {
         return Ok(dt.timestamp_millis());
@@ -857,34 +944,45 @@ fn is_teacher_enabled_for_task_source(
     }
 }
 
-fn load_session_time_template_rows(conn: &Connection) -> Result<Vec<ExamSessionTime>, AppError> {
-    let mut stmt = conn.prepare(
-        r#"
-        SELECT subject, start_at, end_at
-        FROM exam_subject_time_templates
-        ORDER BY subject ASC
-        "#,
-    )?;
-    let rows = stmt.query_map([], |row| {
-        let subject_key: String = row.get(0)?;
-        let subject = Subject::from_key(&subject_key).ok_or_else(|| {
-            rusqlite::Error::InvalidColumnType(
-                0,
-                "subject".to_string(),
-                rusqlite::types::Type::Text,
-            )
-        })?;
-        Ok(ExamSessionTime {
-            session_id: template_session_id(subject),
-            grade_name: "全局".to_string(),
+fn load_session_time_template_rows(
+    conn: &Connection,
+    selected_grade_name: &str,
+) -> Result<Vec<ExamSessionTime>, AppError> {
+    let grade_templates = load_grade_subject_template_map(conn)?;
+    let mut out = Vec::<ExamSessionTime>::new();
+    for subject in [
+        Subject::Chinese,
+        Subject::Math,
+        Subject::English,
+        Subject::Physics,
+        Subject::Chemistry,
+        Subject::Biology,
+        Subject::Politics,
+        Subject::History,
+        Subject::Geography,
+        Subject::Russian,
+        Subject::Japanese,
+    ] {
+        let resolved = resolve_effective_grade_subject_template(
+            selected_grade_name,
             subject,
-            start_at: row.get(1)?,
-            end_at: row.get(2)?,
-        })
-    })?;
-    let mut out = Vec::new();
-    for row in rows {
-        out.push(row?);
+            &grade_templates,
+        );
+        let (start_at, end_at, source_grade_name, is_inherited) = match resolved {
+            Some((start_at, end_at, source_grade_name, is_inherited)) => {
+                (Some(start_at), Some(end_at), source_grade_name, is_inherited)
+            }
+            None => (None, None, None, false),
+        };
+        out.push(ExamSessionTime {
+            session_id: template_session_id(subject),
+            grade_name: selected_grade_name.to_string(),
+            subject,
+            start_at,
+            end_at,
+            source_grade_name,
+            is_inherited,
+        });
     }
     out.sort_by(|a, b| {
         let a_ts = a
@@ -898,37 +996,44 @@ fn load_session_time_template_rows(conn: &Connection) -> Result<Vec<ExamSessionT
             .and_then(|s| parse_datetime_to_ts(s).ok())
             .unwrap_or(i64::MAX);
         a_ts.cmp(&b_ts)
+            .then(subject_order(a.subject).cmp(&subject_order(b.subject)))
     });
     Ok(out)
 }
 
 pub(crate) fn seed_default_session_times(conn: &Connection) -> Result<(), AppError> {
     let now = Utc::now().to_rfc3339();
+    let grade_templates = load_grade_subject_template_map(conn)?;
     let mut stmt =
-        conn.prepare("SELECT id, subject FROM latest_exam_plan_sessions ORDER BY id ASC")?;
+        conn.prepare("SELECT id, grade_name, subject FROM latest_exam_plan_sessions ORDER BY id ASC")?;
     let rows = stmt.query_map([], |row| {
-        Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?))
+        Ok((
+            row.get::<_, i64>(0)?,
+            row.get::<_, String>(1)?,
+            row.get::<_, String>(2)?,
+        ))
     })?;
     for row in rows {
-        let (session_id, subject_key) = row?;
+        let (session_id, grade_name, subject_key) = row?;
         let Some(subject) = Subject::from_key(&subject_key) else {
             continue;
         };
-        let template_time: Option<(String, String)> = conn
-            .query_row(
-                "SELECT start_at, end_at FROM exam_subject_time_templates WHERE subject = ?1",
-                params![subject.as_key()],
-                |inner_row| Ok((inner_row.get(0)?, inner_row.get(1)?)),
-            )
-            .ok();
-        let Some((start_at, end_at)) = template_time else {
+        let Some((start_at, end_at, _, _)) = resolve_effective_grade_subject_template(
+            &grade_name,
+            subject,
+            &grade_templates,
+        ) else {
             continue;
         };
         conn.execute(
             r#"
             INSERT INTO exam_session_times (session_id, subject, start_at, end_at, updated_at)
             VALUES (?1, ?2, ?3, ?4, ?5)
-            ON CONFLICT(session_id) DO NOTHING
+            ON CONFLICT(session_id) DO UPDATE SET
+                subject = excluded.subject,
+                start_at = excluded.start_at,
+                end_at = excluded.end_at,
+                updated_at = excluded.updated_at
             "#,
             params![session_id, subject.as_key(), start_at, end_at, now],
         )?;
@@ -937,17 +1042,17 @@ pub(crate) fn seed_default_session_times(conn: &Connection) -> Result<(), AppErr
 }
 
 fn load_session_times_runtime(conn: &Connection) -> Result<Vec<SessionTimeRuntime>, AppError> {
+    let grade_templates = load_grade_subject_template_map(conn)?;
     let mut stmt = conn.prepare(
         r#"
         SELECT
             s.id,
             s.grade_name,
             s.subject,
-            COALESCE(t.start_at, tpl.start_at) AS start_at,
-            COALESCE(t.end_at, tpl.end_at) AS end_at
+            t.start_at AS start_at,
+            t.end_at AS end_at
         FROM latest_exam_plan_sessions s
         LEFT JOIN exam_session_times t ON t.session_id = s.id
-        LEFT JOIN exam_subject_time_templates tpl ON tpl.subject = s.subject
         ORDER BY s.grade_name ASC, s.id ASC
         "#,
     )?;
@@ -966,19 +1071,31 @@ fn load_session_times_runtime(conn: &Connection) -> Result<Vec<SessionTimeRuntim
             subject,
             start_at: row.get(3)?,
             end_at: row.get(4)?,
+            source_grade_name: None,
+            is_inherited: false,
         })
     })?;
     let mut out = Vec::new();
     for row in rows {
         let row = row?;
-        let start_at = row
-            .start_at
-            .clone()
-            .ok_or_else(|| AppError::new(format!("场次 {} 未配置开始时间", row.session_id)))?;
-        let end_at = row
-            .end_at
-            .clone()
-            .ok_or_else(|| AppError::new(format!("场次 {} 未配置结束时间", row.session_id)))?;
+        let resolved_time = match (row.start_at.clone(), row.end_at.clone()) {
+            (Some(start_at), Some(end_at)) => (start_at, end_at),
+            _ => {
+                let Some((start_at, end_at, _, _)) = resolve_effective_grade_subject_template(
+                    &row.grade_name,
+                    row.subject,
+                    &grade_templates,
+                ) else {
+                    return Err(AppError::new(format!(
+                        "场次 {} 未配置开始或结束时间",
+                        row.session_id
+                    )));
+                };
+                (start_at, end_at)
+            }
+        };
+        let start_at = resolved_time.0;
+        let end_at = resolved_time.1;
         let start_ts = parse_datetime_to_ts(&start_at)?;
         let end_ts = parse_datetime_to_ts(&end_at)?;
         duration_minutes(start_ts, end_ts)?;
@@ -2897,11 +3014,34 @@ fn generate_latest_exam_staff_plan_internal(
     Ok(result)
 }
 
-pub fn list_exam_session_times(app: AppHandle) -> Result<Vec<ExamSessionTime>, String> {
+pub fn list_exam_session_time_grade_options(app: AppHandle) -> Result<Vec<String>, String> {
+    let result = (|| -> Result<Vec<String>, AppError> {
+        let conn = score::open_connection(&app)?;
+        exam_allocation::ensure_schema(&conn)?;
+        Ok(load_effective_session_time_grade_options(&conn)?)
+    })();
+    result.map_err(|error| error.to_string())
+}
+
+pub fn list_exam_session_times(
+    app: AppHandle,
+    params: Option<ListExamSessionTimesParams>,
+) -> Result<Vec<ExamSessionTime>, String> {
     let result = (|| -> Result<Vec<ExamSessionTime>, AppError> {
         let conn = score::open_connection(&app)?;
         exam_allocation::ensure_schema(&conn)?;
-        load_session_time_template_rows(&conn)
+        let grade_options = load_effective_session_time_grade_options(&conn)?;
+        let selected_grade = params
+            .as_ref()
+            .and_then(|value| value.grade_name.as_ref())
+            .map(|value| value.trim())
+            .filter(|value| !value.is_empty())
+            .map(|value| value.to_string())
+            .or_else(|| grade_options.first().cloned());
+        let Some(selected_grade) = selected_grade else {
+            return Ok(Vec::new());
+        };
+        load_session_time_template_rows(&conn, &selected_grade)
     })();
     result.map_err(|error| error.to_string())
 }
@@ -2916,6 +3056,10 @@ pub fn upsert_exam_session_times(
         let tx = conn.transaction()?;
         let now = Utc::now().to_rfc3339();
         for item in items {
+            let grade_name = item.grade_name.trim().to_string();
+            if grade_name.is_empty() {
+                return Err(AppError::new("年级不能为空"));
+            }
             let start_at = item.start_at.clone();
             let end_at = item.end_at.clone();
             let start_ts = parse_datetime_to_ts(&start_at)?;
@@ -2923,14 +3067,14 @@ pub fn upsert_exam_session_times(
             duration_minutes(start_ts, end_ts)?;
             tx.execute(
                 r#"
-                INSERT INTO exam_subject_time_templates (subject, start_at, end_at, updated_at)
-                VALUES (?1, ?2, ?3, ?4)
-                ON CONFLICT(subject) DO UPDATE SET
+                INSERT INTO exam_grade_subject_time_templates (grade_name, subject, start_at, end_at, updated_at)
+                VALUES (?1, ?2, ?3, ?4, ?5)
+                ON CONFLICT(grade_name, subject) DO UPDATE SET
                     start_at = excluded.start_at,
                     end_at = excluded.end_at,
                     updated_at = excluded.updated_at
                 "#,
-                params![item.subject.as_key(), &start_at, &end_at, &now],
+                params![grade_name, item.subject.as_key(), &start_at, &end_at, &now],
             )?;
             let session_exists = item.session_id > 0
                 && tx
@@ -2955,14 +3099,6 @@ pub fn upsert_exam_session_times(
                     params![item.session_id, item.subject.as_key(), &start_at, &end_at, &now],
                 )?;
             }
-            tx.execute(
-                r#"
-                UPDATE exam_session_times
-                SET start_at = ?1, end_at = ?2, updated_at = ?3
-                WHERE subject = ?4
-                "#,
-                params![&start_at, &end_at, &now, item.subject.as_key()],
-            )?;
         }
         tx.commit()?;
         Ok(SuccessResponse::ok())
@@ -2972,19 +3108,20 @@ pub fn upsert_exam_session_times(
 
 pub fn delete_exam_session_time(
     app: AppHandle,
+    grade_name: String,
     subject: Subject,
 ) -> Result<SuccessResponse, String> {
     let result = (|| -> Result<SuccessResponse, AppError> {
         let mut conn = score::open_connection(&app)?;
         exam_allocation::ensure_schema(&conn)?;
         let tx = conn.transaction()?;
+        let trimmed_grade_name = grade_name.trim();
+        if trimmed_grade_name.is_empty() {
+            return Err(AppError::new("年级不能为空"));
+        }
         tx.execute(
-            "DELETE FROM exam_subject_time_templates WHERE subject = ?1",
-            params![subject.as_key()],
-        )?;
-        tx.execute(
-            "DELETE FROM exam_session_times WHERE subject = ?1",
-            params![subject.as_key()],
+            "DELETE FROM exam_grade_subject_time_templates WHERE grade_name = ?1 AND subject = ?2",
+            params![trimmed_grade_name, subject.as_key()],
         )?;
         tx.commit()?;
         Ok(SuccessResponse::ok())
@@ -3033,11 +3170,11 @@ pub fn list_invigilation_exclusion_session_options(
     let result = (|| -> Result<Vec<InvigilationExclusionSessionOption>, AppError> {
         let conn = score::open_connection(&app)?;
         exam_allocation::ensure_schema(&conn)?;
-        let rows = load_session_time_template_rows(&conn)?;
+        let rows = load_session_times_runtime(&conn)?;
         let mut items = Vec::new();
         for row in rows {
-            let start_at = row.start_at.clone().unwrap_or_default();
-            let end_at = row.end_at.clone().unwrap_or_default();
+            let start_at = row.start_at.clone();
+            let end_at = row.end_at.clone();
             items.push(InvigilationExclusionSessionOption {
                 session_id: row.session_id,
                 grade_name: row.grade_name.clone(),
@@ -3045,7 +3182,8 @@ pub fn list_invigilation_exclusion_session_options(
                 start_at: start_at.clone(),
                 end_at: end_at.clone(),
                 label: format!(
-                    "{} {} {}-{}",
+                    "{} {} {} {}-{}",
+                    row.grade_name,
                     subject_label(row.subject),
                     if start_at.len() >= 10 {
                         &start_at[5..10]
@@ -3283,11 +3421,85 @@ pub fn import_monitor_draw_pairs_from_excel(
     result.map_err(|error| error.to_string())
 }
 
+fn build_session_label(grade_name: &str, subject: Subject, start_at: &str, end_at: &str) -> String {
+    format!(
+        "{} {} {} {}-{}",
+        grade_name,
+        subject_label(subject),
+        if start_at.len() >= 10 {
+            &start_at[5..10]
+        } else {
+            "--"
+        },
+        if start_at.len() >= 16 {
+            &start_at[11..16]
+        } else {
+            "--:--"
+        },
+        if end_at.len() >= 16 {
+            &end_at[11..16]
+        } else {
+            "--:--"
+        },
+    )
+}
+
+fn migrate_legacy_exclusions_to_session_rows(
+    conn: &Connection,
+    exclusions: Vec<PersistedExamStaffExclusion>,
+) -> Result<Vec<PersistedExamStaffExclusion>, AppError> {
+    if exclusions.iter().all(|item| item.session_id > 0) {
+        return Ok(exclusions);
+    }
+    let session_times = load_session_times_runtime(conn)?;
+    let mut sessions_by_subject = HashMap::<Subject, Vec<&SessionTimeRuntime>>::new();
+    for session in &session_times {
+        sessions_by_subject
+            .entry(session.subject)
+            .or_default()
+            .push(session);
+    }
+    let mut dedupe = HashSet::<(i64, i64)>::new();
+    let mut rewritten = Vec::<PersistedExamStaffExclusion>::new();
+    for item in exclusions {
+        if item.session_id > 0 {
+            if dedupe.insert((item.teacher_id, item.session_id)) {
+                rewritten.push(item);
+            }
+            continue;
+        }
+        // Legacy exclusions used negative template IDs; fan them out to real session IDs by subject.
+        let Some(subject) = subject_from_template_session_id(item.session_id) else {
+            continue;
+        };
+        let Some(sessions) = sessions_by_subject.get(&subject) else {
+            continue;
+        };
+        for session in sessions {
+            if !dedupe.insert((item.teacher_id, session.session_id)) {
+                continue;
+            }
+            rewritten.push(PersistedExamStaffExclusion {
+                teacher_id: item.teacher_id,
+                teacher_name: item.teacher_name.clone(),
+                session_id: session.session_id,
+                session_label: build_session_label(
+                    &session.grade_name,
+                    session.subject,
+                    &session.start_at,
+                    &session.end_at,
+                ),
+            });
+        }
+    }
+    Ok(rewritten)
+}
+
 pub fn get_persisted_invigilation_state(
     app: AppHandle,
 ) -> Result<PersistedInvigilationState, String> {
     let result = (|| -> Result<PersistedInvigilationState, AppError> {
-        let conn = score::open_connection(&app)?;
+        let mut conn = score::open_connection(&app)?;
         exam_allocation::ensure_schema(&conn)?;
         remove_legacy_monitor_draw_fixed_pairs_column(&conn)?;
 
@@ -3366,10 +3578,45 @@ pub fn get_persisted_invigilation_state(
         for row in rows {
             exclusions.push(row?);
         }
+        drop(stmt);
+        let migrated_exclusions = migrate_legacy_exclusions_to_session_rows(&conn, exclusions)?;
+        if migrated_exclusions
+            .iter()
+            .any(|item| item.session_id > 0)
+            && migrated_exclusions.len() != 0
+        {
+            let has_legacy = conn.query_row(
+                "SELECT COUNT(*) FROM invigilation_staff_exclusions WHERE session_id <= 0",
+                [],
+                |row| row.get::<_, i64>(0),
+            )?;
+            if has_legacy > 0 {
+                let tx = conn.transaction()?;
+                tx.execute("DELETE FROM invigilation_staff_exclusions", [])?;
+                let now = Utc::now().to_rfc3339();
+                for item in &migrated_exclusions {
+                    tx.execute(
+                        r#"
+                        INSERT INTO invigilation_staff_exclusions
+                        (teacher_id, teacher_name, session_id, session_label, created_at)
+                        VALUES (?1, ?2, ?3, ?4, ?5)
+                        "#,
+                        params![
+                            item.teacher_id,
+                            item.teacher_name.trim(),
+                            item.session_id,
+                            item.session_label.trim(),
+                            now
+                        ],
+                    )?;
+                }
+                tx.commit()?;
+            }
+        }
 
         Ok(PersistedInvigilationState {
             config,
-            exclusions,
+            exclusions: migrated_exclusions,
             self_study_class_subjects,
         })
     })();
