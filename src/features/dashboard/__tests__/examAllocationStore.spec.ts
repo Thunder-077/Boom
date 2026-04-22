@@ -140,6 +140,7 @@ const fakeService: ExamAllocationService = {
       solveDurationMs: 1234,
       fallbackReason: null,
       fallbackPoolAssignments: 0,
+      unassignedDetails: [],
     };
   },
   async getStaffPlanOverview() {

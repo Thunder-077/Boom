@@ -318,6 +318,7 @@ pub struct GenerateLatestExamStaffPlanResult {
     solve_duration_ms: i64,
     fallback_reason: Option<FallbackReason>,
     fallback_pool_assignments: i64,
+    unassigned_details: Vec<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -802,6 +803,14 @@ fn role_priority(role: StaffRole) -> i32 {
         StaffRole::ExamRoomInvigilator => 1,
         StaffRole::SelfStudySupervisor => 2,
         StaffRole::FloorRover => 3,
+    }
+}
+
+fn role_label(role: StaffRole) -> &'static str {
+    match role {
+        StaffRole::ExamRoomInvigilator => "考场监考",
+        StaffRole::SelfStudySupervisor => "自习看管",
+        StaffRole::FloorRover => "楼层流动",
     }
 }
 
@@ -1367,9 +1376,19 @@ fn build_task_candidate_summary(
         };
     }
 
+    // FloorRover: also apply subject avoidance — teachers who teach the exam
+    // subject must not serve as floor rovers for that subject's exam, because
+    // they need to take the exam paper themselves during that time slot.
     TaskCandidateSummary {
         candidates: active_teachers
             .iter()
+            .filter(|teacher| {
+                if task.role == StaffRole::FloorRover {
+                    !teacher.subjects.contains(&task.subject)
+                } else {
+                    true
+                }
+            })
             .map(|teacher| TaskCandidate {
                 teacher_id: teacher.id,
                 assignment_tier: None,
@@ -2807,6 +2826,21 @@ fn persist_solved_plan(
     )?;
     tx.commit()?;
 
+    let unassigned_details: Vec<String> = plan
+        .records
+        .iter()
+        .filter(|record| record.teacher_id.is_none())
+        .map(|record| {
+            format!(
+                "{}{} {} {}",
+                record.task.grade_name,
+                subject_label(record.task.subject),
+                record.task.space_name,
+                role_label(record.task.role),
+            )
+        })
+        .collect();
+
     Ok(GenerateLatestExamStaffPlanResult {
         generated_at,
         task_count: plan.records.len() as i64,
@@ -2819,6 +2853,7 @@ fn persist_solved_plan(
         solve_duration_ms: plan.solve_duration_ms,
         fallback_reason: plan.fallback_reason,
         fallback_pool_assignments: plan.metrics.fallback_pool_assignments,
+        unassigned_details,
     })
 }
 
