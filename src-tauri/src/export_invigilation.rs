@@ -912,17 +912,20 @@ fn write_room_section(
                 wrap_fmt
             };
             sheet.write_string_with_format(row, col, &left, left_fmt)?;
-            
-            let mut t_written = 0;
-            if let Some(item) = cell {
-                for i in 0..item.teachers.len() {
-                    sheet.write_string_with_format(row, col + 1 + i as u16, &item.teachers[i], right_fmt)?;
+            let teachers = cell.map(|item| item.teachers.clone()).unwrap_or_default();
+            if teachers.len() <= 1 && t_cols > 1 {
+                let name = teachers.first().map(|s| s.as_str()).unwrap_or("");
+                sheet.merge_range(row, col + 1, row, col + t_cols as u16, name, right_fmt)?;
+            } else {
+                let mut t_written = 0;
+                for i in 0..teachers.len() {
+                    sheet.write_string_with_format(row, col + 1 + i as u16, &teachers[i], right_fmt)?;
                     t_written += 1;
                 }
-            }
-            while t_written < t_cols {
-                sheet.write_string_with_format(row, col + 1 + t_written as u16, "", right_fmt)?;
-                t_written += 1;
+                while t_written < t_cols {
+                    sheet.write_string_with_format(row, col + 1 + t_written as u16, "", right_fmt)?;
+                    t_written += 1;
+                }
             }
             col += 1 + t_cols as u16;
         }
@@ -964,17 +967,20 @@ fn write_floor_section(
             let left_fmt = if is_empty_cell { plain_body_fmt } else { body_fmt };
             let right_fmt = if is_empty_cell { plain_wrap_fmt } else { wrap_fmt };
             sheet.write_string_with_format(row, col, left, left_fmt)?;
-            
-            let mut t_written = 0;
-            if let Some(item) = cell {
-                for i in 0..item.teachers.len() {
-                    sheet.write_string_with_format(row, col + 1 + i as u16, &item.teachers[i], right_fmt)?;
+            let teachers = cell.map(|item| item.teachers.clone()).unwrap_or_default();
+            if teachers.len() <= 1 && t_cols > 1 {
+                let name = teachers.first().map(|s| s.as_str()).unwrap_or("");
+                sheet.merge_range(row, col + 1, row, col + t_cols as u16, name, right_fmt)?;
+            } else {
+                let mut t_written = 0;
+                for i in 0..teachers.len() {
+                    sheet.write_string_with_format(row, col + 1 + i as u16, &teachers[i], right_fmt)?;
                     t_written += 1;
                 }
-            }
-            while t_written < t_cols {
-                sheet.write_string_with_format(row, col + 1 + t_written as u16, "", right_fmt)?;
-                t_written += 1;
+                while t_written < t_cols {
+                    sheet.write_string_with_format(row, col + 1 + t_written as u16, "", right_fmt)?;
+                    t_written += 1;
+                }
             }
             col += 1 + t_cols as u16;
         }
