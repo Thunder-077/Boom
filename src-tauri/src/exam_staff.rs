@@ -493,6 +493,14 @@ struct SessionTimeRuntime {
     end_ts: i64,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+struct FloorRoverSlotKey {
+    grade_name: String,
+    start_ts: i64,
+    end_ts: i64,
+    subject_group_key: String,
+}
+
 #[derive(Debug, Clone)]
 struct TeacherInfo {
     id: i64,
@@ -567,6 +575,10 @@ struct TaskBuild {
     start_ts: i64,
     end_ts: i64,
     duration_minutes: i64,
+    // 楼层流动在外语分组场景下会把同一时间段的多门外语合并成一条任务。
+    // 这里保留整组需要回避的科目，保证英语/日语/俄语老师都会被排除，
+    // 不会因为只生成了一条楼层流动任务就漏掉科目回避。
+    subject_avoidance_subjects: Vec<Subject>,
     recommended_self_study_topic: Option<exam_allocation::SelfStudyTopic>,
     priority_self_study_chain: Vec<exam_allocation::SelfStudyTopic>,
     day_key: String,
@@ -1288,7 +1300,9 @@ fn build_task_candidate_summary(
         .filter(|teacher| {
             is_teacher_enabled_for_task_source(teacher, task.task_source, config)
                 && match task.session_id {
-                    Some(session_id) if task.task_source != StaffTaskSource::FullSelfStudy => {
+                    // 禁排场次仅作用于“该场次考场监考”；
+                    // 同场次的自习看班、楼层流动仍可参与分配。
+                    Some(session_id) if task.role == StaffRole::ExamRoomInvigilator => {
                         !exclusion_pairs.contains(&(teacher.id, session_id))
                     }
                     _ => true,
@@ -1376,15 +1390,18 @@ fn build_task_candidate_summary(
         };
     }
 
-    // FloorRover: also apply subject avoidance — teachers who teach the exam
-    // subject must not serve as floor rovers for that subject's exam, because
-    // they need to take the exam paper themselves during that time slot.
+    // FloorRover subject avoidance is applied against the whole merged subject set.
+    // For example, an external-language rover for one floor must avoid all
+    // English/Japanese/Russian teachers in that slot, not just task.subject.
     TaskCandidateSummary {
         candidates: active_teachers
             .iter()
             .filter(|teacher| {
                 if task.role == StaffRole::FloorRover {
-                    !teacher.subjects.contains(&task.subject)
+                    !task
+                        .subject_avoidance_subjects
+                        .iter()
+                        .any(|subject| teacher.subjects.contains(subject))
                 } else {
                     true
                 }
@@ -1614,6 +1631,37 @@ fn compute_plan_metrics(
     }
 }
 
+fn floor_rover_subject_group_key(subject: Subject) -> String {
+    // 外语同一时间考试时，共用同一组楼层流动监考，所以这里统一折叠成一个分组键。
+    if exam_allocation::is_foreign_subject(subject) {
+        "foreign_group".to_string()
+    } else {
+        subject.as_key().to_string()
+    }
+}
+
+fn build_floor_rover_subjects_by_slot(
+    session_times: &[SessionTimeRuntime],
+) -> HashMap<FloorRoverSlotKey, Vec<Subject>> {
+    let mut subjects_by_slot = HashMap::<FloorRoverSlotKey, Vec<Subject>>::new();
+    for session in session_times {
+        let key = FloorRoverSlotKey {
+            grade_name: session.grade_name.clone(),
+            start_ts: session.start_ts,
+            end_ts: session.end_ts,
+            subject_group_key: floor_rover_subject_group_key(session.subject),
+        };
+        subjects_by_slot.entry(key).or_default().push(session.subject);
+    }
+
+    for subjects in subjects_by_slot.values_mut() {
+        subjects.sort_by_key(|subject| subject_order(*subject));
+        subjects.dedup();
+    }
+
+    subjects_by_slot
+}
+
 fn build_staff_tasks(
     conn: &Connection,
     session_times: &[SessionTimeRuntime],
@@ -1621,6 +1669,7 @@ fn build_staff_tasks(
     class_subject_map: &HashMap<(String, String), HashSet<Subject>>,
     teaching_classes: &[TeachingClassRuntime],
 ) -> Result<Vec<TaskBuild>, AppError> {
+    let floor_rover_subjects_by_slot = build_floor_rover_subjects_by_slot(session_times);
     let mut sessions_by_grade: HashMap<String, Vec<exam_allocation::SelfStudyScheduleSession>> =
         HashMap::new();
     for session in session_times {
@@ -1650,6 +1699,9 @@ fn build_staff_tasks(
     }
 
     let mut tasks = Vec::<TaskBuild>::new();
+    // 同一年级、同一时间段、同一科目组、同一楼层只生成一条楼层流动任务。
+    // 这样外语场次即使拆成英语/日语/俄语多个 session，也仍然是一层一个老师。
+    let mut generated_floor_rovers = HashSet::<(FloorRoverSlotKey, String)>::new();
     for session in session_times {
         let spaces = load_spaces_for_session(conn, session.session_id)?;
         if spaces.is_empty() {
@@ -1698,6 +1750,7 @@ fn build_staff_tasks(
                             start_ts: session.start_ts,
                             end_ts: session.end_ts,
                             duration_minutes: duration_minutes(session.start_ts, session.end_ts)?,
+                            subject_avoidance_subjects: vec![session.subject],
                             recommended_self_study_topic: None,
                             priority_self_study_chain: Vec::new(),
                             day_key: day_key.clone(),
@@ -1745,6 +1798,7 @@ fn build_staff_tasks(
                         start_ts: session.start_ts,
                         end_ts: session.end_ts,
                         duration_minutes: duration_minutes(session.start_ts, session.end_ts)?,
+                        subject_avoidance_subjects: vec![session.subject],
                         recommended_self_study_topic,
                         priority_self_study_chain,
                         day_key: day_key.clone(),
@@ -1754,9 +1808,22 @@ fn build_staff_tasks(
             }
         }
 
+        let floor_rover_slot_key = FloorRoverSlotKey {
+            grade_name: session.grade_name.clone(),
+            start_ts: session.start_ts,
+            end_ts: session.end_ts,
+            subject_group_key: floor_rover_subject_group_key(session.subject),
+        };
+        let subject_avoidance_subjects = floor_rover_subjects_by_slot
+            .get(&floor_rover_slot_key)
+            .cloned()
+            .unwrap_or_else(|| vec![session.subject]);
         let mut sorted_floors: Vec<String> = floors.into_iter().collect();
         sorted_floors.sort();
         for floor in sorted_floors {
+            if !generated_floor_rovers.insert((floor_rover_slot_key.clone(), floor.clone())) {
+                continue;
+            }
             tasks.push(TaskBuild {
                 session_id: Some(session.session_id),
                 space_id: None,
@@ -1771,6 +1838,7 @@ fn build_staff_tasks(
                 start_ts: session.start_ts,
                 end_ts: session.end_ts,
                 duration_minutes: duration_minutes(session.start_ts, session.end_ts)?,
+                subject_avoidance_subjects: subject_avoidance_subjects.clone(),
                 recommended_self_study_topic: None,
                 priority_self_study_chain: Vec::new(),
                 day_key: day_key.clone(),
@@ -1818,6 +1886,7 @@ fn build_staff_tasks(
                 start_ts,
                 end_ts,
                 duration_minutes: duration,
+                subject_avoidance_subjects: vec![subject],
                 recommended_self_study_topic: Some(
                     exam_allocation::build_subject_self_study_topic(subject),
                 ),
@@ -2844,12 +2913,16 @@ fn persist_solved_plan(
         .iter()
         .filter(|record| record.teacher_id.is_none())
         .map(|record| {
+            let task_detail = if record.task.role == StaffRole::FloorRover {
+                record.task.space_name.clone()
+            } else {
+                format!("{} {}", record.task.space_name, role_label(record.task.role))
+            };
             format!(
-                "{}{} {} {}",
+                "{}{} {}",
                 record.task.grade_name,
                 subject_label(record.task.subject),
-                record.task.space_name,
-                role_label(record.task.role),
+                task_detail,
             )
         })
         .collect();
@@ -4091,6 +4164,28 @@ mod tests {
         }
     }
 
+    fn setup_build_staff_tasks_test_db() -> Connection {
+        let conn = Connection::open_in_memory().expect("in-memory sqlite should open");
+        conn.execute_batch(
+            r#"
+            CREATE TABLE latest_exam_plan_spaces (
+                id INTEGER PRIMARY KEY,
+                session_id INTEGER NOT NULL,
+                space_type TEXT NOT NULL,
+                space_name TEXT NOT NULL,
+                original_class_name TEXT,
+                self_study_topic_kind TEXT,
+                self_study_topic_subjects_json TEXT,
+                self_study_topic_label TEXT,
+                floor TEXT NOT NULL,
+                sort_index INTEGER NOT NULL
+            );
+            "#,
+        )
+        .expect("test spaces schema should be created");
+        conn
+    }
+
     fn sample_exam_task(subject: Subject) -> TaskBuild {
         TaskBuild {
             session_id: Some(1),
@@ -4106,6 +4201,7 @@ mod tests {
             start_ts: 1_000,
             end_ts: 2_000,
             duration_minutes: 120,
+            subject_avoidance_subjects: vec![subject],
             recommended_self_study_topic: None,
             priority_self_study_chain: Vec::new(),
             day_key: "2026-03-24".to_string(),
@@ -4136,6 +4232,7 @@ mod tests {
             start_ts: 1_000,
             end_ts: 2_000,
             duration_minutes: 120,
+            subject_avoidance_subjects: vec![Subject::Biology],
             recommended_self_study_topic: Some(topic_subject(Subject::Physics)),
             priority_self_study_chain: vec![
                 topic_subject(Subject::Physics),
@@ -4144,6 +4241,135 @@ mod tests {
             day_key: "2026-03-24".to_string(),
             half_day: HalfDay::Morning,
         }
+    }
+
+    #[test]
+    fn test_build_staff_tasks_deduplicates_foreign_group_floor_rovers_per_floor() {
+        let conn = setup_build_staff_tasks_test_db();
+        conn.execute(
+            "INSERT INTO latest_exam_plan_spaces (id, session_id, space_type, space_name, original_class_name, self_study_topic_kind, self_study_topic_subjects_json, self_study_topic_label, floor, sort_index)
+             VALUES (?1, ?2, 'exam_room', ?3, NULL, NULL, NULL, NULL, ?4, ?5)",
+            params![1_i64, 101_i64, "高二1考场", "3层", 1_i64],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO latest_exam_plan_spaces (id, session_id, space_type, space_name, original_class_name, self_study_topic_kind, self_study_topic_subjects_json, self_study_topic_label, floor, sort_index)
+             VALUES (?1, ?2, 'exam_room', ?3, NULL, NULL, NULL, NULL, ?4, ?5)",
+            params![2_i64, 101_i64, "高二2考场", "4层", 2_i64],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO latest_exam_plan_spaces (id, session_id, space_type, space_name, original_class_name, self_study_topic_kind, self_study_topic_subjects_json, self_study_topic_label, floor, sort_index)
+             VALUES (?1, ?2, 'exam_room', ?3, NULL, NULL, NULL, NULL, ?4, ?5)",
+            params![3_i64, 102_i64, "高二3考场", "3层", 1_i64],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO latest_exam_plan_spaces (id, session_id, space_type, space_name, original_class_name, self_study_topic_kind, self_study_topic_subjects_json, self_study_topic_label, floor, sort_index)
+             VALUES (?1, ?2, 'exam_room', ?3, NULL, NULL, NULL, NULL, ?4, ?5)",
+            params![4_i64, 102_i64, "高二4考场", "4层", 2_i64],
+        )
+        .unwrap();
+
+        let session_times = vec![
+            SessionTimeRuntime {
+                session_id: 101,
+                grade_name: "高二".to_string(),
+                subject: Subject::English,
+                start_at: "2026-03-24T08:00".to_string(),
+                end_at: "2026-03-24T10:00".to_string(),
+                start_ts: 1_000,
+                end_ts: 2_000,
+            },
+            SessionTimeRuntime {
+                session_id: 102,
+                grade_name: "高二".to_string(),
+                subject: Subject::Russian,
+                start_at: "2026-03-24T08:00".to_string(),
+                end_at: "2026-03-24T10:00".to_string(),
+                start_ts: 1_000,
+                end_ts: 2_000,
+            },
+        ];
+
+        let tasks = build_staff_tasks(
+            &conn,
+            &session_times,
+            &test_runtime_config(),
+            &HashMap::new(),
+            &[],
+        )
+        .expect("foreign-group tasks should build");
+
+        let floor_rovers = tasks
+            .iter()
+            .filter(|task| task.role == StaffRole::FloorRover)
+            .collect::<Vec<_>>();
+        assert_eq!(floor_rovers.len(), 2, "三楼和四楼各只保留一个流动监考");
+        assert!(floor_rovers.iter().any(|task| task.floor == "3层"));
+        assert!(floor_rovers.iter().any(|task| task.floor == "4层"));
+        for task in floor_rovers {
+            assert_eq!(
+                task.subject_avoidance_subjects,
+                vec![Subject::English, Subject::Russian]
+            );
+        }
+    }
+
+    #[test]
+    fn test_floor_rover_candidates_avoid_all_subjects_in_foreign_group() {
+        let teachers = vec![
+            TeacherInfo {
+                id: 1,
+                name: "英语老师".to_string(),
+                subjects: HashSet::from([Subject::English]),
+                class_names: HashSet::new(),
+                homeroom_classes: HashSet::new(),
+                is_middle_manager: false,
+            },
+            TeacherInfo {
+                id: 2,
+                name: "俄语老师".to_string(),
+                subjects: HashSet::from([Subject::Russian]),
+                class_names: HashSet::new(),
+                homeroom_classes: HashSet::new(),
+                is_middle_manager: false,
+            },
+            TeacherInfo {
+                id: 3,
+                name: "历史老师".to_string(),
+                subjects: HashSet::from([Subject::History]),
+                class_names: HashSet::new(),
+                homeroom_classes: HashSet::new(),
+                is_middle_manager: false,
+            },
+        ];
+        let task = TaskBuild {
+            session_id: Some(101),
+            space_id: None,
+            task_source: StaffTaskSource::Exam,
+            role: StaffRole::FloorRover,
+            grade_name: "高二".to_string(),
+            subject: Subject::English,
+            space_name: "3层 楼层流动".to_string(),
+            floor: "3层".to_string(),
+            start_at: "2026-03-24T08:00".to_string(),
+            end_at: "2026-03-24T10:00".to_string(),
+            start_ts: 1_000,
+            end_ts: 2_000,
+            duration_minutes: 120,
+            subject_avoidance_subjects: vec![Subject::English, Subject::Russian],
+            recommended_self_study_topic: None,
+            priority_self_study_chain: Vec::new(),
+            day_key: "2026-03-24".to_string(),
+            half_day: HalfDay::Morning,
+        };
+
+        let summary =
+            build_task_candidate_summary(&task, &teachers, &HashSet::new(), &test_runtime_config());
+
+        assert_eq!(summary.candidates.len(), 1);
+        assert_eq!(summary.candidates[0].teacher_id, 3);
     }
 
     #[test]
@@ -4296,6 +4522,50 @@ mod tests {
     }
 
     #[test]
+    fn test_exam_exclusion_only_blocks_exam_room_not_self_study_or_floor_rover() {
+        let teachers = vec![TeacherInfo {
+            id: 11,
+            name: "可排老师".to_string(),
+            subjects: HashSet::from([Subject::Chinese]),
+            class_names: HashSet::new(),
+            homeroom_classes: HashSet::new(),
+            is_middle_manager: false,
+        }];
+        let exclusion_pairs = HashSet::from([(11_i64, 1_i64)]);
+
+        let exam_room_summary = build_task_candidate_summary(
+            &sample_exam_task(Subject::Math),
+            &teachers,
+            &exclusion_pairs,
+            &test_runtime_config(),
+        );
+        assert!(exam_room_summary.candidates.is_empty());
+
+        let self_study_summary = build_task_candidate_summary(
+            &sample_self_study_task(StaffTaskSource::ExamLinkedSelfStudy),
+            &teachers,
+            &exclusion_pairs,
+            &test_runtime_config(),
+        );
+        assert_eq!(self_study_summary.candidates.len(), 1);
+        assert_eq!(self_study_summary.candidates[0].teacher_id, 11);
+
+        let mut floor_rover_task = sample_exam_task(Subject::Math);
+        floor_rover_task.role = StaffRole::FloorRover;
+        floor_rover_task.space_id = None;
+        floor_rover_task.space_name = "4层 楼层流动".to_string();
+        floor_rover_task.subject_avoidance_subjects = vec![Subject::Math];
+        let floor_rover_summary = build_task_candidate_summary(
+            &floor_rover_task,
+            &teachers,
+            &exclusion_pairs,
+            &test_runtime_config(),
+        );
+        assert_eq!(floor_rover_summary.candidates.len(), 1);
+        assert_eq!(floor_rover_summary.candidates[0].teacher_id, 11);
+    }
+
+    #[test]
     fn test_candidate_summary_supports_foreign_group_and_free_study_topics() {
         let teachers = vec![
             TeacherInfo {
@@ -4423,6 +4693,7 @@ mod tests {
                 start_ts: 1_000,
                 end_ts: 2_000,
                 duration_minutes: 120,
+                subject_avoidance_subjects: vec![Subject::Math],
                 recommended_self_study_topic: None,
                 priority_self_study_chain: Vec::new(),
                 day_key: "2026-03-24".to_string(),
@@ -4442,6 +4713,7 @@ mod tests {
                 start_ts: 1_000,
                 end_ts: 2_000,
                 duration_minutes: 120,
+                subject_avoidance_subjects: vec![Subject::Biology],
                 recommended_self_study_topic: Some(topic_subject(Subject::English)),
                 priority_self_study_chain: vec![topic_subject(Subject::English)],
                 day_key: "2026-03-24".to_string(),
@@ -4496,6 +4768,7 @@ mod tests {
                 start_ts: 1_000,
                 end_ts: 2_000,
                 duration_minutes: 60,
+                subject_avoidance_subjects: vec![Subject::Math],
                 recommended_self_study_topic: None,
                 priority_self_study_chain: Vec::new(),
                 day_key: "2026-03-24".to_string(),
@@ -4515,6 +4788,7 @@ mod tests {
                 start_ts: 2_000,
                 end_ts: 3_000,
                 duration_minutes: 60,
+                subject_avoidance_subjects: vec![Subject::Biology],
                 recommended_self_study_topic: None,
                 priority_self_study_chain: Vec::new(),
                 day_key: "2026-03-24".to_string(),
@@ -4534,6 +4808,7 @@ mod tests {
                 start_ts: 3_000,
                 end_ts: 4_000,
                 duration_minutes: 60,
+                subject_avoidance_subjects: vec![Subject::Physics],
                 recommended_self_study_topic: None,
                 priority_self_study_chain: Vec::new(),
                 day_key: "2026-03-24".to_string(),
@@ -4553,6 +4828,7 @@ mod tests {
                 start_ts: 4_000,
                 end_ts: 5_000,
                 duration_minutes: 60,
+                subject_avoidance_subjects: vec![Subject::English],
                 recommended_self_study_topic: Some(topic_subject(Subject::English)),
                 priority_self_study_chain: vec![topic_subject(Subject::English)],
                 day_key: "2026-03-24".to_string(),
@@ -4600,6 +4876,7 @@ mod tests {
                 start_ts: 1_000,
                 end_ts: 2_000,
                 duration_minutes: 120,
+                subject_avoidance_subjects: vec![Subject::Math],
                 recommended_self_study_topic: None,
                 priority_self_study_chain: Vec::new(),
                 day_key: "2026-03-24".to_string(),
@@ -4619,6 +4896,7 @@ mod tests {
                 start_ts: 1_000,
                 end_ts: 2_000,
                 duration_minutes: 120,
+                subject_avoidance_subjects: vec![Subject::Math],
                 recommended_self_study_topic: None,
                 priority_self_study_chain: Vec::new(),
                 day_key: "2026-03-24".to_string(),
