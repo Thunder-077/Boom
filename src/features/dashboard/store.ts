@@ -629,6 +629,16 @@ export function createExamAllocationStore(service: ExamAllocationService = examA
           exclusionPairs.set(`${teacherId}-${sessionId}`, { teacherId, sessionId });
           continue;
         }
+        // sessionId=0 means "exclude all sessions" from the invigilation settings UI.
+        if (sessionId === 0) {
+          for (const session of state.sessions) {
+            exclusionPairs.set(`${teacherId}-${session.id}`, {
+              teacherId,
+              sessionId: session.id,
+            });
+          }
+          continue;
+        }
         const templateOption = state.exclusionSessionOptions.find(
           (option) => option.sessionId === sessionId,
         );
@@ -703,10 +713,38 @@ export function createExamAllocationStore(service: ExamAllocationService = examA
 
   async function addStaffExclusion(teacherId: number, sessionId: number) {
     const teacher = state.teachers.find((item) => item.id === teacherId);
+    if (!teacher) {
+      return false;
+    }
+
+    if (sessionId === 0) {
+      let added = false;
+      for (const session of state.sessions) {
+        const exists = state.staffExclusions.some(
+          (item) => item.teacherId === teacherId && item.sessionId === session.id,
+        );
+        if (exists) {
+          continue;
+        }
+        state.staffExclusions.unshift({
+          teacherId,
+          teacherName: teacher.teacherName,
+          sessionId: session.id,
+          sessionLabel: `${session.gradeName} ${subjectLabel(session.subject)}（所有场次）`,
+        });
+        added = true;
+      }
+      if (!added) {
+        return false;
+      }
+      await service.replacePersistedInvigilationExclusions(state.staffExclusions);
+      return true;
+    }
+
     const session = state.exclusionSessionOptions.find(
       (item) => item.sessionId === sessionId,
     );
-    if (!teacher || !session) {
+    if (!session) {
       return false;
     }
     const exists = state.staffExclusions.some(

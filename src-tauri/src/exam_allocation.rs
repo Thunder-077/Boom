@@ -678,36 +678,18 @@ pub fn build_self_study_topic_chain(
     }
     slots.sort_by(|a, b| a.start_ts.cmp(&b.start_ts).then(a.order_key.cmp(&b.order_key)));
 
-    let mut consumed_future_topics = 0_usize;
-    for slot in &slots {
-        if slot.start_ts >= current_start_ts {
-            break;
-        }
-        if resolve_class_topic_for_slot(slot, subjects_for_class).is_some() {
-            consumed_future_topics = 0;
-        } else {
-            consumed_future_topics += 1;
-        }
-    }
-
-    let mut future_topics = Vec::<SelfStudyTopic>::new();
+    // 自习主题始终围绕“这个班下一门还要考什么”来推荐。
+    // 这里不再根据历史自习场次跳过未来科目，避免连续两场自习被推进到不同科目，
+    // 也避免明明后续还有考试却被回退成“自由自习”。
+    let mut chain = Vec::<SelfStudyTopic>::new();
     for slot in &slots {
         if slot.start_ts <= current_start_ts {
             continue;
         }
         if let Some(topic) = resolve_class_topic_for_slot(slot, subjects_for_class) {
-            future_topics.push(topic);
+            chain.push(topic);
         }
     }
-
-    let mut chain = if consumed_future_topics < future_topics.len() {
-        future_topics
-            .into_iter()
-            .skip(consumed_future_topics)
-            .collect::<Vec<_>>()
-    } else {
-        Vec::new()
-    };
 
     if chain.is_empty() {
         chain.push(build_free_study_topic());
@@ -2322,7 +2304,7 @@ mod tests {
     }
 
     #[test]
-    fn test_self_study_topic_chain_advances_for_consecutive_self_study() {
+    fn test_self_study_topic_chain_keeps_next_exam_for_consecutive_self_study() {
         let sessions = vec![
             SelfStudyScheduleSession {
                 subject: Subject::Math,
@@ -2385,6 +2367,7 @@ mod tests {
         assert_eq!(
             second_chain,
             vec![
+                build_subject_self_study_topic(Subject::Russian),
                 build_subject_self_study_topic(Subject::History),
                 build_subject_self_study_topic(Subject::Politics),
             ]
@@ -2405,5 +2388,31 @@ mod tests {
         )]);
         let chain = build_self_study_topic_chain(2_000, "高二5班", &sessions, &class_subjects);
         assert_eq!(chain, vec![build_free_study_topic()]);
+    }
+
+    #[test]
+    fn test_self_study_topic_chain_prefers_later_exam_over_free_study() {
+        let sessions = vec![
+            SelfStudyScheduleSession {
+                subject: Subject::Physics,
+                start_ts: 1_000,
+                order_key: 0,
+                is_foreign_group: false,
+            },
+            SelfStudyScheduleSession {
+                subject: Subject::Chemistry,
+                start_ts: 4_000,
+                order_key: 1,
+                is_foreign_group: false,
+            },
+        ];
+        let class_subjects = HashMap::from([(
+            "高二9班".to_string(),
+            HashSet::from([Subject::Physics, Subject::Chemistry]),
+        )]);
+
+        let chain = build_self_study_topic_chain(2_000, "高二9班", &sessions, &class_subjects);
+
+        assert_eq!(chain, vec![build_subject_self_study_topic(Subject::Chemistry)]);
     }
 }

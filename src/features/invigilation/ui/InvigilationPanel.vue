@@ -35,7 +35,7 @@
       </ConfigCard>
     </div>
 
-    <ConfigCard class="exclude-card" title="考试禁排设置" description="选择老师不参与某场考试的监考，系统在分配时自动跳过。">
+    <ConfigCard class="exclude-card" title="考试禁排设置" description="选择老师不参与某场考试的考场监考，系统在分配时自动跳过。">
       <div class="exclude-toolbar">
         <FluentSelect
           :model-value="selectedTeacherId ?? ''"
@@ -378,11 +378,32 @@
         <span v-if="subjectMenuSelectedSubject === subject" class="material-symbols-rounded">check</span>
       </button>
     </div>
+
+    <div v-if="dialogState.visible" class="dialog-mask" @click.self="closeDialog(false)">
+      <section class="dialog card-shell">
+        <header class="dialog-head">
+          <h3>{{ dialogState.title }}</h3>
+          <button class="dialog-close" type="button" @click="closeDialog(false)">×</button>
+        </header>
+        <p class="dialog-summary">{{ dialogState.summary }}</p>
+        <ul v-if="dialogState.details.length > 0" class="dialog-details">
+          <li v-for="(line, index) in dialogState.details" :key="index">{{ line }}</li>
+        </ul>
+        <footer class="dialog-actions">
+          <button v-if="dialogState.kind === 'confirm'" class="secondary-btn" type="button" @click="closeDialog(false)">
+            {{ dialogState.cancelText }}
+          </button>
+          <button class="primary-btn" type="button" @click="closeDialog(true)">
+            {{ dialogState.confirmText }}
+          </button>
+        </footer>
+      </section>
+    </div>
   </section>
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch, reactive } from "vue";
 import type { ClassConfigRow } from "../../../entities/class-config/model";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import type { ExamStaffAssignmentProgress, InvigilationConfig } from "../../../entities/exam-plan/model";
@@ -444,6 +465,45 @@ const assignmentNotice = ref<AssignmentNotice | null>(null);
 const assignmentNoticeEl = ref<HTMLElement | null>(null);
 let removeAssignmentProgressListener: UnlistenFn | null = null;
 
+let dialogResolver: ((value: boolean) => void) | null = null;
+const dialogState = reactive({
+  visible: false,
+  kind: "confirm" as "confirm" | "alert",
+  title: "",
+  summary: "",
+  details: [] as string[],
+  confirmText: "确认",
+  cancelText: "取消",
+});
+
+function openDialog(options: {
+  kind: "confirm" | "alert";
+  title: string;
+  summary: string;
+  details?: string[];
+  confirmText?: string;
+  cancelText?: string;
+}) {
+  dialogState.visible = true;
+  dialogState.kind = options.kind;
+  dialogState.title = options.title;
+  dialogState.summary = options.summary;
+  dialogState.details = options.details ?? [];
+  dialogState.confirmText = options.confirmText ?? (options.kind === "confirm" ? "确认" : "知道了");
+  dialogState.cancelText = options.cancelText ?? "取消";
+  return new Promise<boolean>((resolve) => {
+    dialogResolver = resolve;
+  });
+}
+
+function closeDialog(result: boolean) {
+  if (dialogResolver) {
+    dialogResolver(result);
+    dialogResolver = null;
+  }
+  dialogState.visible = false;
+}
+
 const subjectLabelMap: Record<Subject, string> = {
   [SubjectEnum.Chinese]: "语文",
   [SubjectEnum.Math]: "数学",
@@ -478,6 +538,7 @@ const middleManagerExceptionCount = computed(() => store.viewState.invigilationC
 const teacherSelectOptions = computed(() => [{ label: "选择教师", value: "" }, ...store.viewState.teachers.map((item) => ({ label: item.teacherName, value: item.id }))]);
 const sessionSelectOptions = computed(() => [
   { label: "选择考试场次", value: "" },
+  { label: "禁排所有场次", value: 0 },
   ...store.viewState.exclusionSessionOptions.map((item) => ({ label: item.label, value: item.sessionId })),
 ]);
 const middleManagerTeachers = computed(() => [...store.viewState.teachers].filter((item) => item.isMiddleManager).sort((a, b) => a.teacherName.localeCompare(b.teacherName, "zh-CN")));
@@ -964,6 +1025,20 @@ function formatSolveDuration(durationMs: number) {
 }
 
 async function assignTeachers() {
+  if (store.viewState.staffOverview.generatedAt) {
+    const confirmed = await openDialog({
+      kind: "confirm",
+      title: "系统已存在分配数据",
+      summary: "重新分配耗时较长，且将覆盖当前生效的监考排班。",
+      details: ["是否确认重新进行分配？"],
+      confirmText: "确认",
+      cancelText: "取消",
+    });
+    if (!confirmed) {
+      return;
+    }
+  }
+
   assignmentNotice.value = null;
   store.setAssignmentProgress({
     status: "running",
@@ -1078,6 +1153,64 @@ onBeforeUnmount(() => {
 </script>
 
 <style scoped>
+.dialog-mask {
+  position: fixed;
+  inset: 0;
+  background: var(--surface-overlay);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 600;
+}
+.dialog {
+  width: 480px;
+  max-width: calc(100vw - 32px);
+  padding: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.dialog-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+.dialog-head h3 {
+  margin: 0;
+  font-size: 20px;
+  font-weight: 700;
+}
+.dialog-close {
+  width: 30px;
+  height: 30px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  font-size: 20px;
+}
+.dialog-summary {
+  margin: 0;
+  color: var(--text-primary);
+  font-size: 14px;
+  line-height: 1.55;
+}
+.dialog-details {
+  margin: 0;
+  padding-left: 18px;
+  color: var(--text-secondary);
+  font-size: 13px;
+  display: grid;
+  gap: 4px;
+}
+.dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
 .panel {
   position: relative;
   display: flex;
