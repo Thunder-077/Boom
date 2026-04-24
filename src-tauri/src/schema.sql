@@ -307,14 +307,19 @@ CREATE TABLE IF NOT EXISTS invigilation_config_settings (
     updated_at TEXT NOT NULL
 );
 
-CREATE TABLE IF NOT EXISTS invigilation_staff_exclusions (
+CREATE TABLE IF NOT EXISTS invigilation_custom_rules (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
+    action_type TEXT NOT NULL DEFAULT 'exclude',
     teacher_id INTEGER NOT NULL,
     teacher_name TEXT NOT NULL,
-    session_id INTEGER NOT NULL,
-    session_label TEXT NOT NULL,
-    created_at TEXT NOT NULL,
-    UNIQUE(teacher_id, session_id)
+    time_scope_type TEXT NOT NULL DEFAULT 'exam_session',
+    time_scope_ids_json TEXT NOT NULL DEFAULT '[]',
+    time_scope_labels_json TEXT NOT NULL DEFAULT '[]',
+    task_scope_type TEXT NOT NULL,
+    target_scope_type TEXT NOT NULL DEFAULT 'all',
+    target_ids_json TEXT NOT NULL DEFAULT '[]',
+    target_labels_json TEXT NOT NULL DEFAULT '[]',
+    created_at TEXT NOT NULL
 );
 
 -- ---------------------------------------------------------------------------
@@ -327,4 +332,4 @@ CREATE INDEX IF NOT EXISTS idx_latest_exam_staff_tasks_session ON latest_exam_st
 CREATE INDEX IF NOT EXISTS idx_latest_exam_staff_tasks_role_status ON latest_exam_staff_tasks(role, status);
 CREATE INDEX IF NOT EXISTS idx_latest_exam_staff_assignments_task ON latest_exam_staff_assignments(task_id);
 CREATE INDEX IF NOT EXISTS idx_latest_teacher_duty_stats_total ON latest_teacher_duty_stats(total_minutes);
-CREATE INDEX IF NOT EXISTS idx_invigilation_staff_exclusions_session ON invigilation_staff_exclusions(session_id);
+CREATE INDEX IF NOT EXISTS idx_invigilation_custom_rules_teacher ON invigilation_custom_rules(teacher_id);

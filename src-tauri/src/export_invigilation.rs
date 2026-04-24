@@ -94,7 +94,7 @@ struct AccountingConfig {
 struct AccountingFormulaBinding {
     teacher_cell_row: u32,
     teacher_cell_col: u16,
-    subject_group: String,
+    theme_label: String,
     duration_minutes: i64,
     is_outdoor: bool,
 }
@@ -119,7 +119,10 @@ fn parse_datetime(value: &str) -> Option<NaiveDateTime> {
 }
 
 fn is_foreign_subject(subject: Subject) -> bool {
-    matches!(subject, Subject::English | Subject::Russian | Subject::Japanese)
+    matches!(
+        subject,
+        Subject::English | Subject::Russian | Subject::Japanese
+    )
 }
 
 fn subject_label(subject: Subject) -> &'static str {
@@ -157,7 +160,11 @@ fn slot_bucket(task_source: &str) -> &'static str {
 }
 
 fn slot_header_label(row: &TaskExportRow) -> String {
-    format!("{}-{}", row.grade_name, top_subject_group(&row.task_source, row.subject))
+    format!(
+        "{}-{}",
+        row.grade_name,
+        top_subject_group(&row.task_source, row.subject)
+    )
 }
 
 fn finalize_slot_header_lines(slot: &SlotDef) -> Vec<String> {
@@ -206,8 +213,8 @@ fn build_date_label(start_at: &str) -> Result<String, AppError> {
 fn build_time_label(start_at: &str, end_at: &str) -> Result<String, AppError> {
     let start = parse_datetime(start_at)
         .ok_or_else(|| AppError::new(format!("无法解析监考开始时间: {start_at}")))?;
-    let end =
-        parse_datetime(end_at).ok_or_else(|| AppError::new(format!("无法解析监考结束时间: {end_at}")))?;
+    let end = parse_datetime(end_at)
+        .ok_or_else(|| AppError::new(format!("无法解析监考结束时间: {end_at}")))?;
     Ok(format!("{}-{}", start.format("%H:%M"), end.format("%H:%M")))
 }
 
@@ -292,9 +299,7 @@ fn pretty_floor(value: &str) -> String {
 }
 
 fn sort_floor_labels(a: &str, b: &str) -> Ordering {
-    floor_number(a)
-        .cmp(&floor_number(b))
-        .then(a.cmp(b))
+    floor_number(a).cmp(&floor_number(b)).then(a.cmp(b))
 }
 
 fn display_width(value: &str) -> usize {
@@ -302,6 +307,14 @@ fn display_width(value: &str) -> usize {
         .chars()
         .map(|ch| if ch.is_ascii() { 1 } else { 2 })
         .sum::<usize>()
+}
+
+fn multiline_display_width(value: &str) -> usize {
+    value
+        .split('\n')
+        .map(display_width)
+        .max()
+        .unwrap_or(0)
 }
 
 fn is_pending_teacher_name(value: &str) -> bool {
@@ -332,22 +345,20 @@ fn load_exam_title(conn: &rusqlite::Connection) -> Result<String, AppError> {
     Ok(title)
 }
 
-fn accounting_subject_headers() -> [&'static str; 13] {
-    [
-        "语文",
-        "数学",
-        "外语",
-        "历史",
-        "地理",
-        "生物",
-        "思想政治",
-        "物理",
-        "化学",
-        "自习",
-        "长时科目",
-        "场内",
-        "场外",
-    ]
+fn collect_accounting_exam_theme_headers(slots: &[SlotDef]) -> Vec<String> {
+    let mut headers = Vec::<String>::new();
+    for slot in slots {
+        if slot.key.bucket == "full_self_study" {
+            continue;
+        }
+        // 核算表按“监考表第一行的时段块”分列：
+        // 同一时段即使存在多个“年级-科目”，也应共享同一列。
+        let merged_label = finalize_slot_header_lines(slot).join("\n");
+        if !headers.iter().any(|item| item == &merged_label) {
+            headers.push(merged_label);
+        }
+    }
+    headers
 }
 
 fn normalize_subject_group(subject: Subject) -> &'static str {
@@ -493,15 +504,7 @@ fn load_accounting_config(conn: &rusqlite::Connection) -> Result<AccountingConfi
         self_study_date,
         self_study_start_time,
         self_study_end_time,
-    ): (
-        f64,
-        f64,
-        i64,
-        String,
-        String,
-        String,
-        String,
-    ) = conn.query_row(
+    ): (f64, f64, i64, String, String, String, String) = conn.query_row(
         r#"
         SELECT
           indoor_allowance_per_minute,
@@ -539,7 +542,11 @@ fn load_accounting_config(conn: &rusqlite::Connection) -> Result<AccountingConfi
         && !self_study_start_time.trim().is_empty()
         && !self_study_end_time.trim().is_empty()
     {
-        let start = format!("{}T{}", self_study_date.trim(), self_study_start_time.trim());
+        let start = format!(
+            "{}T{}",
+            self_study_date.trim(),
+            self_study_start_time.trim()
+        );
         let end = format!("{}T{}", self_study_date.trim(), self_study_end_time.trim());
         match (parse_datetime(&start), parse_datetime(&end)) {
             (Some(start_dt), Some(end_dt)) if end_dt > start_dt => {
@@ -569,7 +576,9 @@ fn middle_manager_participates(
     if !is_middle_manager {
         return true;
     }
-    let is_exception = config.middle_manager_exception_teacher_ids.contains(&teacher_id);
+    let is_exception = config
+        .middle_manager_exception_teacher_ids
+        .contains(&teacher_id);
     if config.middle_manager_default_enabled {
         !is_exception
     } else {
@@ -649,9 +658,7 @@ fn load_export_rows(conn: &rusqlite::Connection) -> Result<Vec<TaskExportRow>, A
     Ok(out)
 }
 
-fn load_exam_counts(
-    conn: &rusqlite::Connection,
-) -> Result<HashMap<(i64, i64), i64>, AppError> {
+fn load_exam_counts(conn: &rusqlite::Connection) -> Result<HashMap<(i64, i64), i64>, AppError> {
     let mut stmt = conn.prepare(
         r#"
         SELECT session_id, space_id, COUNT(*)
@@ -697,8 +704,16 @@ fn build_slots(rows: &[TaskExportRow]) -> Result<Vec<SlotDef>, AppError> {
                 header_lines: Vec::new(),
                 date_label: build_date_label(&row.start_at)?,
                 time_label: build_time_label(&row.start_at, &row.end_at)?,
-                left_header: if is_self_study_group { "班级" } else { "考生数" },
-                right_header: if is_self_study_group { "教师" } else { "监考员" },
+                left_header: if is_self_study_group {
+                    "班级"
+                } else {
+                    "考生数"
+                },
+                right_header: if is_self_study_group {
+                    "教师"
+                } else {
+                    "监考员"
+                },
                 start_ts: row.start_ts,
                 teacher_cols: 1,
             });
@@ -740,9 +755,7 @@ fn collect_room_cells(
         }
         let room_name = normalize_room_name(&row.space_name);
         room_names.insert(room_name.clone());
-        let entry = cells
-            .entry((room_name, slot_key.clone()))
-            .or_default();
+        let entry = cells.entry((room_name, slot_key.clone())).or_default();
         match row.role.as_str() {
             "exam_room_invigilator" => {
                 if let (Some(session_id), Some(space_id)) = (row.session_id, row.space_id) {
@@ -752,9 +765,11 @@ fn collect_room_cells(
                         }
                     }
                 }
-                entry
-                    .teachers
-                    .push(row.teacher_name.clone().unwrap_or_else(|| "待分配".to_string()));
+                entry.teachers.push(
+                    row.teacher_name
+                        .clone()
+                        .unwrap_or_else(|| "待分配".to_string()),
+                );
             }
             "self_study_supervisor" => {
                 if entry.left.is_empty() {
@@ -763,9 +778,11 @@ fn collect_room_cells(
                         .clone()
                         .unwrap_or_else(|| "自习".to_string());
                 }
-                entry
-                    .teachers
-                    .push(row.teacher_name.clone().unwrap_or_else(|| "待分配".to_string()));
+                entry.teachers.push(
+                    row.teacher_name
+                        .clone()
+                        .unwrap_or_else(|| "待分配".to_string()),
+                );
             }
             _ => {}
         }
@@ -802,9 +819,11 @@ fn collect_floor_cells(
         if entry.left.is_empty() {
             entry.left = floor_label;
         }
-        entry
-            .teachers
-            .push(row.teacher_name.clone().unwrap_or_else(|| "待分配".to_string()));
+        entry.teachers.push(
+            row.teacher_name
+                .clone()
+                .unwrap_or_else(|| "待分配".to_string()),
+        );
     }
 
     let mut ordered_floors = floors.into_iter().collect::<Vec<_>>();
@@ -843,7 +862,14 @@ fn write_headers(
         if t_cols == 1 {
             sheet.write_string_with_format(3, col + 1, slot.right_header, group_fmt)?;
         } else {
-            sheet.merge_range(3, col + 1, 3, col + t_cols as u16, slot.right_header, group_fmt)?;
+            sheet.merge_range(
+                3,
+                col + 1,
+                3,
+                col + t_cols as u16,
+                slot.right_header,
+                group_fmt,
+            )?;
         }
         col += col_span;
     }
@@ -863,9 +889,7 @@ fn write_room_section(
     plain_wrap_fmt: &Format,
 ) -> Result<u32, XlsxError> {
     let pending_wrap_fmt = wrap_fmt.clone().set_font_color(Color::RGB(ALERT_RED));
-    let pending_plain_wrap_fmt = plain_wrap_fmt
-        .clone()
-        .set_font_color(Color::RGB(ALERT_RED));
+    let pending_plain_wrap_fmt = plain_wrap_fmt.clone().set_font_color(Color::RGB(ALERT_RED));
     let mut row = start_row;
     for room_name in room_names {
         sheet.write_string_with_format(row, 0, room_name, body_fmt)?;
@@ -936,7 +960,12 @@ fn write_room_section(
                     t_written += 1;
                 }
                 while t_written < t_cols {
-                    sheet.write_string_with_format(row, col + 1 + t_written as u16, "", right_fmt)?;
+                    sheet.write_string_with_format(
+                        row,
+                        col + 1 + t_written as u16,
+                        "",
+                        right_fmt,
+                    )?;
                     t_written += 1;
                 }
             }
@@ -978,8 +1007,16 @@ fn write_floor_section(
             let cell = cells.get(&(floor.clone(), slot.key.clone()));
             let left = cell.map(|item| item.left.as_str()).unwrap_or("");
             let is_empty_cell = left.is_empty() && cell.map_or(true, |c| c.teachers.is_empty());
-            let left_fmt = if is_empty_cell { plain_body_fmt } else { body_fmt };
-            let right_fmt = if is_empty_cell { plain_wrap_fmt } else { wrap_fmt };
+            let left_fmt = if is_empty_cell {
+                plain_body_fmt
+            } else {
+                body_fmt
+            };
+            let right_fmt = if is_empty_cell {
+                plain_wrap_fmt
+            } else {
+                wrap_fmt
+            };
             sheet.write_string_with_format(row, col, left, left_fmt)?;
             let teachers = cell.map(|item| item.teachers.clone()).unwrap_or_default();
             if teachers.len() <= 1 && t_cols > 1 {
@@ -1007,7 +1044,12 @@ fn write_floor_section(
                     t_written += 1;
                 }
                 while t_written < t_cols {
-                    sheet.write_string_with_format(row, col + 1 + t_written as u16, "", right_fmt)?;
+                    sheet.write_string_with_format(
+                        row,
+                        col + 1 + t_written as u16,
+                        "",
+                        right_fmt,
+                    )?;
                     t_written += 1;
                 }
             }
@@ -1026,7 +1068,7 @@ fn apply_column_widths(
     room_cells: &HashMap<(String, SlotKey), CellValue>,
     floor_cells: &HashMap<(String, SlotKey), CellValue>,
 ) -> Result<(), XlsxError> {
-        let total_cols = 1 + slots.iter().map(|s| 1 + s.teacher_cols).sum::<usize>();
+    let total_cols = 1 + slots.iter().map(|s| 1 + s.teacher_cols).sum::<usize>();
     let mut widths = vec![display_width("流动监考").max(display_width("考场")); total_cols];
     for room in room_names {
         widths[0] = widths[0].max(display_width(room));
@@ -1039,7 +1081,7 @@ fn apply_column_widths(
     for slot in slots {
         let left_col = current_col;
         widths[left_col] = widths[left_col].max(display_width(slot.left_header));
-        
+
         if slot.teacher_cols == 1 {
             widths[left_col + 1] = widths[left_col + 1].max(display_width(slot.right_header));
         } else {
@@ -1077,7 +1119,8 @@ fn apply_column_widths(
                 widths[left_col] = widths[left_col].max(display_width(&left));
                 for (i, t_name) in cell.teachers.iter().enumerate() {
                     if i < slot.teacher_cols {
-                        widths[left_col + 1 + i] = widths[left_col + 1 + i].max(display_width(t_name));
+                        widths[left_col + 1 + i] =
+                            widths[left_col + 1 + i].max(display_width(t_name));
                     }
                 }
             }
@@ -1088,7 +1131,8 @@ fn apply_column_widths(
                 widths[left_col] = widths[left_col].max(display_width(&cell.left));
                 for (i, t_name) in cell.teachers.iter().enumerate() {
                     if i < slot.teacher_cols {
-                        widths[left_col + 1 + i] = widths[left_col + 1 + i].max(display_width(t_name));
+                        widths[left_col + 1 + i] =
+                            widths[left_col + 1 + i].max(display_width(t_name));
                     }
                 }
             }
@@ -1164,12 +1208,24 @@ fn build_row_lookup(items: &[String], start_row: u32) -> HashMap<String, u32> {
     out
 }
 
-fn accounting_subject_group_for_task(row: &TaskExportRow) -> String {
+fn accounting_theme_for_task(
+    row: &TaskExportRow,
+    slot_header_labels: &HashMap<SlotKey, Vec<String>>,
+) -> String {
     if row.task_source == "full_self_study" {
-        "自习".to_string()
-    } else {
-        normalize_subject_group(row.subject).to_string()
+        return "自习".to_string();
     }
+
+    let slot_key = SlotKey {
+        bucket: slot_bucket(&row.task_source).to_string(),
+        start_at: row.start_at.clone(),
+        end_at: row.end_at.clone(),
+    };
+    if let Some(labels) = slot_header_labels.get(&slot_key) {
+        // 与监考表保持一致：一个时段块只对应一个核算列。
+        return labels.join("\n");
+    }
+    slot_header_label(row)
 }
 
 fn build_accounting_formula_bindings(
@@ -1178,6 +1234,10 @@ fn build_accounting_formula_bindings(
     floors: &[String],
     slots: &[SlotDef],
 ) -> Result<Vec<AccountingFormulaBinding>, AppError> {
+    let mut slot_header_labels = HashMap::<SlotKey, Vec<String>>::new();
+    for slot in slots {
+        slot_header_labels.insert(slot.key.clone(), finalize_slot_header_lines(slot));
+    }
     let room_row_lookup = build_row_lookup(room_names, 4);
     let floor_start_row = 4 + room_names.len() as u32;
     let floor_row_lookup = build_row_lookup(floors, floor_start_row);
@@ -1201,9 +1261,10 @@ fn build_accounting_formula_bindings(
 
         let (teacher_cell_row, teacher_cell_col, is_outdoor) = if row.role == "floor_rover" {
             let floor_label = pretty_floor(&row.floor);
-            let teacher_cell_row = floor_row_lookup.get(&floor_label).copied().ok_or_else(|| {
-                AppError::new(format!("导出监考表失败：未找到楼层行 {floor_label}"))
-            })?;
+            let teacher_cell_row =
+                floor_row_lookup.get(&floor_label).copied().ok_or_else(|| {
+                    AppError::new(format!("导出监考表失败：未找到楼层行 {floor_label}"))
+                })?;
             let position = floor_slot_positions
                 .entry((floor_label, slot_key.clone()))
                 .or_default();
@@ -1226,7 +1287,7 @@ fn build_accounting_formula_bindings(
         bindings.push(AccountingFormulaBinding {
             teacher_cell_row,
             teacher_cell_col,
-            subject_group: accounting_subject_group_for_task(row),
+            theme_label: accounting_theme_for_task(row, &slot_header_labels),
             duration_minutes: row.duration_minutes,
             is_outdoor,
         });
@@ -1240,7 +1301,7 @@ fn write_accounting_data_sheet(
     bindings: &[AccountingFormulaBinding],
 ) -> Result<(), AppError> {
     let plain_fmt = Format::new().set_align(FormatAlign::Center);
-    let headers = ["教师", "科目组", "场内", "场外", "时长"];
+    let headers = ["教师", "考场主题", "场内", "场外", "时长"];
 
     sheet
         .set_name(ACCOUNTING_DATA_SHEET_NAME)
@@ -1269,8 +1330,8 @@ fn write_accounting_data_sheet(
             .write_formula_with_format(row, 0, teacher_formula.as_str(), &plain_fmt)
             .map_err(|e| AppError::new(format!("写入核算数据教师公式失败: {e}")))?;
         sheet
-            .write_string_with_format(row, 1, &binding.subject_group, &plain_fmt)
-            .map_err(|e| AppError::new(format!("写入核算数据科目组失败: {e}")))?;
+            .write_string_with_format(row, 1, &binding.theme_label, &plain_fmt)
+            .map_err(|e| AppError::new(format!("写入核算数据考场主题失败: {e}")))?;
         sheet
             .write_number_with_format(
                 row,
@@ -1300,36 +1361,32 @@ fn write_accounting_sheet(
     teacher_rows: &[AccountingTeacherRow],
     config: &AccountingConfig,
     formula_binding_count: usize,
+    exam_theme_headers: &[String],
 ) -> Result<(), AppError> {
-    let headers = [
-        "科目",
-        "教师",
-        "序号",
-        "语文",
-        "数学",
-        "外语",
-        "历史",
-        "地理",
-        "生物",
-        "思想政治",
-        "物理",
-        "化学",
-        "自习",
-        "长时科目",
-        "场内",
-        "场外",
-        "合计",
-        "总时长",
-        "场内时长",
-        "场外时长",
-        "场内津贴",
-        "场外津贴",
-        "总津贴",
-    ];
+    let mut headers = vec!["科目".to_string(), "教师".to_string(), "序号".to_string()];
+    headers.extend(exam_theme_headers.iter().cloned());
+    headers.extend(
+        [
+            "自习",
+            "长时科目",
+            "场内",
+            "场外",
+            "合计",
+            "总时长",
+            "场内时长",
+            "场外时长",
+            "场内津贴",
+            "场外津贴",
+            "总津贴",
+        ]
+        .iter()
+        .map(|item| item.to_string()),
+    );
     let header_fmt = Format::new()
         .set_bold()
         .set_align(FormatAlign::Center)
         .set_align(FormatAlign::VerticalCenter)
+        .set_text_wrap()
         .set_background_color(Color::RGB(ACCOUNTING_HEADER_GRAY))
         .set_border(FormatBorder::Thin);
     let body_fmt = Format::new()
@@ -1341,9 +1398,17 @@ fn write_accounting_sheet(
 
     for (col, header) in headers.iter().enumerate() {
         sheet
-            .write_string_with_format(0, col as u16, *header, &header_fmt)
+            .write_string_with_format(0, col as u16, header, &header_fmt)
             .map_err(|e| AppError::new(format!("写入核算表头失败: {e}")))?;
     }
+    let max_header_lines = headers
+        .iter()
+        .map(|header| header.split('\n').count().max(1))
+        .max()
+        .unwrap_or(1);
+    sheet
+        .set_row_height(0, 24.0 * max_header_lines as f64)
+        .map_err(|e| AppError::new(format!("设置核算表头行高失败: {e}")))?;
 
     let mut rows = teacher_rows.to_vec();
     rows.sort_by(|a, b| {
@@ -1354,14 +1419,28 @@ fn write_accounting_sheet(
             .then(a.teacher_id.cmp(&b.teacher_id))
     });
 
-    let subject_headers = accounting_subject_headers();
-    let mut widths = headers.iter().map(|item| display_width(item)).collect::<Vec<_>>();
+    let mut widths = headers
+        .iter()
+        .map(|item| multiline_display_width(item))
+        .collect::<Vec<_>>();
     let data_end_row = formula_binding_count as u32;
     let teacher_range = excel_col_range_ref(ACCOUNTING_DATA_SHEET_NAME, 0, 1, data_end_row);
-    let subject_group_range = excel_col_range_ref(ACCOUNTING_DATA_SHEET_NAME, 1, 1, data_end_row);
+    let theme_range = excel_col_range_ref(ACCOUNTING_DATA_SHEET_NAME, 1, 1, data_end_row);
     let indoor_range = excel_col_range_ref(ACCOUNTING_DATA_SHEET_NAME, 2, 1, data_end_row);
     let outdoor_range = excel_col_range_ref(ACCOUNTING_DATA_SHEET_NAME, 3, 1, data_end_row);
     let minutes_range = excel_col_range_ref(ACCOUNTING_DATA_SHEET_NAME, 4, 1, data_end_row);
+    let exam_theme_start_col = 3_u16;
+    let self_study_col = exam_theme_start_col + exam_theme_headers.len() as u16;
+    let long_subject_col = self_study_col + 1;
+    let indoor_count_col = long_subject_col + 1;
+    let outdoor_count_col = indoor_count_col + 1;
+    let total_count_col = outdoor_count_col + 1;
+    let total_minutes_col = total_count_col + 1;
+    let indoor_minutes_col = total_minutes_col + 1;
+    let outdoor_minutes_col = indoor_minutes_col + 1;
+    let indoor_allowance_col = outdoor_minutes_col + 1;
+    let outdoor_allowance_col = indoor_allowance_col + 1;
+    let total_allowance_col = outdoor_allowance_col + 1;
     let mut row_index = 1_u32;
     let mut index_in_group = 1_i64;
     let mut group_start = 1_u32;
@@ -1405,59 +1484,100 @@ fn write_accounting_sheet(
         widths[1] = widths[1].max(display_width(&teacher.teacher_name));
         widths[2] = widths[2].max(display_width(&index_in_group.to_string()));
 
-        for (offset, label) in subject_headers.iter().enumerate() {
-            let col = 3 + offset as u16;
-            let formula = match *label {
-                "长时科目" => {
-                    format!(
-                        "=SUM(COUNTIFS({teacher_range},{teacher_name_ref},{subject_group_range},{}),COUNTIFS({teacher_range},{teacher_name_ref},{subject_group_range},{}),COUNTIFS({teacher_range},{teacher_name_ref},{subject_group_range},{}))",
-                        formula_text_literal("语文"),
-                        formula_text_literal("数学"),
-                        formula_text_literal("外语")
-                    )
-                }
-                "场内" => {
-                    format!("=SUMIFS({indoor_range},{teacher_range},{teacher_name_ref})")
-                }
-                "场外" => {
-                    format!("=SUMIFS({outdoor_range},{teacher_range},{teacher_name_ref})")
-                }
-                subject_label => {
-                    let formula = format!(
-                        "=--(COUNTIFS({teacher_range},{teacher_name_ref},{subject_group_range},{})>0)",
-                        formula_text_literal(subject_label)
-                    );
-                    let marker_ref = local_cell_ref(row_index, col);
-                    let outdoor_subject_formula = format!(
-                        "=AND({marker_ref}>0,COUNTIFS({teacher_range},{teacher_name_ref},{subject_group_range},{},{outdoor_range},1)>0)",
-                        formula_text_literal(subject_label)
-                    );
-                    let conditional_format = ConditionalFormatFormula::new()
-                        .set_rule(outdoor_subject_formula.as_str())
-                        .set_format(&red_font_fmt);
-                    sheet
-                        .add_conditional_format(
-                            row_index,
-                            col,
-                            row_index,
-                            col,
-                            &conditional_format,
-                        )
-                        .map_err(|e| AppError::new(format!("写入核算红字条件格式失败: {e}")))?;
-                    formula
-                }
-            };
+        let mut long_subject_refs = Vec::<String>::new();
+        for (offset, label) in exam_theme_headers.iter().enumerate() {
+            let col = exam_theme_start_col + offset as u16;
+            let formula = format!(
+                "=--(COUNTIFS({teacher_range},{teacher_name_ref},{theme_range},{})>0)",
+                formula_text_literal(label)
+            );
             sheet
                 .write_formula_with_format(row_index, col, formula.as_str(), &body_fmt)
                 .map_err(|e| AppError::new(format!("写入核算标记失败: {e}")))?;
+
+            let marker_ref = local_cell_ref(row_index, col);
+            let outdoor_subject_formula = format!(
+                "=AND({marker_ref}>0,COUNTIFS({teacher_range},{teacher_name_ref},{theme_range},{},{outdoor_range},1)>0)",
+                formula_text_literal(label)
+            );
+            let conditional_format = ConditionalFormatFormula::new()
+                .set_rule(outdoor_subject_formula.as_str())
+                .set_format(&red_font_fmt);
+            sheet
+                .add_conditional_format(row_index, col, row_index, col, &conditional_format)
+                .map_err(|e| AppError::new(format!("写入核算红字条件格式失败: {e}")))?;
+
             widths[col as usize] = widths[col as usize].max(display_width("1"));
+            if label == "语文"
+                || label == "数学"
+                || label == "外语"
+                || label.ends_with("-语文")
+                || label.ends_with("-数学")
+                || label.ends_with("-外语")
+            {
+                long_subject_refs.push(local_cell_ref(row_index, col));
+            }
         }
 
-        let total_col = 16_u16;
+        let self_study_formula = format!(
+            "=COUNTIFS({teacher_range},{teacher_name_ref},{theme_range},{})",
+            formula_text_literal("自习")
+        );
+        sheet
+            .write_formula_with_format(
+                row_index,
+                self_study_col,
+                self_study_formula.as_str(),
+                &body_fmt,
+            )
+            .map_err(|e| AppError::new(format!("写入核算自习场次失败: {e}")))?;
+        widths[self_study_col as usize] = widths[self_study_col as usize].max(display_width("99"));
+
+        let long_subject_formula = if long_subject_refs.is_empty() {
+            "=0".to_string()
+        } else {
+            format!("=SUM({})", long_subject_refs.join(","))
+        };
+        sheet
+            .write_formula_with_format(
+                row_index,
+                long_subject_col,
+                long_subject_formula.as_str(),
+                &body_fmt,
+            )
+            .map_err(|e| AppError::new(format!("写入核算长时科目失败: {e}")))?;
+        widths[long_subject_col as usize] =
+            widths[long_subject_col as usize].max(display_width("99"));
+
+        let indoor_count_formula =
+            format!("=SUMIFS({indoor_range},{teacher_range},{teacher_name_ref})");
+        let outdoor_count_formula =
+            format!("=SUMIFS({outdoor_range},{teacher_range},{teacher_name_ref})");
+        sheet
+            .write_formula_with_format(
+                row_index,
+                indoor_count_col,
+                indoor_count_formula.as_str(),
+                &body_fmt,
+            )
+            .map_err(|e| AppError::new(format!("写入核算场内场次失败: {e}")))?;
+        sheet
+            .write_formula_with_format(
+                row_index,
+                outdoor_count_col,
+                outdoor_count_formula.as_str(),
+                &body_fmt,
+            )
+            .map_err(|e| AppError::new(format!("写入核算场外场次失败: {e}")))?;
+        widths[indoor_count_col as usize] =
+            widths[indoor_count_col as usize].max(display_width("99"));
+        widths[outdoor_count_col as usize] =
+            widths[outdoor_count_col as usize].max(display_width("99"));
+
         let total_flags_formula = format!(
             "=SUM({}:{})",
-            local_cell_ref(row_index, 14),
-            local_cell_ref(row_index, 15)
+            local_cell_ref(row_index, indoor_count_col),
+            local_cell_ref(row_index, outdoor_count_col)
         );
         let total_minutes_formula = if teacher.is_middle_manager {
             format!(
@@ -1476,10 +1596,10 @@ fn write_accounting_sheet(
             format!("={actual_outdoor_minutes_expr}")
         };
         let integer_formulas = [
-            (total_col, total_flags_formula),
-            (17_u16, total_minutes_formula),
-            (18_u16, format!("={actual_indoor_minutes_expr}")),
-            (19_u16, outdoor_minutes_formula),
+            (total_count_col, total_flags_formula),
+            (total_minutes_col, total_minutes_formula),
+            (indoor_minutes_col, format!("={actual_indoor_minutes_expr}")),
+            (outdoor_minutes_col, outdoor_minutes_formula),
         ];
         for (col, formula) in integer_formulas {
             sheet
@@ -1488,8 +1608,8 @@ fn write_accounting_sheet(
             widths[col as usize] = widths[col as usize].max(display_width("999"));
         }
 
-        let indoor_minutes_ref = local_cell_ref(row_index, 18);
-        let outdoor_minutes_ref = local_cell_ref(row_index, 19);
+        let indoor_minutes_ref = local_cell_ref(row_index, indoor_minutes_col);
+        let outdoor_minutes_ref = local_cell_ref(row_index, outdoor_minutes_col);
         let indoor_allowance_formula = format!(
             "={indoor_minutes_ref}*{}",
             config.indoor_allowance_per_minute
@@ -1500,13 +1620,13 @@ fn write_accounting_sheet(
         );
         let total_allowance_formula = format!(
             "=SUM({}:{})",
-            local_cell_ref(row_index, 20),
-            local_cell_ref(row_index, 21)
+            local_cell_ref(row_index, indoor_allowance_col),
+            local_cell_ref(row_index, outdoor_allowance_col)
         );
         let decimal_formulas = [
-            (20_u16, indoor_allowance_formula),
-            (21_u16, outdoor_allowance_formula),
-            (22_u16, total_allowance_formula),
+            (indoor_allowance_col, indoor_allowance_formula),
+            (outdoor_allowance_col, outdoor_allowance_formula),
+            (total_allowance_col, total_allowance_formula),
         ];
         for (col, formula) in decimal_formulas {
             sheet
@@ -1591,7 +1711,7 @@ fn build_workbook_from_connection(conn: &rusqlite::Connection) -> Result<Workboo
     let mut slots = build_slots(&rows)?;
     let (room_names, room_cells) = collect_room_cells(&rows, &slots, &exam_counts);
     let (floors, floor_cells) = collect_floor_cells(&rows, &slots);
-    
+
     let mut max_teachers = HashMap::<SlotKey, usize>::new();
     for (room_name, slot_key) in room_cells.keys() {
         let cell = &room_cells[&(room_name.clone(), slot_key.clone())];
@@ -1609,6 +1729,7 @@ fn build_workbook_from_connection(conn: &rusqlite::Connection) -> Result<Workboo
 
     let accounting_teacher_rows = load_accounting_teacher_rows(conn)?;
     let accounting_config = load_accounting_config(conn)?;
+    let accounting_exam_theme_headers = collect_accounting_exam_theme_headers(&slots);
     let accounting_formula_bindings =
         build_accounting_formula_bindings(&rows, &room_names, &floors, &slots)?;
 
@@ -1657,8 +1778,15 @@ fn build_workbook_from_connection(conn: &rusqlite::Connection) -> Result<Workboo
         &plain_wrap_fmt,
     )
     .map_err(|e| AppError::new(format!("写入流动监考失败: {e}")))?;
-    apply_column_widths(sheet, &room_names, &floors, &slots, &room_cells, &floor_cells)
-        .map_err(|e| AppError::new(format!("设置列宽失败: {e}")))?;
+    apply_column_widths(
+        sheet,
+        &room_names,
+        &floors,
+        &slots,
+        &room_cells,
+        &floor_cells,
+    )
+    .map_err(|e| AppError::new(format!("设置列宽失败: {e}")))?;
 
     let accounting_data_sheet = workbook.add_worksheet();
     write_accounting_data_sheet(accounting_data_sheet, &accounting_formula_bindings)?;
@@ -1672,6 +1800,7 @@ fn build_workbook_from_connection(conn: &rusqlite::Connection) -> Result<Workboo
         &accounting_teacher_rows,
         &accounting_config,
         accounting_formula_bindings.len(),
+        &accounting_exam_theme_headers,
     )?;
 
     Ok(workbook)
@@ -1683,8 +1812,7 @@ fn save_workbook_to_dir(
     exam_title: &str,
 ) -> Result<ExportLatestInvigilationScheduleResult, AppError> {
     let exported_at = Utc::now().to_rfc3339();
-    fs::create_dir_all(output_dir)
-        .map_err(|e| AppError::new(format!("创建导出目录失败: {e}")))?;
+    fs::create_dir_all(output_dir).map_err(|e| AppError::new(format!("创建导出目录失败: {e}")))?;
     let sanitized_title = sanitize_file_name_segment(exam_title);
     let file_name = if sanitized_title.is_empty() {
         "监考表.xlsx".to_string()
@@ -1693,8 +1821,7 @@ fn save_workbook_to_dir(
     };
     let path = output_dir.join(file_name);
     if path.exists() {
-        fs::remove_file(&path)
-            .map_err(|e| AppError::new(format!("覆盖旧监考表失败: {e}")))?;
+        fs::remove_file(&path).map_err(|e| AppError::new(format!("覆盖旧监考表失败: {e}")))?;
     }
     workbook
         .save(&path)
@@ -1706,7 +1833,9 @@ fn save_workbook_to_dir(
     })
 }
 
-fn export_schedule_internal(app: &AppHandle) -> Result<ExportLatestInvigilationScheduleResult, AppError> {
+fn export_schedule_internal(
+    app: &AppHandle,
+) -> Result<ExportLatestInvigilationScheduleResult, AppError> {
     let conn = score::open_connection(app)?;
     exam_allocation::ensure_schema(&conn)?;
     let workbook = build_workbook_from_connection(&conn)?;
@@ -1815,32 +1944,131 @@ mod tests {
     }
 
     #[test]
-    fn test_accounting_subject_group_for_task_uses_accounting_labels() {
-        let exam_row = TaskExportRow {
+    fn test_collect_accounting_exam_theme_headers_uses_export_first_row_semantics() {
+        let slots = vec![
+            SlotDef {
+                key: SlotKey {
+                    bucket: "exam".to_string(),
+                    start_at: "2026-04-29T08:00".to_string(),
+                    end_at: "2026-04-29T10:00".to_string(),
+                },
+                header_lines: vec!["高一-语文".to_string(), "高二-语文".to_string()],
+                date_label: "29日上午".to_string(),
+                time_label: "08:00-10:00".to_string(),
+                left_header: "考生数",
+                right_header: "监考员",
+                start_ts: 1_000,
+                teacher_cols: 2,
+            },
+            SlotDef {
+                key: SlotKey {
+                    bucket: "exam".to_string(),
+                    start_at: "2026-04-29T10:30".to_string(),
+                    end_at: "2026-04-29T12:00".to_string(),
+                },
+                header_lines: vec!["高一-数学".to_string(), "高二-外语".to_string()],
+                date_label: "29日上午".to_string(),
+                time_label: "10:30-12:00".to_string(),
+                left_header: "考生数",
+                right_header: "监考员",
+                start_ts: 2_000,
+                teacher_cols: 2,
+            },
+            SlotDef {
+                key: SlotKey {
+                    bucket: "full_self_study".to_string(),
+                    start_at: "2026-04-29T12:10".to_string(),
+                    end_at: "2026-04-29T13:40".to_string(),
+                },
+                header_lines: vec!["高一-自习".to_string()],
+                date_label: "29日下午".to_string(),
+                time_label: "12:10-13:40".to_string(),
+                left_header: "班级",
+                right_header: "教师",
+                start_ts: 3_000,
+                teacher_cols: 1,
+            },
+        ];
+        assert_eq!(
+            collect_accounting_exam_theme_headers(&slots),
+            vec![
+                "语文".to_string(),
+                "高一-数学\n高二-外语".to_string()
+            ]
+        );
+    }
+
+    #[test]
+    fn test_accounting_theme_for_task_matches_collapsed_or_grade_headers() {
+        let exam_row_collapsed = TaskExportRow {
             session_id: Some(1),
             space_id: None,
             task_source: "exam".to_string(),
-            role: "floor_rover".to_string(),
-            grade_name: "高二".to_string(),
-            subject: Subject::Politics,
-            space_name: "二楼 楼层流动".to_string(),
+            role: "exam_room_invigilator".to_string(),
+            grade_name: "高一".to_string(),
+            subject: Subject::Chinese,
+            space_name: "高一1场".to_string(),
             floor: "2层".to_string(),
-            start_at: "2026-04-09T08:00".to_string(),
-            end_at: "2026-04-09T10:00".to_string(),
+            start_at: "2026-04-29T08:00".to_string(),
+            end_at: "2026-04-29T10:00".to_string(),
             start_ts: 1_000,
             duration_minutes: 120,
             recommended_self_study_topic_label: None,
-            teacher_name: Some("刘昶晗".to_string()),
+            teacher_name: Some("张老师".to_string()),
+        };
+        let exam_row_mixed = TaskExportRow {
+            session_id: Some(2),
+            space_id: None,
+            task_source: "exam".to_string(),
+            role: "exam_room_invigilator".to_string(),
+            grade_name: "高一".to_string(),
+            subject: Subject::Math,
+            space_name: "高一2场".to_string(),
+            floor: "2层".to_string(),
+            start_at: "2026-04-29T10:30".to_string(),
+            end_at: "2026-04-29T12:00".to_string(),
+            start_ts: 2_000,
+            duration_minutes: 90,
+            recommended_self_study_topic_label: None,
+            teacher_name: Some("李老师".to_string()),
         };
         let self_study_row = TaskExportRow {
             task_source: "full_self_study".to_string(),
             role: "self_study_supervisor".to_string(),
             subject: Subject::Math,
-            ..exam_row.clone()
+            ..exam_row_mixed.clone()
         };
 
-        assert_eq!(accounting_subject_group_for_task(&exam_row), "思想政治");
-        assert_eq!(accounting_subject_group_for_task(&self_study_row), "自习");
+        let mut slot_header_labels = HashMap::<SlotKey, Vec<String>>::new();
+        slot_header_labels.insert(
+            SlotKey {
+                bucket: "exam".to_string(),
+                start_at: "2026-04-29T08:00".to_string(),
+                end_at: "2026-04-29T10:00".to_string(),
+            },
+            vec!["语文".to_string()],
+        );
+        slot_header_labels.insert(
+            SlotKey {
+                bucket: "exam".to_string(),
+                start_at: "2026-04-29T10:30".to_string(),
+                end_at: "2026-04-29T12:00".to_string(),
+            },
+            vec!["高一-数学".to_string(), "高二-外语".to_string()],
+        );
+
+        assert_eq!(
+            accounting_theme_for_task(&exam_row_collapsed, &slot_header_labels),
+            "语文"
+        );
+        assert_eq!(
+            accounting_theme_for_task(&exam_row_mixed, &slot_header_labels),
+            "高一-数学\n高二-外语"
+        );
+        assert_eq!(
+            accounting_theme_for_task(&self_study_row, &slot_header_labels),
+            "自习"
+        );
     }
 
     #[test]
@@ -1911,10 +2139,7 @@ mod tests {
 
         let workbook = build_workbook_from_connection(&conn).expect("build workbook from real db");
         let exam_title = load_exam_title(&conn).expect("load exam title");
-        let export_dir = db_path
-            .parent()
-            .expect("db parent")
-            .join("exports");
+        let export_dir = db_path.parent().expect("db parent").join("exports");
         let result =
             save_workbook_to_dir(workbook, &export_dir, &exam_title).expect("save real workbook");
 

@@ -51,8 +51,9 @@ pub fn run() {
             invigilation::upsert_exam_session_times,
             invigilation::delete_exam_session_time,
             invigilation::get_persisted_invigilation_state,
+            invigilation::list_invigilation_custom_rule_options,
             invigilation::save_persisted_invigilation_config,
-            invigilation::replace_persisted_invigilation_exclusions,
+            invigilation::replace_persisted_invigilation_custom_rules,
             invigilation::save_persisted_self_study_class_subjects,
             invigilation::import_monitor_draw_pairs_from_excel,
             invigilation::generate_latest_exam_staff_plan,
@@ -175,7 +176,7 @@ mod tests {
         )
         .unwrap();
         conn.execute(
-            "INSERT INTO invigilation_staff_exclusions (teacher_id, teacher_name, session_id, session_label, created_at) VALUES (11, '李老师', 1, '高一数学', '2026-04-08T08:00:00')",
+            "INSERT INTO invigilation_custom_rules (rule_type, teacher_id, teacher_name, session_id, session_label, task_role, space_name, created_at) VALUES ('EXCLUDE', 11, '李老师', 1, '高一数学', NULL, NULL, '2026-04-08T08:00:00')",
             [],
         )
         .unwrap();
@@ -199,7 +200,9 @@ mod tests {
             "latest_teacher_duty_stats",
         ] {
             let count: i64 = conn
-                .query_row(&format!("SELECT COUNT(*) FROM {table}"), [], |row| row.get(0))
+                .query_row(&format!("SELECT COUNT(*) FROM {table}"), [], |row| {
+                    row.get(0)
+                })
                 .unwrap();
             assert_eq!(count, 0, "{table} 应该在关闭时被清空");
         }
@@ -244,19 +247,27 @@ mod tests {
         assert_eq!(template_count, 0, "年级科目时间模板应保持用户手动配置");
 
         let config_count: i64 = conn
-            .query_row("SELECT COUNT(*) FROM invigilation_config_settings", [], |row| row.get(0))
+            .query_row(
+                "SELECT COUNT(*) FROM invigilation_config_settings",
+                [],
+                |row| row.get(0),
+            )
             .unwrap();
         assert_eq!(config_count, 1, "监考配置应当保留");
 
         let exclusion_count: i64 = conn
-            .query_row("SELECT COUNT(*) FROM invigilation_staff_exclusions", [], |row| {
-                row.get(0)
-            })
+            .query_row(
+                "SELECT COUNT(*) FROM invigilation_custom_rules",
+                [],
+                |row| row.get(0),
+            )
             .unwrap();
         assert_eq!(exclusion_count, 1, "监考排除设置应当保留");
 
         let session_time_count: i64 = conn
-            .query_row("SELECT COUNT(*) FROM exam_session_times", [], |row| row.get(0))
+            .query_row("SELECT COUNT(*) FROM exam_session_times", [], |row| {
+                row.get(0)
+            })
             .unwrap();
         assert_eq!(
             session_time_count, 0,

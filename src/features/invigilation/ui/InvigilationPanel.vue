@@ -35,36 +35,41 @@
       </ConfigCard>
     </div>
 
-    <ConfigCard class="exclude-card" title="考试禁排设置" description="选择老师不参与某场考试的考场监考，系统在分配时自动跳过。">
-      <div class="exclude-toolbar">
-        <FluentSelect
-          :model-value="selectedTeacherId ?? ''"
-          :options="teacherSelectOptions as any"
-          @update:model-value="pickTeacher"
-          style="width: 220px;"
-        />
-
-        <FluentSelect
-          :model-value="selectedSessionId ?? ''"
-          :options="sessionSelectOptions as any"
-          @update:model-value="pickSession"
-          style="width: 260px;"
-        />
+    <ConfigCard class="exclude-card" title="自定义排班规则" description="按老师、时间范围、任务类型和作用对象配置禁排或指定安排。">
+      <div class="footer-row" style="margin-bottom: 16px;">
+        <div class="custom-rule-overview">
+          <p class="card-note">当前已配置 {{ store.viewState.customRules.length }} 条规则</p>
+          <div v-if="store.viewState.customRules.length > 0" class="custom-rule-overview-tags">
+            <span class="rule-tag">{{ excludeCustomRuleCount }} 条禁排</span>
+            <span class="rule-tag">{{ requireCustomRuleCount }} 条指定安排</span>
+          </div>
+        </div>
+        <button class="primary-btn drawer-trigger" type="button" @click="openCustomRuleDrawer">添加排班规则</button>
       </div>
 
-      <div v-if="store.viewState.staffExclusions.length === 0" class="empty-box empty-box-guide">
+      <div v-if="store.viewState.customRules.length === 0" class="empty-box empty-box-guide">
         <span class="material-symbols-rounded empty-box-icon" aria-hidden="true">playlist_add</span>
         <div class="empty-box-copy">
-          <strong>暂未添加禁排规则</strong>
-          <span>选择教师和考试场次后，系统会自动加入下方禁排列表。</span>
+          <strong>暂未添加排班规则</strong>
+          <span>点击上方按钮添加规则。</span>
         </div>
       </div>
-      <div v-else class="exclude-list">
-        <div v-for="item in store.viewState.staffExclusions" :key="`${item.teacherId}-${item.sessionId}`" class="exclude-item">
-          <span class="exclude-text">{{ item.teacherName }} - 不监考 {{ item.sessionLabel }}</span>
-          <div class="exclude-right">
-            <span class="danger-pill">已禁排</span>
-            <button class="icon-btn" type="button" @click="removeExclusion(item.teacherId, item.sessionId)">
+      <div v-else class="compact-rule-list">
+        <div v-for="(item, index) in store.viewState.customRules" :key="index" class="compact-rule-item">
+          <div class="compact-rule-main">
+            <div class="compact-rule-header">
+              <span :class="item.actionType === 'require' ? 'primary-pill' : 'danger-pill'">
+                {{ item.actionType === 'require' ? '指定安排' : '禁排' }}
+              </span>
+              <strong class="custom-rule-teacher">{{ item.teacherName }}</strong>
+              <span class="compact-rule-task">{{ ruleTaskScopeLabel(item.taskScopeType) }}</span>
+              <span class="rule-tag">{{ formatRuleTimeScopeSummary(item) }}</span>
+              <span class="rule-tag">{{ formatRuleTargetScopeSummary(item) }}</span>
+            </div>
+          </div>
+          <div class="compact-rule-actions">
+            <button class="text-btn" type="button" @click="openCustomRuleDetail(item)">详情</button>
+            <button class="icon-btn" type="button" @click="removeCustomRule(item)">
               <span class="material-symbols-rounded">delete</span>
             </button>
           </div>
@@ -399,14 +404,240 @@
         </footer>
       </section>
     </div>
+    <transition name="drawer-slide">
+      <aside v-if="customRuleDrawerOpen" class="config-drawer custom-rule-drawer">
+        <div class="drawer-header">
+          <div class="drawer-title-block">
+            <h3>添加排班规则</h3>
+            <p>按时间范围、任务类型和作用对象配置禁排或指定安排。</p>
+          </div>
+          <button class="drawer-close" type="button" @click="closeCustomRuleDrawer"><span class="material-symbols-rounded">close</span></button>
+        </div>
+
+        <section class="drawer-section soft-panel custom-rule-panel">
+          <div class="form-group">
+            <label class="field-label form-label">规则动作</label>
+            <div class="segment-wrap full-width">
+              <button class="segment-btn" :class="{ active: draftRule.actionType === 'exclude' }" type="button" @click="draftRule.actionType = 'exclude'">禁排</button>
+              <button class="segment-btn" :class="{ active: draftRule.actionType === 'require' }" type="button" @click="draftRule.actionType = 'require'">指定安排</button>
+            </div>
+          </div>
+
+          <div class="form-group">
+            <label class="field-label form-label">指定教师 <span class="required-mark">*</span></label>
+            <FluentSelect
+              v-model="draftRule.teacherId"
+              :options="teacherSelectOptions as any"
+              placeholder="请选择教师"
+              searchable
+              style="width: 100%;"
+            />
+          </div>
+
+          <div class="form-group">
+            <label class="field-label form-label">时间范围</label>
+            <div class="segment-wrap full-width">
+              <button class="segment-btn" :class="{ active: draftRule.timeScopeType === 'exam_session' }" type="button" @click="selectRuleTimeScopeType('exam_session')">考试时段</button>
+              <button class="segment-btn" :class="{ active: draftRule.timeScopeType === 'full_self_study' }" type="button" @click="selectRuleTimeScopeType('full_self_study')">全员自习时段</button>
+            </div>
+            <template v-if="draftRule.timeScopeType === 'exam_session'">
+              <div v-if="groupedExamSessionRuleOptions.length > 0" class="selection-toolbar">
+                <div class="selection-toolbar-copy">
+                  <strong>已选 {{ selectedRuleTimeLabels.length }} 个考试时段</strong>
+                  <span>同一时间块只显示一次，勾选后会联动命中该时间块内全部场次。</span>
+                </div>
+                <div class="selection-toolbar-actions">
+                  <button
+                    class="toolbar-toggle-btn"
+                    type="button"
+                    :disabled="groupedExamSessionRuleOptions.length === 0"
+                    @click="toggleAllRuleTimeScopes"
+                  >
+                    {{ allRuleTimeScopesSelected ? '取消全选' : '全选' }}
+                  </button>
+                </div>
+              </div>
+              <div class="selection-list compact-option-list">
+                <label v-for="option in groupedExamSessionRuleOptions" :key="option.id" class="check-option compact-option">
+                  <input
+                    type="checkbox"
+                    :checked="isRuleTimeScopeSelected(option.sessionIds)"
+                    @change="toggleRuleTimeScopeIds(option.sessionIds)"
+                  />
+                  <div class="target-copy">
+                    <span>{{ option.label }}</span>
+                  </div>
+                </label>
+              </div>
+            </template>
+            <div v-else class="scope-preview">
+              {{ fullSelfStudyRuleLabel }}
+            </div>
+            <p v-if="draftRule.timeScopeType === 'exam_session' && groupedExamSessionRuleOptions.length === 0" class="drawer-note">
+              暂无可选考试时段，请先配置考试时间，或先完成一次考场/监考任务生成。
+            </p>
+            <p v-else-if="draftRule.timeScopeType === 'exam_session' && draftRule.timeScopeIds.length === 0" class="drawer-note">
+              请先选择一个或多个考试时段，再指定具体考场、班级或楼层任务。
+            </p>
+          </div>
+
+          <div class="form-group">
+            <label class="field-label form-label">任务类型</label>
+            <div class="option-grid">
+              <label v-for="option in availableTaskScopeOptions" :key="option.value" class="check-option single-option" :class="{ active: draftRule.taskScopeType === option.value }">
+                <input
+                  type="radio"
+                  name="custom-rule-task-scope"
+                  :checked="draftRule.taskScopeType === option.value"
+                  @change="selectRuleTaskScopeType(option.value)"
+                />
+                <span>{{ option.label }}</span>
+              </label>
+            </div>
+          </div>
+
+          <div class="form-group">
+            <label class="field-label form-label">作用对象</label>
+            <div class="segment-wrap full-width">
+              <button class="segment-btn" :class="{ active: draftRule.targetScopeType === 'all' }" type="button" @click="selectRuleTargetScopeType('all')">全部对象</button>
+              <button class="segment-btn" :class="{ active: draftRule.targetScopeType === 'selected_targets' }" type="button" @click="selectRuleTargetScopeType('selected_targets')">指定对象</button>
+            </div>
+            <p class="drawer-note" v-if="draftRule.targetScopeType === 'all'">不选具体对象时，规则默认作用于当前时间范围内的全部匹配任务。</p>
+            <template v-else>
+              <p v-if="ruleTargetHintText" class="drawer-note">{{ ruleTargetHintText }}</p>
+              <template v-if="availableRuleTargetOptions.length > 0">
+                <div class="selection-toolbar">
+                  <div class="selection-toolbar-copy">
+                    <strong>已选 {{ draftRule.targetIds.length }} 个对象</strong>
+                  </div>
+                  <div class="selection-toolbar-actions">
+                    <button
+                      class="toolbar-toggle-btn"
+                      type="button"
+                      :disabled="availableRuleTargetOptions.length === 0"
+                      @click="toggleAllRuleTargets"
+                    >
+                      {{ allRuleTargetsSelected ? '取消全选' : '全选' }}
+                    </button>
+                  </div>
+                </div>
+                <div class="selection-list compact-option-list">
+                  <label v-for="option in availableRuleTargetOptions" :key="option.id" class="check-option target-option compact-option">
+                    <input
+                      type="checkbox"
+                      :checked="draftRule.targetIds.includes(option.id)"
+                      @change="toggleRuleTargetId(option.id)"
+                    />
+                    <div class="target-copy">
+                      <span>{{ option.label }}</span>
+                      <small v-if="option.subtitle">{{ formatTargetOptionSubtitle(option.subtitle) }}</small>
+                    </div>
+                  </label>
+                </div>
+              </template>
+            </template>
+          </div>
+
+          <div class="custom-rule-summary-box">
+            <span class="field-label form-label">规则摘要</span>
+            <strong>{{ draftRuleSummary }}</strong>
+          </div>
+        </section>
+
+        <div class="drawer-footer custom-rule-footer">
+          <p v-if="draftRuleError" class="drawer-error">{{ draftRuleError }}</p>
+          <p v-else class="drawer-note">保存时会校验冲突规则，命中冲突将直接阻止保存。</p>
+          <div class="drawer-actions">
+            <button class="secondary-btn" type="button" @click="closeCustomRuleDrawer">取消</button>
+            <button class="primary-btn" :disabled="!draftRule.teacherId" @click="saveDraftRule">保存规则</button>
+          </div>
+        </div>
+      </aside>
+    </transition>
+
+    <transition name="drawer-slide">
+      <aside v-if="customRuleDetailOpen && selectedCustomRule" class="config-drawer custom-rule-detail-drawer">
+        <div class="drawer-header">
+          <div class="drawer-title-block">
+            <h3>规则详情</h3>
+            <p>{{ selectedCustomRule.teacherName }} 的{{ ruleTaskScopeLabel(selectedCustomRule.taskScopeType) }}规则</p>
+          </div>
+          <button class="drawer-close" type="button" @click="closeCustomRuleDetail"><span class="material-symbols-rounded">close</span></button>
+        </div>
+
+        <section class="drawer-section soft-panel custom-rule-panel">
+          <div class="detail-summary-grid">
+            <div class="summary-box">
+              <span class="field-label">规则动作</span>
+              <strong>{{ selectedCustomRule.actionType === "require" ? "指定安排" : "禁排" }}</strong>
+            </div>
+            <div class="summary-box">
+              <span class="field-label">任务类型</span>
+              <strong>{{ ruleTaskScopeLabel(selectedCustomRule.taskScopeType) }}</strong>
+            </div>
+            <div class="summary-box">
+              <span class="field-label">时间范围</span>
+              <strong>{{ formatRuleTimeScopeSummary(selectedCustomRule) }}</strong>
+            </div>
+            <div class="summary-box">
+              <span class="field-label">作用对象</span>
+              <strong>{{ formatRuleTargetScopeSummary(selectedCustomRule) }}</strong>
+            </div>
+          </div>
+
+          <div class="form-group">
+            <label class="field-label form-label">完整时间范围</label>
+            <div class="detail-chip-list">
+              <span
+                v-for="(label, index) in resolvedRuleTimeScopeLabels(selectedCustomRule)"
+                :key="`${label}-${index}`"
+                class="rule-tag detail-chip"
+              >
+                {{ label }}
+              </span>
+            </div>
+          </div>
+
+          <div class="form-group">
+            <label class="field-label form-label">完整作用对象</label>
+            <div v-if="selectedCustomRule.targetScopeType === 'all'" class="scope-preview">
+              全部对象
+            </div>
+            <div v-else class="detail-chip-list">
+              <span
+                v-for="(label, index) in selectedCustomRule.targetLabels"
+                :key="`${label}-${index}`"
+                class="rule-tag detail-chip"
+              >
+                {{ label }}
+              </span>
+            </div>
+          </div>
+        </section>
+
+        <div class="drawer-footer custom-rule-footer">
+          <p class="drawer-note">详情抽屉仅用于查看规则内容，修改时请删除后重新添加。</p>
+          <div class="drawer-actions">
+            <button class="secondary-btn" type="button" @click="closeCustomRuleDetail">关闭</button>
+          </div>
+        </div>
+      </aside>
+    </transition>
+
   </section>
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch, reactive } from "vue";
+import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from "vue";
 import type { ClassConfigRow } from "../../../entities/class-config/model";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
-import type { ExamStaffAssignmentProgress, InvigilationConfig } from "../../../entities/exam-plan/model";
+import type {
+  ExamStaffAssignmentProgress,
+  InvigilationConfig,
+  InvigilationCustomRule,
+  InvigilationRuleTaskScopeType,
+  InvigilationRuleTimeScopeType,
+} from "../../../entities/exam-plan/model";
 import type { Subject } from "../../../entities/score/model";
 import { Subject as SubjectEnum } from "../../../entities/score/model";
 import { revealInExplorer } from "../../../shared/utils/appLog";
@@ -421,6 +652,26 @@ interface SelfStudyClassRow {
   gradeName: string;
   subject: Subject | null;
 }
+
+interface DraftRuleTimeScopeOption {
+  id: string;
+  label: string;
+  sessionIds: number[];
+  startAt: string;
+  endAt: string;
+}
+
+interface RuleTimeScopeLabelPart {
+  gradeName: string;
+  subjectLabel: string;
+}
+
+type ReadonlyInvigilationCustomRule = Omit<InvigilationCustomRule, "timeScopeIds" | "timeScopeLabels" | "targetIds" | "targetLabels"> & {
+  readonly timeScopeIds: readonly number[];
+  readonly timeScopeLabels: readonly string[];
+  readonly targetIds: readonly string[];
+  readonly targetLabels: readonly string[];
+};
 
 interface AssignmentNotice {
   type: "success" | "warning" | "error";
@@ -440,8 +691,6 @@ const selfStudyMonthDay = ref(new Date().toISOString().slice(5, 10));
 const selfStudyStartTime = ref("12:10");
 const selfStudyEndTime = ref("13:40");
 const selfStudyValidationError = ref("");
-const selectedTeacherId = ref<number | null>(null);
-const selectedSessionId = ref<number | null>(null);
 const selfStudyDrawerOpen = ref(false);
 const middleManagerDrawerOpen = ref(false);
 const selfStudyLoading = ref(false);
@@ -532,15 +781,20 @@ const selectableSubjects: Subject[] = [
   SubjectEnum.Chemistry,
 ];
 
-const activeDrawer = computed(() => (selfStudyDrawerOpen.value ? "selfStudy" : middleManagerDrawerOpen.value ? "middleManager" : null));
+const activeDrawer = computed(() => (
+  selfStudyDrawerOpen.value
+    ? "selfStudy"
+    : middleManagerDrawerOpen.value
+      ? "middleManager"
+      : customRuleDrawerOpen.value
+        ? "customRule"
+        : customRuleDetailOpen.value
+          ? "customRuleDetail"
+          : null
+));
 const middleManagerDefaultEnabled = computed(() => store.viewState.invigilationConfig.middleManagerDefaultEnabled);
 const middleManagerExceptionCount = computed(() => store.viewState.invigilationConfig.middleManagerExceptionTeacherIds.length);
 const teacherSelectOptions = computed(() => [{ label: "选择教师", value: "" }, ...store.viewState.teachers.map((item) => ({ label: item.teacherName, value: item.id }))]);
-const sessionSelectOptions = computed(() => [
-  { label: "选择考试场次", value: "" },
-  { label: "禁排所有场次", value: 0 },
-  ...store.viewState.exclusionSessionOptions.map((item) => ({ label: item.label, value: item.sessionId })),
-]);
 const middleManagerTeachers = computed(() => [...store.viewState.teachers].filter((item) => item.isMiddleManager).sort((a, b) => a.teacherName.localeCompare(b.teacherName, "zh-CN")));
 const filteredClasses = computed(() => (gradeFilter.value === "all" ? selfStudyClasses.value : selfStudyClasses.value.filter((item) => item.gradeName === gradeFilter.value)));
 const totalPages = computed(() => Math.max(1, Math.ceil(filteredClasses.value.length / pageSize)));
@@ -643,6 +897,143 @@ const assignmentNoticeText = computed(() => {
 });
 const assignmentNoticeLinkPath = computed(() => displayedAssignmentNotice.value?.linkPath || "");
 const assignmentNoticeLinkLabel = computed(() => displayedAssignmentNotice.value?.linkLabel || "");
+
+const customRuleDrawerOpen = ref(false);
+const customRuleDetailOpen = ref(false);
+const selectedCustomRule = ref<ReadonlyInvigilationCustomRule | null>(null);
+const draftRuleError = ref("");
+const draftRule = ref<{
+  actionType: "exclude" | "require";
+  teacherId: number | "";
+  timeScopeType: InvigilationRuleTimeScopeType;
+  timeScopeIds: number[];
+  taskScopeType: InvigilationRuleTaskScopeType;
+  targetScopeType: "all" | "selected_targets";
+  targetIds: string[];
+}>({
+  actionType: "exclude",
+  teacherId: "",
+  timeScopeType: "exam_session",
+  timeScopeIds: [],
+  taskScopeType: "exam_room",
+  targetScopeType: "all",
+  targetIds: [],
+});
+
+const examSessionRuleOptions = computed(() => store.viewState.customRuleOptions.examSessionOptions);
+const groupedExamSessionRuleOptions = computed<DraftRuleTimeScopeOption[]>(() => {
+  const grouped = new Map<string, DraftRuleTimeScopeOption>();
+  for (const option of examSessionRuleOptions.value) {
+    const key = `${option.startAt}__${option.endAt}`;
+    const existing = grouped.get(key);
+    if (existing) {
+      existing.sessionIds.push(option.id);
+      existing.label = buildGroupedRuleTimeScopeLabel(
+        existing.sessionIds
+          .map((sessionId) => examSessionRuleOptions.value.find((item) => item.id === sessionId))
+          .filter((item): item is NonNullable<typeof item> => Boolean(item)),
+      );
+      continue;
+    }
+    grouped.set(key, {
+      id: key,
+      label: buildGroupedRuleTimeScopeLabel([option]),
+      sessionIds: [option.id],
+      startAt: option.startAt,
+      endAt: option.endAt,
+    });
+  }
+  return Array.from(grouped.values()).sort((left, right) =>
+    left.startAt.localeCompare(right.startAt) || left.label.localeCompare(right.label, "zh-CN"),
+  );
+});
+const fullSelfStudyRuleLabel = computed(
+  () => store.viewState.customRuleOptions.fullSelfStudyOption?.label || "全员自习时段暂未配置",
+);
+const availableTaskScopeOptions = computed(() => {
+  if (draftRule.value.timeScopeType === "full_self_study") {
+    return [{ label: "全员自习看班", value: "full_self_study" as InvigilationRuleTaskScopeType }];
+  }
+  return [
+    { label: "考试任务", value: "exam_room" as InvigilationRuleTaskScopeType },
+    { label: "考试期间自习看班", value: "exam_linked_self_study" as InvigilationRuleTaskScopeType },
+    { label: "流动监考", value: "floor_rover" as InvigilationRuleTaskScopeType },
+  ];
+});
+const availableRuleTargetOptions = computed(() => {
+  const taskScopeType = draftRule.value.taskScopeType;
+  const timeScopeType = draftRule.value.timeScopeType;
+  return store.viewState.customRuleOptions.targetOptions.filter((option) => {
+    if (option.taskScopeType !== taskScopeType) {
+      return false;
+    }
+    if (option.timeScopeType !== timeScopeType) {
+      return false;
+    }
+    if (timeScopeType === "exam_session") {
+      return draftRule.value.timeScopeIds.includes(option.timeScopeId || -1);
+    }
+    return true;
+  });
+});
+const selectedRuleTargetOptions = computed(() =>
+  availableRuleTargetOptions.value.filter((option) => draftRule.value.targetIds.includes(option.id)),
+);
+const excludeCustomRuleCount = computed(() =>
+  store.viewState.customRules.filter((rule) => rule.actionType === "exclude").length,
+);
+const requireCustomRuleCount = computed(() =>
+  store.viewState.customRules.filter((rule) => rule.actionType === "require").length,
+);
+const selectedRuleTeacherName = computed(
+  () => store.viewState.teachers.find((item) => item.id === draftRule.value.teacherId)?.teacherName || "",
+);
+const selectedRuleTimeLabels = computed(() => {
+  if (draftRule.value.timeScopeType === "full_self_study") {
+    return store.viewState.customRuleOptions.fullSelfStudyOption
+      ? [store.viewState.customRuleOptions.fullSelfStudyOption.label]
+      : [];
+  }
+  return groupedExamSessionRuleOptions.value
+    .filter((option) => option.sessionIds.every((sessionId) => draftRule.value.timeScopeIds.includes(sessionId)))
+    .map((option) => option.label);
+});
+const allRuleTimeScopesSelected = computed(() =>
+  groupedExamSessionRuleOptions.value.length > 0 &&
+  groupedExamSessionRuleOptions.value.every((option) => isRuleTimeScopeSelected(option.sessionIds)),
+);
+const allRuleTargetsSelected = computed(() =>
+  availableRuleTargetOptions.value.length > 0 &&
+  availableRuleTargetOptions.value.every((option) => draftRule.value.targetIds.includes(option.id)),
+);
+const ruleTargetHintText = computed(() => {
+  if (draftRule.value.targetScopeType !== "selected_targets") {
+    return "";
+  }
+  if (draftRule.value.timeScopeType === "exam_session" && draftRule.value.timeScopeIds.length === 0) {
+    return "请先选择考试时段，再指定具体考场、班级或楼层任务。";
+  }
+  if (availableRuleTargetOptions.value.length === 0) {
+    return "当前没有可选对象。若要指定考场或班级，请先完成一次考场/监考任务生成。";
+  }
+  return "";
+});
+const draftRuleSummary = computed(() => {
+  const actionLabel = draftRule.value.actionType === "require" ? "指定安排" : "禁排";
+  const teacherName = selectedRuleTeacherName.value || "某位老师";
+  const timeLabel = selectedRuleTimeLabels.value.length > 0
+    ? selectedRuleTimeLabels.value.join("、")
+    : draftRule.value.timeScopeType === "full_self_study"
+      ? "全员自习时段"
+      : "未选择考试时段";
+  const taskLabel = ruleTaskScopeLabel(draftRule.value.taskScopeType);
+  const targetLabel = draftRule.value.targetScopeType === "all"
+    ? "全部对象"
+    : selectedRuleTargetOptions.value.length > 0
+      ? selectedRuleTargetOptions.value.map((option) => option.label).join("、")
+      : "未选择对象";
+  return `${actionLabel} ${teacherName} 在 ${timeLabel} 的 ${taskLabel}（${targetLabel}）`;
+});
 
 watch(
   () => store.viewState.invigilationConfig,
@@ -817,25 +1208,326 @@ function closeMiddleManagerDrawer() {
 function closeActiveDrawer() {
   if (selfStudyDrawerOpen.value) closeSelfStudyDrawer();
   if (middleManagerDrawerOpen.value) closeMiddleManagerDrawer();
+  if (customRuleDrawerOpen.value) closeCustomRuleDrawer();
+  if (customRuleDetailOpen.value) closeCustomRuleDetail();
 }
 
-function pickTeacher(id: number | "") {
-  selectedTeacherId.value = typeof id === "number" ? id : null;
-  void maybeAddExclusion();
+function openCustomRuleDrawer() {
+  closeActiveDrawer();
+  draftRule.value = {
+    actionType: "exclude",
+    teacherId: "",
+    timeScopeType: "exam_session",
+    timeScopeIds: [],
+    taskScopeType: "exam_room",
+    targetScopeType: "all",
+    targetIds: [],
+  };
+  draftRuleError.value = "";
+  customRuleDrawerOpen.value = true;
 }
 
-function pickSession(sessionId: number | "") {
-  selectedSessionId.value = typeof sessionId === "number" ? sessionId : null;
-  void maybeAddExclusion();
+function closeCustomRuleDrawer() {
+  customRuleDrawerOpen.value = false;
 }
 
-async function maybeAddExclusion() {
-  if (!selectedTeacherId.value || !selectedSessionId.value) return;
-  const added = await store.addStaffExclusion(selectedTeacherId.value, selectedSessionId.value);
-  if (!added) return;
-  selectedTeacherId.value = null;
-  selectedSessionId.value = null;
+function openCustomRuleDetail(rule: ReadonlyInvigilationCustomRule) {
+  closeActiveDrawer();
+  selectedCustomRule.value = rule;
+  customRuleDetailOpen.value = true;
 }
+
+function closeCustomRuleDetail() {
+  customRuleDetailOpen.value = false;
+  selectedCustomRule.value = null;
+}
+
+async function saveDraftRule() {
+  if (!draftRule.value.teacherId) {
+    draftRuleError.value = "请选择教师";
+    return;
+  }
+  if (draftRule.value.timeScopeType === "exam_session" && draftRule.value.timeScopeIds.length === 0) {
+    draftRuleError.value = "请至少选择一个考试时段";
+    return;
+  }
+  if (draftRule.value.targetScopeType === "selected_targets" && draftRule.value.targetIds.length === 0) {
+    draftRuleError.value = "请选择至少一个作用对象";
+    return;
+  }
+  const teacher = store.viewState.teachers.find((item) => item.id === draftRule.value.teacherId);
+  if (!teacher) {
+    draftRuleError.value = "未找到所选教师";
+    return;
+  }
+
+  const newRule: InvigilationCustomRule = {
+    actionType: draftRule.value.actionType,
+    teacherId: teacher.id,
+    teacherName: teacher.teacherName,
+    timeScopeType: draftRule.value.timeScopeType,
+    timeScopeIds: [...draftRule.value.timeScopeIds],
+    timeScopeLabels: [...selectedRuleTimeLabels.value],
+    taskScopeType: draftRule.value.taskScopeType,
+    targetScopeType: draftRule.value.targetScopeType,
+    targetIds: draftRule.value.targetScopeType === "all" ? [] : [...draftRule.value.targetIds],
+    targetLabels: draftRule.value.targetScopeType === "all"
+      ? []
+      : selectedRuleTargetOptions.value.map((option) => option.label),
+  };
+
+  const currentRules: InvigilationCustomRule[] = store.viewState.customRules.map((rule) => ({
+    ...rule,
+    timeScopeIds: [...rule.timeScopeIds],
+    timeScopeLabels: [...rule.timeScopeLabels],
+    targetIds: [...rule.targetIds],
+    targetLabels: [...rule.targetLabels],
+  }));
+  currentRules.unshift(newRule);
+  draftRuleError.value = "";
+  try {
+    await store.saveCustomRules(currentRules);
+    closeCustomRuleDrawer();
+  } catch (error) {
+    draftRuleError.value = error instanceof Error ? error.message : String(error);
+  }
+}
+
+async function removeCustomRule(ruleToRemove: ReadonlyInvigilationCustomRule) {
+  const currentRules: InvigilationCustomRule[] = store.viewState.customRules
+    .filter((rule) => rule !== ruleToRemove)
+    .map((rule) => ({
+      ...rule,
+      timeScopeIds: [...rule.timeScopeIds],
+      timeScopeLabels: [...rule.timeScopeLabels],
+      targetIds: [...rule.targetIds],
+      targetLabels: [...rule.targetLabels],
+    }));
+  await store.saveCustomRules(currentRules);
+}
+
+function ruleTaskScopeLabel(taskScopeType: InvigilationRuleTaskScopeType) {
+  const labelMap: Record<InvigilationRuleTaskScopeType, string> = {
+    exam_room: "考试任务",
+    exam_linked_self_study: "考试期间自习看班",
+    full_self_study: "全员自习看班",
+    floor_rover: "流动监考",
+  };
+  return labelMap[taskScopeType];
+}
+
+function formatRuleTimeScope(rule: ReadonlyInvigilationCustomRule) {
+  if (rule.timeScopeLabels.length > 0) {
+    return rule.timeScopeLabels.join("、");
+  }
+  return rule.timeScopeType === "full_self_study" ? "全员自习时段" : "未设置考试时段";
+}
+
+function formatRuleTimeScopeSummary(rule: ReadonlyInvigilationCustomRule) {
+  if (rule.timeScopeType === "full_self_study") {
+    return "全员自习时段";
+  }
+  if (rule.timeScopeLabels.length <= 1) {
+    return formatRuleTimeScope(rule);
+  }
+  return `${rule.timeScopeLabels.length} 个考试时段`;
+}
+
+function formatRuleTargetScope(rule: ReadonlyInvigilationCustomRule) {
+  if (rule.targetScopeType === "all") {
+    return "全部对象";
+  }
+  if (rule.targetLabels.length > 0) {
+    return rule.targetLabels.join("、");
+  }
+  return "指定对象";
+}
+
+function formatRuleTargetScopeSummary(rule: ReadonlyInvigilationCustomRule) {
+  if (rule.targetScopeType === "all") {
+    return "全部对象";
+  }
+  if (rule.targetLabels.length <= 1) {
+    return formatRuleTargetScope(rule);
+  }
+  return `${rule.targetLabels.length} 个对象`;
+}
+
+function resolvedRuleTimeScopeLabels(rule: ReadonlyInvigilationCustomRule) {
+  if (rule.timeScopeLabels.length > 0) {
+    return [...rule.timeScopeLabels];
+  }
+  return [formatRuleTimeScope(rule)];
+}
+
+function selectRuleTimeScopeType(nextType: InvigilationRuleTimeScopeType) {
+  draftRule.value.timeScopeType = nextType;
+  draftRule.value.timeScopeIds = [];
+  draftRule.value.targetIds = [];
+  if (nextType === "full_self_study") {
+    draftRule.value.taskScopeType = "full_self_study";
+  } else if (draftRule.value.taskScopeType === "full_self_study") {
+    draftRule.value.taskScopeType = "exam_room";
+  }
+}
+
+function selectRuleTaskScopeType(taskScopeType: InvigilationRuleTaskScopeType) {
+  draftRule.value.taskScopeType = taskScopeType;
+  draftRule.value.targetIds = [];
+}
+
+function selectRuleTargetScopeType(scopeType: "all" | "selected_targets") {
+  draftRule.value.targetScopeType = scopeType;
+  if (scopeType === "all") {
+    draftRule.value.targetIds = [];
+  }
+}
+
+function isRuleTimeScopeSelected(sessionIds: number[]) {
+  return sessionIds.every((sessionId) => draftRule.value.timeScopeIds.includes(sessionId));
+}
+
+function toggleRuleTimeScopeIds(sessionIds: number[]) {
+  const nextIds = new Set(draftRule.value.timeScopeIds);
+  const shouldSelect = !sessionIds.every((sessionId) => nextIds.has(sessionId));
+  for (const sessionId of sessionIds) {
+    if (shouldSelect) {
+      nextIds.add(sessionId);
+    } else {
+      nextIds.delete(sessionId);
+    }
+  }
+  draftRule.value.timeScopeIds = Array.from(nextIds).sort((left, right) => left - right);
+  draftRule.value.targetIds = draftRule.value.targetIds.filter((targetId) =>
+    availableRuleTargetOptions.value.some((option) => option.id === targetId),
+  );
+}
+
+function toggleAllRuleTimeScopes() {
+  if (allRuleTimeScopesSelected.value) {
+    draftRule.value.timeScopeIds = [];
+    draftRule.value.targetIds = [];
+    return;
+  }
+  const nextIds = new Set<number>();
+  for (const option of groupedExamSessionRuleOptions.value) {
+    for (const sessionId of option.sessionIds) {
+      nextIds.add(sessionId);
+    }
+  }
+  draftRule.value.timeScopeIds = Array.from(nextIds).sort((left, right) => left - right);
+}
+
+function buildGroupedRuleTimeScopeLabel(
+  options: Array<{ label: string; startAt: string; endAt: string }>,
+) {
+  if (options.length === 0) {
+    return "";
+  }
+  const dateTimeLabel = formatRuleTimeRange(options[0].startAt, options[0].endAt);
+  const parts = options
+    .map((option) => parseRuleTimeScopeLabelPart(option.label))
+    .filter((part): part is RuleTimeScopeLabelPart => Boolean(part));
+  if (parts.length === 0) {
+    return `${options[0].label}`.trim();
+  }
+
+  const normalizedSubjectSet = new Set(parts.map((part) => part.subjectLabel));
+  const topicLabel = normalizedSubjectSet.size === 1
+    ? parts[0].subjectLabel
+    : Array.from(new Set(parts.map((part) => `${part.gradeName}${part.subjectLabel}`))).join("、");
+  return `${topicLabel} ${dateTimeLabel}`.trim();
+}
+
+function parseRuleTimeScopeLabelPart(label: string): RuleTimeScopeLabelPart | null {
+  const tokens = label.trim().split(/\s+/);
+  if (tokens.length < 2) {
+    return null;
+  }
+  return {
+    gradeName: tokens[0],
+    subjectLabel: normalizeRuleTimeScopeSubject(tokens[1]),
+  };
+}
+
+function normalizeRuleTimeScopeSubject(subjectLabel: string) {
+  if (["英语", "俄语", "日语"].includes(subjectLabel)) {
+    return "外语";
+  }
+  return subjectLabel;
+}
+
+function formatRuleTimeRange(startAt: string, endAt: string) {
+  if (startAt.length >= 16 && endAt.length >= 16) {
+    const datePart = startAt.slice(5, 10);
+    const startTime = startAt.slice(11, 16);
+    const endTime = endAt.slice(11, 16);
+    const [startHour, startMinute] = startTime.split(":").map(Number);
+    const [endHour, endMinute] = endTime.split(":").map(Number);
+    const startPeriod = getPeriodLabel(startHour, startMinute);
+    const endPeriod = getPeriodLabel(endHour, endMinute);
+    if (startPeriod === endPeriod) {
+      return `${datePart} ${startPeriod}${startTime} — ${endTime}`;
+    }
+    return `${datePart} ${startPeriod}${startTime} — ${endPeriod}${endTime}`;
+  } else {
+    return `${startAt} - ${endAt}`;
+  }
+}
+
+function getPeriodLabel(hour: number, minute: number) {
+  if (hour < 12 || (hour === 12 && minute === 0)) {
+    return "上午";
+  } else if (hour < 18 || (hour === 18 && minute < 30)) {
+    return "下午";
+  }
+  return "晚上";
+}
+
+function formatTargetOptionSubtitle(subtitle: string) {
+  const timePattern = /(\d{2}:\d{2})-(\d{2}:\d{2})/;
+  const match = subtitle.match(timePattern);
+  if (!match) return subtitle;
+  const startTime = match[1];
+  const endTime = match[2];
+  const [startHour, startMinute] = startTime.split(":").map(Number);
+  const [endHour, endMinute] = endTime.split(":").map(Number);
+  const startPeriod = getPeriodLabel(startHour, startMinute);
+  const endPeriod = getPeriodLabel(endHour, endMinute);
+  let replacement: string;
+  if (startPeriod === endPeriod) {
+    replacement = `${startPeriod}${startTime} — ${endTime}`;
+  } else {
+    replacement = `${startPeriod}${startTime} — ${endPeriod}${endTime}`;
+  }
+  return subtitle.replace(timePattern, replacement);
+}
+
+function toggleRuleTargetId(id: string) {
+  const nextIds = new Set(draftRule.value.targetIds);
+  if (nextIds.has(id)) {
+    nextIds.delete(id);
+  } else {
+    nextIds.add(id);
+  }
+  draftRule.value.targetIds = Array.from(nextIds);
+}
+
+function toggleAllRuleTargets() {
+  if (allRuleTargetsSelected.value) {
+    draftRule.value.targetIds = [];
+    return;
+  }
+  const nextIds = new Set<string>();
+  for (const option of availableRuleTargetOptions.value) {
+    nextIds.add(option.id);
+  }
+  draftRule.value.targetIds = Array.from(nextIds);
+}
+
+
+
+
 
 function toggleRowSelection(id: number) {
   const next = new Set(selectedClassIds.value);
@@ -993,9 +1685,6 @@ async function saveMiddleManagerSetup() {
   closeMiddleManagerDrawer();
 }
 
-async function removeExclusion(teacherId: number, sessionId: number) {
-  await store.removeStaffExclusion(teacherId, sessionId);
-}
 
 async function showAssignmentNotice(type: AssignmentNotice["type"], text: string, options?: Partial<AssignmentNotice>) {
   assignmentNotice.value = { type, text, ...options };
@@ -1611,8 +2300,18 @@ onBeforeUnmount(() => {
   border: 1px solid rgba(154, 111, 43, 0.28);
 }
 
+.primary-pill {
+  background: rgba(var(--accent-rgb), 0.12);
+  color: var(--accent-primary);
+  border: 1px solid var(--accent-border-soft);
+}
+
 .danger-pill {
   background: var(--color-danger-soft);
+  color: var(--color-danger);
+}
+
+.required-mark {
   color: var(--color-danger);
 }
 
@@ -1634,6 +2333,333 @@ onBeforeUnmount(() => {
   z-index: 90;
 }
 
+.custom-rule-drawer {
+  width: 560px;
+}
+
+.custom-rule-panel {
+  padding: 20px;
+  overflow-y: auto;
+}
+
+.custom-rule-detail-drawer {
+  width: 520px;
+}
+
+.custom-rule-overview {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.custom-rule-overview-tags,
+.compact-rule-meta,
+.detail-chip-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.form-group {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.form-label {
+  display: block;
+}
+
+.full-width {
+  width: 100%;
+}
+
+.custom-rule-row {
+  width: 100%;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.custom-rule-main {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.custom-rule-item {
+  flex-direction: column;
+  align-items: flex-start;
+}
+
+.custom-rule-teacher {
+  font-size: 14px;
+}
+
+.custom-rule-summary {
+  color: var(--color-text-muted);
+  font-size: 13px;
+}
+
+.compact-rule-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.compact-rule-item {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 14px 16px;
+  border-radius: 16px;
+  border: 1px solid var(--color-border-soft);
+  background: color-mix(in srgb, var(--surface-panel) 84%, white);
+}
+
+.compact-rule-main {
+  display: flex;
+  min-width: 0;
+}
+
+.compact-rule-header {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.compact-rule-task {
+  color: var(--color-text-muted);
+  font-size: 13px;
+}
+
+.compact-rule-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.detail-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.detail-chip {
+  min-height: 34px;
+  align-items: center;
+}
+
+.rule-tag {
+  display: inline-flex;
+  align-items: center;
+  min-height: 30px;
+  padding: 0 10px;
+  border-radius: 999px;
+  font-size: 12px;
+  border: 1px solid var(--color-border-soft);
+  background: var(--surface-panel);
+  color: var(--color-text-muted);
+}
+
+.option-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.selection-toolbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 14px 16px;
+  border: 1px solid color-mix(in srgb, var(--color-border-soft) 82%, var(--accent-border-soft));
+  border-radius: 16px;
+  background: color-mix(in srgb, var(--surface-panel) 82%, var(--accent-surface-soft));
+}
+
+.selection-toolbar-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.selection-toolbar-copy strong {
+  color: var(--color-text);
+  font-size: 14px;
+}
+
+.selection-toolbar-copy span {
+  color: var(--color-text-muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.selection-toolbar-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.toolbar-toggle-btn {
+  min-height: 36px;
+  padding: 0 14px;
+  border: 1px solid color-mix(in srgb, var(--accent-border-soft) 70%, var(--color-border-soft));
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--surface-panel) 78%, white);
+  color: var(--accent-text);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background-color 0.2s ease, border-color 0.2s ease, color 0.2s ease;
+}
+
+.toolbar-toggle-btn:hover:not(:disabled) {
+  border-color: var(--accent-border-strong);
+  background: color-mix(in srgb, var(--accent-surface-soft) 72%, white);
+}
+
+.toolbar-toggle-btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.toolbar-selection-state {
+  color: var(--color-text-muted);
+  font-size: 13px;
+  white-space: nowrap;
+}
+
+.toolbar-inline-btn {
+  min-height: 32px;
+  padding: 0 4px;
+  border: 0;
+  background: transparent;
+  color: var(--accent-text);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.toolbar-inline-btn:hover {
+  color: var(--accent-text-strong, var(--accent-text));
+  text-decoration: underline;
+}
+
+.selection-search {
+  min-width: 220px;
+  min-height: 38px;
+  padding: 0 12px;
+  border: 1px solid var(--color-border-soft);
+  border-radius: 12px;
+  background: var(--surface-panel-strong);
+  color: var(--color-text);
+}
+
+.selection-search:focus {
+  outline: none;
+  border-color: var(--accent-border-strong);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent-surface-soft) 72%, transparent);
+}
+
+.selection-list {
+  max-height: 320px;
+  overflow: auto;
+  padding-right: 4px;
+}
+
+.compact-option-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.check-option {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  min-height: 48px;
+  padding: 12px 14px;
+  border-radius: 14px;
+  border: 1px solid var(--color-border-soft);
+  background: var(--surface-panel);
+}
+
+.single-option.active {
+  border-color: var(--accent-border-strong);
+  background: color-mix(in srgb, var(--surface-panel) 82%, var(--accent-surface-soft));
+}
+
+.check-option input {
+  margin-top: 2px;
+}
+
+.compact-option {
+  min-height: 68px;
+  padding-top: 10px;
+  padding-bottom: 10px;
+}
+
+.target-option {
+  align-items: flex-start;
+}
+
+.target-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+  line-height: 1.35;
+}
+
+.target-copy > span {
+  display: block;
+  color: var(--color-text);
+  font-size: 14px;
+}
+
+.target-copy small {
+  display: block;
+  color: var(--color-text-muted);
+  font-size: 12px;
+  line-height: 1.45;
+  white-space: normal;
+}
+
+.scope-preview,
+.custom-rule-summary-box {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 14px 16px;
+  border-radius: 14px;
+  border: 1px solid var(--color-border-soft);
+  background: var(--surface-panel);
+}
+
+.custom-rule-footer {
+  padding: 16px 20px;
+  border-top: 1px solid var(--color-border-soft);
+  background: var(--surface-default);
+}
+
+.drawer-error {
+  color: var(--color-danger);
+  font-size: 12px;
+  margin: 0;
+}
+
 .empty-box {
   min-height: 44px;
   display: flex;
@@ -1644,6 +2670,44 @@ onBeforeUnmount(() => {
   background: color-mix(in srgb, var(--surface-panel) 82%, white);
   color: var(--color-text-muted);
   font-size: 13px;
+}
+
+@media (max-width: 900px) {
+  .custom-rule-drawer {
+    width: min(100vw, 560px);
+  }
+
+  .custom-rule-detail-drawer {
+    width: min(100vw, 520px);
+  }
+
+  .option-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .compact-rule-item,
+  .compact-rule-actions {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .detail-summary-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .selection-toolbar {
+    flex-direction: column;
+  }
+
+  .selection-toolbar-actions {
+    width: 100%;
+    justify-content: stretch;
+  }
+
+  .selection-search {
+    width: 100%;
+    min-width: 0;
+  }
 }
 
 .empty-box-guide {
