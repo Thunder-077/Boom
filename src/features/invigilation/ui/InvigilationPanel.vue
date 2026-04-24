@@ -444,7 +444,6 @@
               <div v-if="groupedExamSessionRuleOptions.length > 0" class="selection-toolbar">
                 <div class="selection-toolbar-copy">
                   <strong>已选 {{ selectedRuleTimeLabels.length }} 个考试时段</strong>
-                  <span>同一时间块只显示一次，勾选后会联动命中该时间块内全部场次。</span>
                 </div>
                 <div class="selection-toolbar-actions">
                   <button
@@ -464,8 +463,10 @@
                     :checked="isRuleTimeScopeSelected(option.sessionIds)"
                     @change="toggleRuleTimeScopeIds(option.sessionIds)"
                   />
-                  <div class="target-copy">
-                    <span>{{ option.label }}</span>
+                  <div class="target-copy time-scope-copy">
+                    <template v-for="(line, idx) in option.label.split('\n')" :key="idx">
+                      <span :class="idx === 0 ? 'time-scope-subject' : 'time-scope-datetime'">{{ line }}</span>
+                    </template>
                   </div>
                 </label>
               </div>
@@ -528,9 +529,9 @@
                       :checked="draftRule.targetIds.includes(option.id)"
                       @change="toggleRuleTargetId(option.id)"
                     />
-                    <div class="target-copy">
-                      <span>{{ option.label }}</span>
-                      <small v-if="option.subtitle">{{ formatTargetOptionSubtitle(option.subtitle) }}</small>
+                    <div class="target-copy target-option-copy">
+                      <span class="target-option-label">{{ option.label }}</span>
+                      <small v-if="option.subtitle" class="target-option-subtitle">{{ formatTargetOptionSubtitle(option.subtitle) }}</small>
                     </div>
                   </label>
                 </div>
@@ -1436,7 +1437,7 @@ function buildGroupedRuleTimeScopeLabel(
   const topicLabel = normalizedSubjectSet.size === 1
     ? parts[0].subjectLabel
     : Array.from(new Set(parts.map((part) => `${part.gradeName}${part.subjectLabel}`))).join("、");
-  return `${topicLabel} ${dateTimeLabel}`.trim();
+  return `${topicLabel}\n${dateTimeLabel}`;
 }
 
 function parseRuleTimeScopeLabelPart(label: string): RuleTimeScopeLabelPart | null {
@@ -2606,7 +2607,7 @@ onBeforeUnmount(() => {
 }
 
 .compact-option {
-  min-height: 68px;
+  min-height: 64px;
   padding-top: 10px;
   padding-bottom: 10px;
 }
@@ -2633,6 +2634,38 @@ onBeforeUnmount(() => {
   display: block;
   color: var(--color-text-muted);
   font-size: 12px;
+  line-height: 1.45;
+  white-space: normal;
+}
+
+.time-scope-copy {
+  gap: 2px;
+}
+
+.time-scope-subject {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--color-text);
+}
+
+.time-scope-datetime {
+  font-size: 13px;
+  color: var(--color-text-muted);
+}
+
+.target-option-copy {
+  gap: 2px;
+}
+
+.target-option-label {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--color-text);
+}
+
+.target-option-subtitle {
+  font-size: 13px;
+  color: var(--color-text-muted);
   line-height: 1.45;
   white-space: normal;
 }
