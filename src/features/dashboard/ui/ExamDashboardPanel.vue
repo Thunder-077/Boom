@@ -1,7 +1,7 @@
 <template>
   <section class="dashboard-grid">
     <div class="left-col">
-      <ConfigCard title="当前考试配置" description="统一设置考试标题、须知与各科目时间，修改后自动保存本页配置。">
+      <ConfigCard title="当前考试配置">
         <p v-if="store.viewState.errorMessage" class="page-error-note" aria-live="polite">
           数据加载异常：{{ store.viewState.errorMessage }}
         </p>
@@ -30,9 +30,6 @@
       </ConfigCard>
 
       <TableCard title="考试时间">
-        <template #description>
-          <p class="table-hint">按年级配置各科目考试时间，已按最新考试安排预置高一/高二数据。</p>
-        </template>
         <template #actions>
           <FluentSelect
             :model-value="store.viewState.selectedSessionTimeGradeName"
@@ -117,7 +114,6 @@
 
     <div class="right-col">
       <section class="progress-card card-shell">
-        <span class="hero-eyebrow">自动排考引擎</span>
         <div class="progress-head">
           <h3>开始分配考场</h3>
           <span class="progress-badge">{{ progressBadgeText }}</span>
@@ -149,53 +145,57 @@
       </section>
 
       <section class="overview-card card-shell">
-        <div class="overview-head">
-          <span class="overview-eyebrow">执行总览</span>
+        <div class="new-overview-head">
           <h3>配置与结果</h3>
-          <p>在这里统一校验容量约束、查看生成结果，并直接完成导出。</p>
         </div>
-        <div class="overview-body">
-          <section class="capacity-card">
-            <div class="overview-section-head">
-              <span class="section-kicker">容量配置</span>
-              <strong>考场容量参数</strong>
-            </div>
-            <div class="field-stack compact" :style="{ opacity: store.viewState.loading ? 0 : 1, pointerEvents: store.viewState.loading ? 'none' : 'auto', transition: 'opacity 0.3s ease' }">
-              <label class="metric-field">
-                <span class="metric-label">考场默认容量</span>
-                <input v-model.number="capacityForm.defaultCapacity" class="metric-input" type="number" min="1" />
-              </label>
-              <label class="metric-field">
-                <span class="metric-label">考场最大容量</span>
-                <input v-model.number="capacityForm.maxCapacity" class="metric-input" type="number" min="1" />
-              </label>
-            </div>
-          </section>
 
-          <section class="complete-card">
-            <span class="complete-eyebrow">结果中心</span>
-            <div class="complete-head">
-              <h3>{{ completeTitle }}</h3>
-              <span class="complete-badge" :class="{ pending: isCompletePending, error: isCompleteError }">{{ completeBadgeText }}</span>
-            </div>
-            <p class="complete-desc">{{ completeDescription }}</p>
-            <div class="complete-kpi">
-              <span>已生成结果</span>
-              <strong>{{ store.viewState.overview.generatedAt ? "可导出" : "未生成" }}</strong>
-            </div>
-            <div class="complete-meta">
-              <div class="complete-summary">
-                <span class="metric-label">结果摘要</span>
-                <strong v-if="!store.viewState.lastExportFolderPath">{{ completeSummary }}</strong>
-                <button v-else class="export-link" type="button" @click="openExportFolder">{{ exportFileName }}</button>
-              </div>
-              <div class="complete-action">
-                <button class="primary-btn export-btn" :disabled="store.viewState.exporting || !store.viewState.overview.generatedAt" @click="exportBundle">
-                  {{ store.viewState.exporting ? "导出中..." : "导出分配结果" }}
-                </button>
+        <div class="capacity-section">
+          <h4 class="section-title">考场容量参数</h4>
+          <div class="capacity-grid">
+            <div class="capacity-item">
+              <div class="capacity-content">
+                <span class="capacity-label">考场默认容量</span>
+                <div class="capacity-value-row">
+                  <input v-model.number="capacityForm.defaultCapacity" class="capacity-input" type="number" min="1" />
+                  <span class="capacity-unit">人</span>
+                </div>
               </div>
             </div>
-          </section>
+            <div class="capacity-item">
+              <div class="capacity-content">
+                <span class="capacity-label">考场最大容量</span>
+                <div class="capacity-value-row">
+                  <input v-model.number="capacityForm.maxCapacity" class="capacity-input" type="number" min="1" />
+                  <span class="capacity-unit">人</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="results-section">
+          <h4 class="section-title">结果中心</h4>
+          <div class="results-list">
+            <div class="result-item">
+              <span class="result-label">任务状态</span>
+              <span class="result-value status-badge" :class="getStatusClass()">{{ completeBadgeText }}</span>
+            </div>
+            <div class="result-item">
+              <span class="result-label">已生成结果</span>
+              <span class="result-value">{{ store.viewState.overview.generatedAt ? "可导出" : "未生成" }}</span>
+            </div>
+            <div class="result-item">
+              <span class="result-label">结果摘要</span>
+              <button v-if="store.viewState.lastExportFolderPath" class="result-link" type="button" @click="openExportFolder">{{ exportFileName }}</button>
+              <span v-else class="result-value">尚未导出分配文件</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="export-section">
+          <button class="export-btn-large" :disabled="store.viewState.exporting || !store.viewState.overview.generatedAt" @click="exportBundle">
+            {{ store.viewState.exporting ? "导出中..." : "导出分配结果" }}
+          </button>
         </div>
       </section>
     </div>
@@ -285,7 +285,7 @@ const progressDescription = computed(() => {
     }
     return parts.join("，");
   }
-  return "系统会自动为所有年级的学生分配考场，并生成相关导出文件。";
+  return "点击按钮即可开始分配考场 ~~";
 });
 
 const progressStepText = computed(() => {
@@ -360,6 +360,19 @@ const exportFileName = computed(() => {
 
 const isCompletePending = computed(() => store.viewState.generating || !store.viewState.overview.generatedAt);
 const isCompleteError = computed(() => store.viewState.generationProgress.status === "error");
+
+function getStatusClass() {
+  if (store.viewState.generationProgress.status === "error") {
+    return "status-error";
+  }
+  if (store.viewState.generating || store.viewState.exporting) {
+    return "status-pending";
+  }
+  if (store.viewState.overview.generatedAt) {
+    return "status-success";
+  }
+  return "status-pending";
+}
 
 function examTimeSubjectLabel(subject: Subject): string {
   if (subject === Subject.English || subject === Subject.Russian || subject === Subject.Japanese) {
@@ -842,26 +855,6 @@ onUnmounted(() => {
   gap: 14px;
 }
 
-.hero-eyebrow,
-.complete-eyebrow {
-  display: inline-flex;
-  align-items: center;
-  width: fit-content;
-  min-height: 24px;
-  padding: 4px 10px;
-  border-radius: 999px;
-  font-size: 11px;
-  font-weight: 700;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-}
-
-.hero-eyebrow {
-  color: var(--accent-primary);
-  background: var(--surface-nav-panel);
-  border: 1px solid rgba(var(--accent-rgb), 0.12);
-}
-
 .progress-head h3 {
   margin: 0;
   font-size: 24px;
@@ -994,180 +987,217 @@ onUnmounted(() => {
   flex: 1;
   display: flex;
   flex-direction: column;
-  gap: 14px;
-  padding: 16px;
+  gap: 16px;
+  padding: 20px;
   border-radius: 24px;
   background: var(--surface-card-gradient);
 }
 
-.overview-head {
+.new-overview-head {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 8px;
+  margin-bottom: 4px;
 }
 
-.overview-head h3 {
+.new-overview-head h3 {
   margin: 0;
-  font-size: 22px;
+  font-size: 24px;
   font-weight: 700;
   letter-spacing: -0.02em;
+  color: var(--text-primary);
 }
 
-.overview-head p {
+.new-overview-head p {
   margin: 0;
   color: var(--text-secondary);
-  font-size: 13px;
+  font-size: 14px;
   line-height: 1.55;
 }
 
-.overview-eyebrow {
-  display: inline-flex;
-  align-items: center;
-  width: fit-content;
-  min-height: 24px;
-  padding: 4px 10px;
-  border-radius: 999px;
-  background: rgba(var(--accent-rgb), 0.12);
-  color: var(--accent-primary);
-  font-size: 11px;
-  font-weight: 700;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-}
 
-.overview-body {
-  display: grid;
-  gap: 12px;
-}
 
-.capacity-card,
-.complete-card {
-  padding: 0;
-  border-radius: 0;
-  border: 0;
-  background: transparent;
+.capacity-section,
+.results-section {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 12px;
+  padding-top: 12px;
 }
 
-.capacity-card {
-  padding-bottom: 14px;
+.capacity-section {
+  padding-bottom: 16px;
   border-bottom: 1px solid var(--border-default);
 }
 
-.overview-section-head {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-
-.overview-section-head strong {
+.section-title {
+  margin: 0;
   font-size: 17px;
   font-weight: 700;
   color: var(--text-primary);
 }
 
-.section-kicker {
-  color: var(--text-tertiary);
-  font-size: 11px;
-  font-weight: 700;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
+.capacity-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
 }
 
-.complete-eyebrow {
-  color: var(--accent-primary);
-  background: rgba(var(--accent-rgb), 0.12);
-}
-
-.complete-head {
+.capacity-item {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  gap: 12px;
+  padding: 14px 16px;
+  border-radius: 18px;
+  border: 1px solid var(--color-border-soft);
+  background: color-mix(in srgb, var(--surface-panel) 84%, white);
 }
 
-.complete-head h3 {
-  margin: 0;
-  font-size: 18px;
-  font-weight: 700;
-  letter-spacing: -0.02em;
+
+.capacity-content {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+  flex: 1;
 }
 
-.complete-badge {
+.capacity-label {
+  color: var(--text-secondary);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.capacity-value-row {
   display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  line-height: 1.2;
+}
+
+.capacity-input {
+  border: 0;
+  padding: 0;
+  background: transparent;
+  color: var(--text-primary);
+  font-size: 28px;
+  font-weight: 700;
+  width: 60px;
+  font-family: var(--font-mono);
+}
+
+.capacity-input:focus {
+  outline: none;
+}
+
+.capacity-unit {
+  color: var(--text-tertiary);
+  font-size: 18px;
+  font-weight: 600;
+}
+
+.results-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 4px;
+  border-radius: 18px;
+  border: 1px solid var(--color-border-soft);
+  background: color-mix(in srgb, var(--surface-panel) 84%, white);
+}
+
+.result-item {
+  display: flex;
   align-items: center;
-  justify-content: center;
-  min-height: 28px;
-  padding: 8px 12px;
+  gap: 12px;
+  padding: 10px 12px;
+  border-radius: 12px;
+}
+
+.result-item + .result-item {
+  border-top: 1px solid var(--border-default);
+}
+
+
+.result-label {
+  color: var(--text-secondary);
+  font-size: 14px;
+  font-weight: 600;
+  flex: 1;
+}
+
+.result-value {
+  color: var(--text-primary);
+  font-size: 16px;
+  font-weight: 700;
+  text-align: right;
+}
+
+.status-badge {
+  padding: 6px 12px;
   border-radius: 999px;
-  border: 1px solid transparent;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.status-success {
   background: var(--color-success-soft);
   color: var(--color-success);
-  font-size: 12px;
-  font-weight: 700;
 }
 
-.complete-badge.pending {
+.status-pending {
   background: var(--color-warning-soft);
   color: var(--color-warning);
 }
 
-.complete-badge.error {
-  background: var(--color-danger-soft, rgba(180, 35, 24, 0.14));
-  color: var(--color-danger, #b42318);
+.status-error {
+  background: var(--color-danger-soft);
+  color: var(--color-danger);
 }
 
-.complete-meta {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
+.result-link {
+  border: 0;
+  padding: 0;
+  background: transparent;
+  color: var(--color-brand);
+  font: inherit;
+  font-weight: 700;
+  text-decoration: underline;
+  cursor: pointer;
+  text-align: right;
 }
 
-.complete-kpi {
-  padding: 10px 12px;
-  border-radius: 14px;
-  border: 1px solid var(--border-default);
-  background: var(--surface-elevated);
-  display: flex;
+.export-section {
+  margin-top: 8px;
+}
+
+.export-btn-large {
+  width: 100%;
+  min-height: 56px;
+  padding: 14px 20px;
+  border-radius: 18px;
+  border: 0;
+  background: var(--accent-primary);
+  color: white;
+  font-size: 16px;
+  font-weight: 700;
+  cursor: pointer;
+  display: inline-flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 12px;
+  justify-content: center;
+  gap: 10px;
+  transition: opacity 0.2s ease;
 }
 
-.complete-kpi span {
-  color: var(--text-secondary);
-  font-size: 12px;
-  font-weight: 700;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
+.export-btn-large:hover:not(:disabled) {
+  opacity: 0.9;
 }
 
-.complete-kpi strong {
-  color: var(--text-primary);
-  font-size: 18px;
-  font-weight: 700;
+.export-btn-large:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
 }
 
-.complete-summary {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-
-.complete-summary strong {
-  font-size: 14px;
-  color: var(--text-primary);
-}
-
-.complete-action {
-  display: flex;
-  justify-content: flex-end;
-}
-
-.export-btn {
-  width: 164px;
-}
 
 .exam-table thead tr {
   height: 46px;

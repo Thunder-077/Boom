@@ -150,7 +150,7 @@
           </div>
         </ConfigCard>
 
-        <ConfigCard title="位置配置" description="填写教室所在的楼栋与楼层。">
+        <ConfigCard title="教室位置"">
           <div class="form-grid form-grid-compact">
             <label class="field">
               <span class="field-label">楼号</span>
@@ -179,7 +179,7 @@
               :disabled="store.viewState.mode !== 'existing' || store.viewState.deleting"
               @click="deleteCurrent"
             >
-              {{ store.viewState.deleting ? "删除中..." : "删除当前配置" }}
+              {{ store.viewState.deleting ? "删除中..." : "删除教室" }}
             </button>
             <button class="primary-btn" type="button" :disabled="store.viewState.saving" @click="saveCurrent">
               {{ store.viewState.saving ? "保存中..." : saveButtonLabel }}

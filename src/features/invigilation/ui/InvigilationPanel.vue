@@ -1,7 +1,7 @@
 <template>
   <section class="panel">
     <div class="grid-two top-grid">
-      <ConfigCard class="top-card exam-count-card" title="监考人数配置" description="统一设置每个考场所需监考老师个数，分配时自动按此规则执行。">
+      <ConfigCard class="top-card exam-count-card" title="监考人数配置">
         <div class="card-stack">
           <label class="display-field count-field" for="exam-room-required-count">
             <span class="field-label">每个考场监考老师人数</span>
@@ -21,7 +21,7 @@
         </div>
       </ConfigCard>
 
-      <ConfigCard class="top-card middle-manager-card" title="中层是否监考" description="设置中层干部默认是否参与监考，并保留个别人例外入口。">
+      <ConfigCard class="top-card middle-manager-card" title="校中层监考配置">
         <div class="card-stack">
           <div class="segment-wrap">
             <button class="segment-btn" :class="{ active: middleManagerDefaultEnabled }" type="button" @click="setMiddleManagerDefaultEnabled(true)">参与监考</button>
@@ -35,7 +35,7 @@
       </ConfigCard>
     </div>
 
-    <ConfigCard class="exclude-card" title="自定义排班规则" description="按老师、时间范围、任务类型和作用对象配置禁排或指定安排。">
+    <ConfigCard class="exclude-card" title="自定义排班规则">
       <div class="footer-row" style="margin-bottom: 16px;">
         <div class="custom-rule-overview">
           <p class="card-note">当前已配置 {{ store.viewState.customRules.length }} 条规则</p>
@@ -78,7 +78,7 @@
     </ConfigCard>
 
     <div class="grid-two summary-grid-row">
-      <ConfigCard class="summary-card self-study-card" title="全员自习" description="统一设置自习时段与班级自习科目。">
+      <ConfigCard class="summary-card self-study-card" title="全员自习">
         <div class="card-stack">
           <div class="summary-grid">
             <div class="summary-chip time-summary-chip">
@@ -104,7 +104,7 @@
         </div>
       </ConfigCard>
 
-      <ConfigCard class="summary-card allowance-card" title="监考津贴" description="分别设置场内与场外监考津贴单价，系统按分钟自动结算。">
+      <ConfigCard class="summary-card allowance-card" title="监考津贴">
         <div class="card-stack">
           <div class="subsidy-row">
             <label class="display-field">
@@ -129,7 +129,7 @@
     <ConfigCard>
       <div class="action-row">
         <div class="action-copy">
-          <p class="action-text">点击即可分配监考老师，并在完成后导出监考表。</p>
+          <p class="action-text">点击按钮为考场、自习室及楼层分配监考、看班老师 ~~~</p>
           <p v-if="store.viewState.staffOverview.generatedAt" class="solver-summary">{{ staffSolverSummary }}</p>
         </div>
         <div
@@ -165,7 +165,7 @@
           </div>
         </div>
         <div class="action-buttons">
-          <button class="primary-btn action-btn" type="button" :disabled="store.viewState.assigning" @click="assignTeachers">{{ store.viewState.assigning ? "分配中..." : "分配监考老师" }}</button>
+          <button class="primary-btn action-btn" type="button" :disabled="store.viewState.assigning" @click="assignTeachers">{{ store.viewState.assigning ? "分配中..." : "开始分配" }}</button>
           <button
             class="secondary-btn action-btn"
             type="button"
