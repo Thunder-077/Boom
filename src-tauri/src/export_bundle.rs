@@ -2,13 +2,13 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use crate::app_log;
+use crate::score::{AppError, Subject};
 use chrono::{DateTime, Datelike, NaiveDateTime, Timelike, Utc};
 use rusqlite::params;
 use rust_xlsxwriter::{Color, Format, FormatAlign, FormatBorder, Workbook, Worksheet, XlsxError};
 use serde::Serialize;
 use tauri::{AppHandle, Manager};
-use crate::app_log;
-use crate::score::{AppError, Subject};
 
 const SUBJECT_EXPORT_ORDER: [(Subject, &str); 11] = [
     (Subject::Chinese, "语文"),
@@ -143,11 +143,19 @@ fn format_ticket_time(start: &str, end: &str) -> Option<String> {
     let left_period = period_label(s.hour(), s.minute());
     let right_period = period_label(e.hour(), e.minute());
     if left_period == right_period {
-        Some(format!("{}{} — {}", left_period, s.format("%H:%M"), e.format("%H:%M")))
+        Some(format!(
+            "{}{} — {}",
+            left_period,
+            s.format("%H:%M"),
+            e.format("%H:%M")
+        ))
     } else {
         Some(format!(
             "{}{} — {}{}",
-            left_period, s.format("%H:%M"), right_period, e.format("%H:%M")
+            left_period,
+            s.format("%H:%M"),
+            right_period,
+            e.format("%H:%M")
         ))
     }
 }
@@ -449,7 +457,8 @@ fn build_tickets_html(
     };
     let page_tpl_start = page_start + page_start_marker.len();
     if page_end <= page_tpl_start {
-        return "<!DOCTYPE html><html><body><p>准考证模板页面标记顺序错误</p></body></html>".to_string();
+        return "<!DOCTYPE html><html><body><p>准考证模板页面标记顺序错误</p></body></html>"
+            .to_string();
     }
     let page_tpl = &template[page_tpl_start..page_end];
     let mut pages_html = String::new();
@@ -873,8 +882,8 @@ fn count_files_recursively(dir: &Path) -> Result<i64, AppError> {
     let mut count = 0_i64;
     let mut stack = vec![dir.to_path_buf()];
     while let Some(current) = stack.pop() {
-        let entries = fs::read_dir(&current)
-            .map_err(|e| AppError::new(format!("读取导出目录失败: {e}")))?;
+        let entries =
+            fs::read_dir(&current).map_err(|e| AppError::new(format!("读取导出目录失败: {e}")))?;
         for entry in entries {
             let entry = entry.map_err(|e| AppError::new(format!("读取目录项失败: {e}")))?;
             let path = entry.path();

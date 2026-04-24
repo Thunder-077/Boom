@@ -242,11 +242,54 @@ export interface InvigilationConfig {
   selfStudyEndTime: string;
 }
 
-export interface ExamStaffExclusion {
+export type InvigilationRuleActionType = "exclude" | "require";
+export type InvigilationRuleTimeScopeType = "exam_session" | "full_self_study";
+export type InvigilationRuleTaskScopeType =
+  | "exam_room"
+  | "exam_linked_self_study"
+  | "full_self_study"
+  | "floor_rover";
+export type InvigilationRuleTargetScopeType = "all" | "selected_targets";
+
+export interface InvigilationCustomRule {
+  actionType: InvigilationRuleActionType;
   teacherId: number;
   teacherName: string;
-  sessionId: number;
-  sessionLabel: string;
+  timeScopeType: InvigilationRuleTimeScopeType;
+  timeScopeIds: number[];
+  timeScopeLabels: string[];
+  taskScopeType: InvigilationRuleTaskScopeType;
+  targetScopeType: InvigilationRuleTargetScopeType;
+  targetIds: string[];
+  targetLabels: string[];
+}
+
+export interface InvigilationRuleTimeScopeOption {
+  id: number;
+  label: string;
+  startAt: string;
+  endAt: string;
+}
+
+export interface InvigilationRuleFullSelfStudyOption {
+  label: string;
+  startAt: string;
+  endAt: string;
+}
+
+export interface InvigilationRuleTargetOption {
+  id: string;
+  label: string;
+  subtitle: string | null;
+  timeScopeType: InvigilationRuleTimeScopeType;
+  timeScopeId: number | null;
+  taskScopeType: InvigilationRuleTaskScopeType;
+}
+
+export interface InvigilationRuleOptions {
+  examSessionOptions: InvigilationRuleTimeScopeOption[];
+  fullSelfStudyOption: InvigilationRuleFullSelfStudyOption | null;
+  targetOptions: InvigilationRuleTargetOption[];
 }
 
 export interface SelfStudyClassSubjectConfig {
@@ -271,7 +314,7 @@ export interface GenerateExamStaffPlanPayload {
   defaultExamRoomRequiredCount: number;
   indoorAllowancePerMinute: number;
   outdoorAllowancePerMinute: number;
-  staffExclusions: Array<{ teacherId: number; sessionId: number }>;
+  customRules: InvigilationCustomRule[];
 }
 
 export interface InvigilationExclusionSessionOption {

@@ -1,5 +1,4 @@
-import { describe, expect, it } from "vitest";
-import { vi } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { Subject } from "../../../entities/score/model";
 import { createExamAllocationStore } from "../store";
 import type { ExamAllocationService } from "../service";
@@ -9,8 +8,8 @@ const fakeService: ExamAllocationService = {
     return {
       defaultCapacity: 40,
       maxCapacity: 41,
-      examTitle: "江河25年秋10月月考质量检测",
-      examNotices: ["考试前20分钟入场"],
+      examTitle: "测试考试",
+      examNotices: ["考试前 10 分钟入场"],
       updatedAt: "2026-03-24T10:00:00Z",
     };
   },
@@ -114,14 +113,41 @@ const fakeService: ExamAllocationService = {
         selfStudyStartTime: "12:10",
         selfStudyEndTime: "13:40",
       },
-      exclusions: [],
+      customRules: [],
       selfStudyClassSubjects: [],
+    };
+  },
+  async listInvigilationCustomRuleOptions() {
+    return {
+      examSessionOptions: [
+        {
+          id: 1,
+          label: "高一外语 03-24 08:00-10:00",
+          startAt: "2026-03-24T08:00",
+          endAt: "2026-03-24T10:00",
+        },
+      ],
+      fullSelfStudyOption: {
+        label: "全员自习 03-24 12:10-13:40",
+        startAt: "2026-03-24T12:10",
+        endAt: "2026-03-24T13:40",
+      },
+      targetOptions: [
+        {
+          id: "space:1",
+          label: "高一1场",
+          subtitle: "高一外语 03-24 08:00-10:00",
+          timeScopeType: "exam_session",
+          timeScopeId: 1,
+          taskScopeType: "exam_room",
+        },
+      ],
     };
   },
   async savePersistedInvigilationConfig() {
     return { success: true };
   },
-  async replacePersistedInvigilationExclusions() {
+  async replacePersistedInvigilationCustomRules() {
     return { success: true };
   },
   async savePersistedSelfStudyClassSubjects() {
@@ -172,16 +198,7 @@ const fakeService: ExamAllocationService = {
     };
   },
   async listInvigilationExclusionSessionOptions() {
-    return [
-      {
-        sessionId: -3,
-        gradeName: "全局",
-        subject: Subject.English,
-        startAt: "2026-03-24T08:00",
-        endAt: "2026-03-24T10:00",
-        label: "英语 03-24 08:00-10:00",
-      },
-    ];
+    return [];
   },
   async listTeachers() {
     return {
@@ -200,7 +217,7 @@ const fakeService: ExamAllocationService = {
   },
   async exportLatestExamAllocationBundle() {
     return {
-      folderPath: "D:/exports/2026年3月月考考场安排",
+      folderPath: "D:/exports/测试考试考场安排",
       gradeCount: 1,
       fileCount: 8,
       exportedAt: "2026-03-24T10:00:00Z",
@@ -223,7 +240,7 @@ describe("exam allocation store", () => {
     expect(store.viewState.detail?.session.subject).toBe(Subject.English);
   });
 
-  it("expands template exclusions to actual session ids when assigning teachers", async () => {
+  it("passes custom rules through when assigning teachers", async () => {
     const generateStaffPlan = vi.fn(fakeService.generateStaffPlan);
     const store = createExamAllocationStore({
       ...fakeService,
@@ -231,14 +248,33 @@ describe("exam allocation store", () => {
     });
     await store.loadAll();
 
-    const added = await store.addStaffExclusion(101, -3);
-    expect(added).toBe(true);
+    await store.saveCustomRules([
+      {
+        actionType: "exclude",
+        teacherId: 101,
+        teacherName: "老师",
+        timeScopeType: "exam_session",
+        timeScopeIds: [1],
+        timeScopeLabels: ["高一外语 03-24 08:00-10:00"],
+        taskScopeType: "exam_room",
+        targetScopeType: "selected_targets",
+        targetIds: ["space:1"],
+        targetLabels: ["高一1场"],
+      },
+    ]);
 
     await store.assignTeachers();
 
     expect(generateStaffPlan).toHaveBeenCalledWith(
       expect.objectContaining({
-        staffExclusions: [{ teacherId: 101, sessionId: 1 }],
+        customRules: [
+          expect.objectContaining({
+            teacherId: 101,
+            timeScopeIds: [1],
+            taskScopeType: "exam_room",
+            targetIds: ["space:1"],
+          }),
+        ],
       }),
     );
   });

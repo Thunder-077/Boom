@@ -464,9 +464,7 @@ pub(crate) fn load_distinct_teaching_grades(conn: &Connection) -> Result<Vec<Str
     Ok(grades)
 }
 
-pub(crate) fn load_grade_time_template_grades(
-    conn: &Connection,
-) -> Result<Vec<String>, AppError> {
+pub(crate) fn load_grade_time_template_grades(conn: &Connection) -> Result<Vec<String>, AppError> {
     let mut stmt =
         conn.prepare("SELECT DISTINCT grade_name FROM exam_grade_subject_time_templates")?;
     let rows = stmt.query_map([], |row| row.get::<_, String>(0))?;
@@ -487,24 +485,114 @@ fn seed_preset_grade_subject_time_templates(conn: &Connection) -> Result<(), App
     let now = Utc::now().to_rfc3339();
     // 根据用户提供的考试安排图片，预置高一/高二科目时间。
     let presets: [(&str, Subject, &str, &str); 18] = [
-        ("高一", Subject::Chinese, "2026-04-28T08:00", "2026-04-28T10:30"),
-        ("高一", Subject::Physics, "2026-04-28T14:10", "2026-04-28T15:40"),
-        ("高一", Subject::Geography, "2026-04-28T16:10", "2026-04-28T17:40"),
-        ("高一", Subject::Math, "2026-04-29T08:00", "2026-04-29T10:00"),
-        ("高一", Subject::Biology, "2026-04-29T10:30", "2026-04-29T12:00"),
-        ("高一", Subject::Chemistry, "2026-04-29T14:10", "2026-04-29T15:40"),
-        ("高一", Subject::Politics, "2026-04-29T16:10", "2026-04-29T17:40"),
-        ("高一", Subject::History, "2026-04-30T08:00", "2026-04-30T09:30"),
-        ("高一", Subject::English, "2026-04-30T10:00", "2026-04-30T12:00"),
-        ("高二", Subject::Chinese, "2026-04-28T08:00", "2026-04-28T10:30"),
-        ("高二", Subject::Physics, "2026-04-28T14:10", "2026-04-28T15:40"),
-        ("高二", Subject::Geography, "2026-04-28T16:10", "2026-04-28T17:40"),
-        ("高二", Subject::English, "2026-04-29T08:00", "2026-04-29T10:00"),
-        ("高二", Subject::Biology, "2026-04-29T10:30", "2026-04-29T12:00"),
-        ("高二", Subject::Chemistry, "2026-04-29T14:10", "2026-04-29T15:40"),
-        ("高二", Subject::Politics, "2026-04-29T16:10", "2026-04-29T17:40"),
-        ("高二", Subject::History, "2026-04-30T08:00", "2026-04-30T09:30"),
-        ("高二", Subject::Math, "2026-04-30T10:00", "2026-04-30T12:00"),
+        (
+            "高一",
+            Subject::Chinese,
+            "2026-04-28T08:00",
+            "2026-04-28T10:30",
+        ),
+        (
+            "高一",
+            Subject::Physics,
+            "2026-04-28T14:10",
+            "2026-04-28T15:40",
+        ),
+        (
+            "高一",
+            Subject::Geography,
+            "2026-04-28T16:10",
+            "2026-04-28T17:40",
+        ),
+        (
+            "高一",
+            Subject::Math,
+            "2026-04-29T08:00",
+            "2026-04-29T10:00",
+        ),
+        (
+            "高一",
+            Subject::Biology,
+            "2026-04-29T10:30",
+            "2026-04-29T12:00",
+        ),
+        (
+            "高一",
+            Subject::Chemistry,
+            "2026-04-29T14:10",
+            "2026-04-29T15:40",
+        ),
+        (
+            "高一",
+            Subject::Politics,
+            "2026-04-29T16:10",
+            "2026-04-29T17:40",
+        ),
+        (
+            "高一",
+            Subject::History,
+            "2026-04-30T08:00",
+            "2026-04-30T09:30",
+        ),
+        (
+            "高一",
+            Subject::English,
+            "2026-04-30T10:00",
+            "2026-04-30T12:00",
+        ),
+        (
+            "高二",
+            Subject::Chinese,
+            "2026-04-28T08:00",
+            "2026-04-28T10:30",
+        ),
+        (
+            "高二",
+            Subject::Physics,
+            "2026-04-28T14:10",
+            "2026-04-28T15:40",
+        ),
+        (
+            "高二",
+            Subject::Geography,
+            "2026-04-28T16:10",
+            "2026-04-28T17:40",
+        ),
+        (
+            "高二",
+            Subject::English,
+            "2026-04-29T08:00",
+            "2026-04-29T10:00",
+        ),
+        (
+            "高二",
+            Subject::Biology,
+            "2026-04-29T10:30",
+            "2026-04-29T12:00",
+        ),
+        (
+            "高二",
+            Subject::Chemistry,
+            "2026-04-29T14:10",
+            "2026-04-29T15:40",
+        ),
+        (
+            "高二",
+            Subject::Politics,
+            "2026-04-29T16:10",
+            "2026-04-29T17:40",
+        ),
+        (
+            "高二",
+            Subject::History,
+            "2026-04-30T08:00",
+            "2026-04-30T09:30",
+        ),
+        (
+            "高二",
+            Subject::Math,
+            "2026-04-30T10:00",
+            "2026-04-30T12:00",
+        ),
     ];
     for (grade_name, subject, start_at, end_at) in presets {
         conn.execute(
@@ -676,7 +764,11 @@ pub fn build_self_study_topic_chain(
             subjects: vec![session.subject],
         });
     }
-    slots.sort_by(|a, b| a.start_ts.cmp(&b.start_ts).then(a.order_key.cmp(&b.order_key)));
+    slots.sort_by(|a, b| {
+        a.start_ts
+            .cmp(&b.start_ts)
+            .then(a.order_key.cmp(&b.order_key))
+    });
 
     // 自习主题始终围绕“这个班下一门还要考什么”来推荐。
     // 这里不再根据历史自习场次跳过未来科目，避免连续两场自习被推进到不同科目，
@@ -2111,12 +2203,13 @@ mod tests {
                 is_foreign_group: true,
             },
         ];
-        let class_subjects = HashMap::from([(
-            "高二1班".to_string(),
-            HashSet::from([Subject::English]),
-        )]);
+        let class_subjects =
+            HashMap::from([("高二1班".to_string(), HashSet::from([Subject::English]))]);
         let chain = build_self_study_topic_chain(1_000, "高二1班", &sessions, &class_subjects);
-        assert_eq!(chain, vec![build_subject_self_study_topic(Subject::English)]);
+        assert_eq!(
+            chain,
+            vec![build_subject_self_study_topic(Subject::English)]
+        );
     }
 
     #[test]
@@ -2157,8 +2250,7 @@ mod tests {
 
     #[test]
     fn test_foreign_group_self_study_topic_uses_short_label() {
-        let topic =
-            build_foreign_group_self_study_topic(vec![Subject::English, Subject::Russian]);
+        let topic = build_foreign_group_self_study_topic(vec![Subject::English, Subject::Russian]);
         assert_eq!(topic.label, "外语自习（英、俄）");
     }
 
@@ -2188,14 +2280,8 @@ mod tests {
             },
         ];
 
-        fill_with_configured_exam_rooms(
-            "高一",
-            Subject::Math,
-            &mut chosen_spaces,
-            3,
-            &exam_rooms,
-        )
-        .unwrap();
+        fill_with_configured_exam_rooms("高一", Subject::Math, &mut chosen_spaces, 3, &exam_rooms)
+            .unwrap();
 
         assert_eq!(chosen_spaces.len(), 3);
         assert_eq!(
@@ -2382,10 +2468,8 @@ mod tests {
             order_key: 1,
             is_foreign_group: false,
         }];
-        let class_subjects = HashMap::from([(
-            "高二5班".to_string(),
-            HashSet::from([Subject::Physics]),
-        )]);
+        let class_subjects =
+            HashMap::from([("高二5班".to_string(), HashSet::from([Subject::Physics]))]);
         let chain = build_self_study_topic_chain(2_000, "高二5班", &sessions, &class_subjects);
         assert_eq!(chain, vec![build_free_study_topic()]);
     }
@@ -2413,6 +2497,9 @@ mod tests {
 
         let chain = build_self_study_topic_chain(2_000, "高二9班", &sessions, &class_subjects);
 
-        assert_eq!(chain, vec![build_subject_self_study_topic(Subject::Chemistry)]);
+        assert_eq!(
+            chain,
+            vec![build_subject_self_study_topic(Subject::Chemistry)]
+        );
     }
 }

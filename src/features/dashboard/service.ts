@@ -12,10 +12,11 @@ import type {
   GenerateExamStaffPlanPayload,
   InvigilationExclusionSessionOption,
   InvigilationConfig,
+  InvigilationRuleOptions,
   ExamStaffPlanOverview,
   ExamStaffTask,
   ExamStaffTaskQuery,
-  ExamStaffExclusion,
+  InvigilationCustomRule,
   SelfStudyClassSubjectConfig,
   TeacherDutyStat,
   ExportLatestExamAllocationBundleResult,
@@ -41,9 +42,10 @@ export interface ExamAllocationService {
   listSessionTimes(params?: { gradeName?: string }): Promise<ExamSessionTime[]>;
   upsertSessionTimes(items: ExamSessionTimeUpsert[]): Promise<{ success: boolean }>;
   deleteSessionTime(gradeName: string, subject: ExamSessionTime["subject"]): Promise<{ success: boolean }>;
-  getPersistedInvigilationState(): Promise<{ config: InvigilationConfig; exclusions: ExamStaffExclusion[]; selfStudyClassSubjects: SelfStudyClassSubjectConfig[] }>;
+  getPersistedInvigilationState(): Promise<{ config: InvigilationConfig; customRules: InvigilationCustomRule[]; selfStudyClassSubjects: SelfStudyClassSubjectConfig[] }>;
+  listInvigilationCustomRuleOptions(): Promise<InvigilationRuleOptions>;
   savePersistedInvigilationConfig(payload: InvigilationConfig): Promise<{ success: boolean }>;
-  replacePersistedInvigilationExclusions(items: ExamStaffExclusion[]): Promise<{ success: boolean }>;
+  replacePersistedInvigilationCustomRules(items: InvigilationCustomRule[]): Promise<{ success: boolean }>;
   savePersistedSelfStudyClassSubjects(items: SelfStudyClassSubjectConfig[]): Promise<{ success: boolean }>;
   generateStaffPlan(payload: GenerateExamStaffPlanPayload): Promise<GenerateLatestExamStaffPlanResult>;
   getStaffPlanOverview(): Promise<ExamStaffPlanOverview>;
@@ -90,13 +92,16 @@ export const examAllocationService: ExamAllocationService = {
     return invoke<{ success: boolean }>("delete_exam_session_time", { gradeName, subject });
   },
   getPersistedInvigilationState() {
-    return invoke<{ config: InvigilationConfig; exclusions: ExamStaffExclusion[]; selfStudyClassSubjects: SelfStudyClassSubjectConfig[] }>("get_persisted_invigilation_state");
+    return invoke<{ config: InvigilationConfig; customRules: InvigilationCustomRule[]; selfStudyClassSubjects: SelfStudyClassSubjectConfig[] }>("get_persisted_invigilation_state");
+  },
+  listInvigilationCustomRuleOptions() {
+    return invoke<InvigilationRuleOptions>("list_invigilation_custom_rule_options");
   },
   savePersistedInvigilationConfig(payload) {
     return invoke<{ success: boolean }>("save_persisted_invigilation_config", { payload });
   },
-  replacePersistedInvigilationExclusions(items) {
-    return invoke<{ success: boolean }>("replace_persisted_invigilation_exclusions", { items });
+  replacePersistedInvigilationCustomRules(items) {
+    return invoke<{ success: boolean }>("replace_persisted_invigilation_custom_rules", { items });
   },
   savePersistedSelfStudyClassSubjects(items) {
     return invoke<{ success: boolean }>("save_persisted_self_study_class_subjects", { items });

@@ -8,9 +8,9 @@ pub use crate::exam_allocation::SuccessResponse;
 pub use crate::exam_staff::{
     ExamSessionTime, ExamSessionTimeUpsert, ExamStaffPlanOverview, ExamStaffTask,
     GenerateExamStaffPlanPayload, GenerateLatestExamStaffPlanResult,
-    InvigilationExclusionSessionOption, ListExamSessionTimesParams, ListExamStaffTasksParams, ListTeacherDutyStatsParams,
-    PersistedExamStaffExclusion, PersistedInvigilationConfig, PersistedInvigilationState,
-    MonitorDrawImportResult,
+    InvigilationExclusionSessionOption, InvigilationRuleOptions, ListExamSessionTimesParams,
+    ListExamStaffTasksParams, ListTeacherDutyStatsParams, MonitorDrawImportResult,
+    PersistedInvigilationCustomRule, PersistedInvigilationConfig, PersistedInvigilationState,
     PersistedSelfStudyClassSubject, TeacherDutyStat,
 };
 pub use crate::export_invigilation::ExportLatestInvigilationScheduleResult;
@@ -60,6 +60,13 @@ pub fn get_persisted_invigilation_state(
 }
 
 #[tauri::command]
+pub fn list_invigilation_custom_rule_options(
+    app: AppHandle,
+) -> Result<InvigilationRuleOptions, String> {
+    exam_staff::list_invigilation_custom_rule_options(app)
+}
+
+#[tauri::command]
 pub fn save_persisted_invigilation_config(
     app: AppHandle,
     payload: PersistedInvigilationConfig,
@@ -68,11 +75,11 @@ pub fn save_persisted_invigilation_config(
 }
 
 #[tauri::command]
-pub fn replace_persisted_invigilation_exclusions(
+pub fn replace_persisted_invigilation_custom_rules(
     app: AppHandle,
-    items: Vec<PersistedExamStaffExclusion>,
+    items: Vec<PersistedInvigilationCustomRule>,
 ) -> Result<SuccessResponse, String> {
-    exam_staff::replace_persisted_invigilation_exclusions(app, items)
+    exam_staff::replace_persisted_invigilation_custom_rules(app, items)
 }
 
 #[tauri::command]

@@ -2,7 +2,7 @@ use std::collections::{HashMap, HashSet};
 use std::path::Path;
 use std::time::Instant;
 
-use calamine::{Data, Reader, open_workbook_auto};
+use calamine::{open_workbook_auto, Data, Reader};
 use chrono::{DateTime, NaiveDateTime, Timelike, Utc};
 use cp_sat::builder::{BoolVar, CpModelBuilder, IntVar, LinearExpr};
 use cp_sat::proto::{CpSolverResponse, CpSolverStatus, SatParameters};
@@ -410,14 +410,22 @@ pub struct GenerateExamStaffPlanPayload {
     pub default_exam_room_required_count: i64,
     pub indoor_allowance_per_minute: f64,
     pub outdoor_allowance_per_minute: f64,
-    pub staff_exclusions: Vec<GenerateExamStaffPlanExclusion>,
+    pub custom_rules: Vec<GenerateExamStaffPlanCustomRule>,
 }
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct GenerateExamStaffPlanExclusion {
+pub struct GenerateExamStaffPlanCustomRule {
+    pub action_type: String,
     pub teacher_id: i64,
-    pub session_id: i64,
+    pub teacher_name: Option<String>,
+    pub time_scope_type: String,
+    pub time_scope_ids: Vec<i64>,
+    pub time_scope_labels: Vec<String>,
+    pub task_scope_type: String,
+    pub target_scope_type: String,
+    pub target_ids: Vec<String>,
+    pub target_labels: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -435,11 +443,53 @@ pub struct PersistedInvigilationConfig {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct PersistedExamStaffExclusion {
-    teacher_id: i64,
-    teacher_name: String,
-    session_id: i64,
-    session_label: String,
+pub struct PersistedInvigilationCustomRule {
+    pub action_type: String,
+    pub teacher_id: i64,
+    pub teacher_name: String,
+    pub time_scope_type: String,
+    pub time_scope_ids: Vec<i64>,
+    pub time_scope_labels: Vec<String>,
+    pub task_scope_type: String,
+    pub target_scope_type: String,
+    pub target_ids: Vec<String>,
+    pub target_labels: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct InvigilationRuleTimeScopeOption {
+    id: i64,
+    label: String,
+    start_at: String,
+    end_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct InvigilationRuleFullSelfStudyOption {
+    label: String,
+    start_at: String,
+    end_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct InvigilationRuleTargetOption {
+    id: String,
+    label: String,
+    subtitle: Option<String>,
+    time_scope_type: String,
+    time_scope_id: Option<i64>,
+    task_scope_type: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct InvigilationRuleOptions {
+    exam_session_options: Vec<InvigilationRuleTimeScopeOption>,
+    full_self_study_option: Option<InvigilationRuleFullSelfStudyOption>,
+    target_options: Vec<InvigilationRuleTargetOption>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -470,7 +520,7 @@ pub struct MonitorDrawImportResult {
 #[serde(rename_all = "camelCase")]
 pub struct PersistedInvigilationState {
     config: PersistedInvigilationConfig,
-    exclusions: Vec<PersistedExamStaffExclusion>,
+    custom_rules: Vec<PersistedInvigilationCustomRule>,
     self_study_class_subjects: Vec<PersistedSelfStudyClassSubject>,
 }
 
@@ -583,7 +633,19 @@ struct TaskBuild {
     priority_self_study_chain: Vec<exam_allocation::SelfStudyTopic>,
     day_key: String,
     half_day: HalfDay,
+    rule_target_id: String,
 }
+
+const RULE_ACTION_EXCLUDE: &str = "exclude";
+const RULE_ACTION_REQUIRE: &str = "require";
+const RULE_TIME_SCOPE_EXAM_SESSION: &str = "exam_session";
+const RULE_TIME_SCOPE_FULL_SELF_STUDY: &str = "full_self_study";
+const RULE_TASK_SCOPE_EXAM_ROOM: &str = "exam_room";
+const RULE_TASK_SCOPE_EXAM_LINKED_SELF_STUDY: &str = "exam_linked_self_study";
+const RULE_TASK_SCOPE_FULL_SELF_STUDY: &str = "full_self_study";
+const RULE_TASK_SCOPE_FLOOR_ROVER: &str = "floor_rover";
+const RULE_TARGET_SCOPE_ALL: &str = "all";
+const RULE_TARGET_SCOPE_SELECTED: &str = "selected_targets";
 
 #[derive(Debug, Clone)]
 struct TaskCandidate {
@@ -736,7 +798,9 @@ fn load_grade_subject_template_map(
         let Some(subject) = Subject::from_key(&subject_key) else {
             continue;
         };
-        out.entry(grade_name).or_default().insert(subject, (start_at, end_at));
+        out.entry(grade_name)
+            .or_default()
+            .insert(subject, (start_at, end_at));
     }
     Ok(out)
 }
@@ -860,6 +924,28 @@ fn self_study_topic_from_parts(
     }))
 }
 
+fn self_study_topic_subtitle(task: &TaskBuild) -> Option<String> {
+    let topic = task
+        .recommended_self_study_topic
+        .as_ref()
+        .or_else(|| task.priority_self_study_chain.first())?;
+    let label = topic.label.trim();
+    if label.is_empty() {
+        return None;
+    }
+    let date_time_text = if task.start_at.len() >= 16 && task.end_at.len() >= 16 {
+        format!(
+            "{} {}-{}",
+            &task.start_at[5..10],
+            &task.start_at[11..16],
+            &task.end_at[11..16]
+        )
+    } else {
+        format!("{}-{}", task.start_at, task.end_at)
+    };
+    Some(format!("{label} {date_time_text}"))
+}
+
 fn round_to_two(value: f64) -> f64 {
     (value * 100.0).round() / 100.0
 }
@@ -931,6 +1017,22 @@ fn hydrate_runtime_middle_manager_config(
     Ok(())
 }
 
+fn load_runtime_invigilation_config(conn: &Connection) -> Result<RuntimeInvigilationConfig, AppError> {
+    let mut config = RuntimeInvigilationConfig {
+        default_exam_room_required_count: 1,
+        indoor_allowance_per_minute: 0.5,
+        outdoor_allowance_per_minute: 0.3,
+        middle_manager_default_enabled: false,
+        middle_manager_exception_teacher_ids: HashSet::new(),
+        self_study_date: String::new(),
+        self_study_start_time: "12:10".to_string(),
+        self_study_end_time: "13:40".to_string(),
+        self_study_class_subjects: load_self_study_class_subjects(conn)?,
+    };
+    hydrate_runtime_middle_manager_config(conn, &mut config)?;
+    Ok(config)
+}
+
 fn normalize_teacher_id_list(items: Vec<i64>) -> Vec<i64> {
     let mut values: Vec<i64> = items.into_iter().filter(|item| *item > 0).collect();
     values.sort_unstable();
@@ -990,9 +1092,12 @@ fn load_session_time_template_rows(
             &grade_templates,
         );
         let (start_at, end_at, source_grade_name, is_inherited) = match resolved {
-            Some((start_at, end_at, source_grade_name, is_inherited)) => {
-                (Some(start_at), Some(end_at), source_grade_name, is_inherited)
-            }
+            Some((start_at, end_at, source_grade_name, is_inherited)) => (
+                Some(start_at),
+                Some(end_at),
+                source_grade_name,
+                is_inherited,
+            ),
             None => (None, None, None, false),
         };
         out.push(ExamSessionTime {
@@ -1025,8 +1130,8 @@ fn load_session_time_template_rows(
 pub(crate) fn seed_default_session_times(conn: &Connection) -> Result<(), AppError> {
     let now = Utc::now().to_rfc3339();
     let grade_templates = load_grade_subject_template_map(conn)?;
-    let mut stmt =
-        conn.prepare("SELECT id, grade_name, subject FROM latest_exam_plan_sessions ORDER BY id ASC")?;
+    let mut stmt = conn
+        .prepare("SELECT id, grade_name, subject FROM latest_exam_plan_sessions ORDER BY id ASC")?;
     let rows = stmt.query_map([], |row| {
         Ok((
             row.get::<_, i64>(0)?,
@@ -1039,11 +1144,9 @@ pub(crate) fn seed_default_session_times(conn: &Connection) -> Result<(), AppErr
         let Some(subject) = Subject::from_key(&subject_key) else {
             continue;
         };
-        let Some((start_at, end_at, _, _)) = resolve_effective_grade_subject_template(
-            &grade_name,
-            subject,
-            &grade_templates,
-        ) else {
+        let Some((start_at, end_at, _, _)) =
+            resolve_effective_grade_subject_template(&grade_name, subject, &grade_templates)
+        else {
             continue;
         };
         conn.execute(
@@ -1289,24 +1392,111 @@ fn load_exam_room_requirement(default_count: i64) -> Result<i64, AppError> {
     Ok(default_count.max(1))
 }
 
+fn rule_task_scope_for_task(task: &TaskBuild) -> &'static str {
+    match (task.task_source, task.role) {
+        (StaffTaskSource::Exam, StaffRole::ExamRoomInvigilator) => RULE_TASK_SCOPE_EXAM_ROOM,
+        (StaffTaskSource::ExamLinkedSelfStudy, StaffRole::SelfStudySupervisor) => {
+            RULE_TASK_SCOPE_EXAM_LINKED_SELF_STUDY
+        }
+        (StaffTaskSource::FullSelfStudy, StaffRole::SelfStudySupervisor) => {
+            RULE_TASK_SCOPE_FULL_SELF_STUDY
+        }
+        (_, StaffRole::FloorRover) => RULE_TASK_SCOPE_FLOOR_ROVER,
+        _ => RULE_TASK_SCOPE_EXAM_ROOM,
+    }
+}
+
+fn rule_time_scope_for_task(task: &TaskBuild) -> &'static str {
+    if task.task_source == StaffTaskSource::FullSelfStudy {
+        RULE_TIME_SCOPE_FULL_SELF_STUDY
+    } else {
+        RULE_TIME_SCOPE_EXAM_SESSION
+    }
+}
+
+fn task_matches_custom_rule(task: &TaskBuild, rule: &GenerateExamStaffPlanCustomRule) -> bool {
+    if rule_task_scope_for_task(task) != rule.task_scope_type {
+        return false;
+    }
+    match rule.time_scope_type.as_str() {
+        RULE_TIME_SCOPE_EXAM_SESSION => {
+            let Some(session_id) = task.session_id else {
+                return false;
+            };
+            if !rule.time_scope_ids.iter().any(|id| *id == session_id) {
+                return false;
+            }
+        }
+        RULE_TIME_SCOPE_FULL_SELF_STUDY => {
+            if task.task_source != StaffTaskSource::FullSelfStudy {
+                return false;
+            }
+        }
+        _ => return false,
+    }
+    match rule.target_scope_type.as_str() {
+        RULE_TARGET_SCOPE_ALL => true,
+        RULE_TARGET_SCOPE_SELECTED => rule.target_ids.iter().any(|id| id == &task.rule_target_id),
+        _ => false,
+    }
+}
+
+fn parse_json_i64_list(text: &str) -> Vec<i64> {
+    serde_json::from_str::<Vec<i64>>(text).unwrap_or_default()
+}
+
+fn parse_json_string_list(text: &str) -> Vec<String> {
+    serde_json::from_str::<Vec<String>>(text).unwrap_or_default()
+}
+
+fn to_json_i64_list(values: &[i64]) -> Result<String, AppError> {
+    serde_json::to_string(values)
+        .map_err(|error| AppError::new(format!("排班规则时段序列化失败: {error}")))
+}
+
+fn to_json_string_list(values: &[String], label: &str) -> Result<String, AppError> {
+    serde_json::to_string(values)
+        .map_err(|error| AppError::new(format!("排班规则{label}序列化失败: {error}")))
+}
+
 fn build_task_candidate_summary(
     task: &TaskBuild,
     teachers: &[TeacherInfo],
-    exclusion_pairs: &HashSet<(i64, i64)>,
+    custom_rules: &[GenerateExamStaffPlanCustomRule],
     config: &RuntimeInvigilationConfig,
 ) -> TaskCandidateSummary {
+    let required_teacher_ids: HashSet<i64> = teachers
+        .iter()
+        .filter(|teacher| {
+            custom_rules.iter().any(|rule| {
+                rule.action_type == RULE_ACTION_REQUIRE
+                    && rule.teacher_id == teacher.id
+                    && task_matches_custom_rule(task, rule)
+            })
+        })
+        .map(|t| t.id)
+        .collect();
+
     let active_teachers: Vec<&TeacherInfo> = teachers
         .iter()
         .filter(|teacher| {
-            is_teacher_enabled_for_task_source(teacher, task.task_source, config)
-                && match task.session_id {
-                    // 禁排场次仅作用于“该场次考场监考”；
-                    // 同场次的自习看班、楼层流动仍可参与分配。
-                    Some(session_id) if task.role == StaffRole::ExamRoomInvigilator => {
-                        !exclusion_pairs.contains(&(teacher.id, session_id))
-                    }
-                    _ => true,
-                }
+            if required_teacher_ids.contains(&teacher.id) {
+                return true;
+            }
+            if !required_teacher_ids.is_empty() {
+                return false;
+            }
+            if !is_teacher_enabled_for_task_source(teacher, task.task_source, config) {
+                return false;
+            }
+            
+            let is_excluded = custom_rules.iter().any(|rule| {
+                rule.action_type == RULE_ACTION_EXCLUDE
+                    && rule.teacher_id == teacher.id
+                    && task_matches_custom_rule(task, rule)
+            });
+            
+            !is_excluded
         })
         .collect();
     if active_teachers.is_empty() {
@@ -1318,15 +1508,13 @@ fn build_task_candidate_summary(
     if task.role == StaffRole::ExamRoomInvigilator {
         let candidates: Vec<TaskCandidate> = active_teachers
             .iter()
-            .filter(|teacher| !teacher.subjects.contains(&task.subject))
+            .filter(|teacher| required_teacher_ids.contains(&teacher.id) || !teacher.subjects.contains(&task.subject))
             .map(|teacher| TaskCandidate {
                 teacher_id: teacher.id,
                 assignment_tier: None,
             })
             .collect();
-        return TaskCandidateSummary {
-            candidates,
-        };
+        return TaskCandidateSummary { candidates };
     }
 
     if task.role == StaffRole::SelfStudySupervisor {
@@ -1341,13 +1529,12 @@ fn build_task_candidate_summary(
         {
             for teacher in &active_teachers {
                 let matches_primary = match topic.kind {
-                    exam_allocation::SelfStudyTopicKind::Subject => topic
-                        .subjects
-                        .first()
-                        .is_some_and(|subject| {
+                    exam_allocation::SelfStudyTopicKind::Subject => {
+                        topic.subjects.first().is_some_and(|subject| {
                             teacher.class_names.contains(class_name)
                                 && teacher.subjects.contains(subject)
-                        }),
+                        })
+                    }
                     exam_allocation::SelfStudyTopicKind::ForeignGroup => {
                         teacher.class_names.contains(class_name)
                             && topic
@@ -1385,9 +1572,7 @@ fn build_task_candidate_summary(
                 });
             }
         }
-        return TaskCandidateSummary {
-            candidates,
-        };
+        return TaskCandidateSummary { candidates };
     }
 
     // FloorRover subject avoidance is applied against the whole merged subject set.
@@ -1435,11 +1620,12 @@ fn build_teacher_symmetry_groups(
     for teacher in teachers {
         let mut signature = signatures.remove(&teacher.id).unwrap_or_default();
         signature.sort_unstable_by(|left, right| {
-            left.0
-                .cmp(&right.0)
-                .then(left.1.as_ref().map(|tier| tier.as_key()).cmp(
-                    &right.1.as_ref().map(|tier| tier.as_key()),
-                ))
+            left.0.cmp(&right.0).then(
+                left.1
+                    .as_ref()
+                    .map(|tier| tier.as_key())
+                    .cmp(&right.1.as_ref().map(|tier| tier.as_key())),
+            )
         });
         grouped.entry(signature).or_default().push(teacher.id);
     }
@@ -1651,7 +1837,10 @@ fn build_floor_rover_subjects_by_slot(
             end_ts: session.end_ts,
             subject_group_key: floor_rover_subject_group_key(session.subject),
         };
-        subjects_by_slot.entry(key).or_default().push(session.subject);
+        subjects_by_slot
+            .entry(key)
+            .or_default()
+            .push(session.subject);
     }
 
     for subjects in subjects_by_slot.values_mut() {
@@ -1721,7 +1910,8 @@ fn build_staff_tasks(
             .get(&session.grade_name)
             .cloned()
             .unwrap_or_default();
-        for (space_id, space_type, space_name, original_class_name, self_study_topic, floor) in &spaces
+        for (space_id, space_type, space_name, original_class_name, self_study_topic, floor) in
+            &spaces
         {
             if floor.trim().is_empty() {
                 return Err(AppError::new(format!(
@@ -1755,6 +1945,7 @@ fn build_staff_tasks(
                             priority_self_study_chain: Vec::new(),
                             day_key: day_key.clone(),
                             half_day,
+                            rule_target_id: format!("space:{space_id}"),
                         });
                     }
                 }
@@ -1803,6 +1994,7 @@ fn build_staff_tasks(
                         priority_self_study_chain,
                         day_key: day_key.clone(),
                         half_day,
+                        rule_target_id: format!("space:{space_id}"),
                     });
                 }
             }
@@ -1832,7 +2024,7 @@ fn build_staff_tasks(
                 grade_name: session.grade_name.clone(),
                 subject: session.subject,
                 space_name: format!("{} 楼层流动", floor),
-                floor,
+                floor: floor.clone(),
                 start_at: session.start_at.clone(),
                 end_at: session.end_at.clone(),
                 start_ts: session.start_ts,
@@ -1843,6 +2035,7 @@ fn build_staff_tasks(
                 priority_self_study_chain: Vec::new(),
                 day_key: day_key.clone(),
                 half_day,
+                rule_target_id: format!("floor:{}:{}", session.session_id, floor),
             });
         }
     }
@@ -1890,11 +2083,12 @@ fn build_staff_tasks(
                 recommended_self_study_topic: Some(
                     exam_allocation::build_subject_self_study_topic(subject),
                 ),
-                priority_self_study_chain: vec![
-                    exam_allocation::build_subject_self_study_topic(subject),
-                ],
+                priority_self_study_chain: vec![exam_allocation::build_subject_self_study_topic(
+                    subject,
+                )],
                 day_key: day_key.clone(),
                 half_day,
+                rule_target_id: format!("class:{}", teaching_class.id),
             });
         }
     }
@@ -1908,6 +2102,247 @@ fn build_staff_tasks(
     });
 
     Ok(tasks)
+}
+
+fn build_custom_rule_summary(rule: &PersistedInvigilationCustomRule) -> String {
+    let action_label = if rule.action_type == RULE_ACTION_REQUIRE {
+        "指定安排"
+    } else {
+        "禁排"
+    };
+    let time_label = match rule.time_scope_type.as_str() {
+        RULE_TIME_SCOPE_FULL_SELF_STUDY => rule
+            .time_scope_labels
+            .first()
+            .cloned()
+            .unwrap_or_else(|| "全员自习时段".to_string()),
+        _ => {
+            if rule.time_scope_labels.is_empty() {
+                "未选择考试时段".to_string()
+            } else {
+                rule.time_scope_labels.join("、")
+            }
+        }
+    };
+    let task_label = match rule.task_scope_type.as_str() {
+        RULE_TASK_SCOPE_EXAM_ROOM => "考试任务",
+        RULE_TASK_SCOPE_EXAM_LINKED_SELF_STUDY => "考试期间自习看班",
+        RULE_TASK_SCOPE_FULL_SELF_STUDY => "全员自习看班",
+        RULE_TASK_SCOPE_FLOOR_ROVER => "流动监考",
+        _ => "未知任务",
+    };
+    let target_label = if rule.target_scope_type == RULE_TARGET_SCOPE_ALL {
+        "全部对象".to_string()
+    } else if rule.target_labels.is_empty() {
+        "未选择对象".to_string()
+    } else {
+        rule.target_labels.join("、")
+    };
+    format!(
+        "{} {} 在 {} 的 {}（{}）",
+        action_label, rule.teacher_name, time_label, task_label, target_label
+    )
+}
+
+fn to_persisted_rule(
+    rule: &GenerateExamStaffPlanCustomRule,
+    teacher_name: String,
+    time_scope_labels: Vec<String>,
+    target_labels: Vec<String>,
+) -> PersistedInvigilationCustomRule {
+    PersistedInvigilationCustomRule {
+        action_type: rule.action_type.clone(),
+        teacher_id: rule.teacher_id,
+        teacher_name,
+        time_scope_type: rule.time_scope_type.clone(),
+        time_scope_ids: rule.time_scope_ids.clone(),
+        time_scope_labels,
+        task_scope_type: rule.task_scope_type.clone(),
+        target_scope_type: rule.target_scope_type.clone(),
+        target_ids: rule.target_ids.clone(),
+        target_labels,
+    }
+}
+
+fn persisted_rules_from_payload(
+    rules: &[GenerateExamStaffPlanCustomRule],
+) -> Vec<PersistedInvigilationCustomRule> {
+    rules.iter()
+        .map(|rule| {
+            to_persisted_rule(
+                rule,
+                rule.teacher_name.clone().unwrap_or_else(|| format!("教师{}", rule.teacher_id)),
+                rule.time_scope_labels.clone(),
+                rule.target_labels.clone(),
+            )
+        })
+        .collect()
+}
+
+fn validate_custom_rule_shapes(
+    rules: &[PersistedInvigilationCustomRule],
+) -> Result<(), AppError> {
+    for rule in rules {
+        if rule.teacher_id <= 0 || rule.teacher_name.trim().is_empty() {
+            return Err(AppError::new("排班规则缺少教师信息"));
+        }
+        if rule.action_type != RULE_ACTION_EXCLUDE && rule.action_type != RULE_ACTION_REQUIRE {
+            return Err(AppError::new(format!("排班规则动作无效：{}", rule.action_type)));
+        }
+        if rule.time_scope_type != RULE_TIME_SCOPE_EXAM_SESSION
+            && rule.time_scope_type != RULE_TIME_SCOPE_FULL_SELF_STUDY
+        {
+            return Err(AppError::new(format!(
+                "排班规则时间范围无效：{}",
+                rule.time_scope_type
+            )));
+        }
+        if rule.time_scope_type == RULE_TIME_SCOPE_EXAM_SESSION && rule.time_scope_ids.is_empty() {
+            return Err(AppError::new("考试时段规则至少需要选择一个考试时段"));
+        }
+        if !matches!(
+            rule.task_scope_type.as_str(),
+            RULE_TASK_SCOPE_EXAM_ROOM
+                | RULE_TASK_SCOPE_EXAM_LINKED_SELF_STUDY
+                | RULE_TASK_SCOPE_FULL_SELF_STUDY
+                | RULE_TASK_SCOPE_FLOOR_ROVER
+        ) {
+            return Err(AppError::new(format!(
+                "排班规则任务类型无效：{}",
+                rule.task_scope_type
+            )));
+        }
+        if rule.target_scope_type != RULE_TARGET_SCOPE_ALL
+            && rule.target_scope_type != RULE_TARGET_SCOPE_SELECTED
+        {
+            return Err(AppError::new(format!(
+                "排班规则对象范围无效：{}",
+                rule.target_scope_type
+            )));
+        }
+        if rule.target_scope_type == RULE_TARGET_SCOPE_SELECTED && rule.target_ids.is_empty() {
+            return Err(AppError::new("指定对象规则至少需要选择一个对象"));
+        }
+        if rule.time_scope_type == RULE_TIME_SCOPE_FULL_SELF_STUDY
+            && rule.task_scope_type != RULE_TASK_SCOPE_FULL_SELF_STUDY
+        {
+            return Err(AppError::new("全员自习时段只能配置全员自习看班规则"));
+        }
+        if rule.time_scope_type == RULE_TIME_SCOPE_EXAM_SESSION
+            && rule.task_scope_type == RULE_TASK_SCOPE_FULL_SELF_STUDY
+        {
+            return Err(AppError::new("考试时段不能配置全员自习看班规则"));
+        }
+    }
+    Ok(())
+}
+
+fn validate_custom_rules_against_tasks(
+    rules: &[PersistedInvigilationCustomRule],
+    tasks: &[TaskBuild],
+) -> Result<(), AppError> {
+    validate_custom_rule_shapes(rules)?;
+    let generated_rules = rules
+        .iter()
+        .map(|rule| GenerateExamStaffPlanCustomRule {
+            action_type: rule.action_type.clone(),
+            teacher_id: rule.teacher_id,
+            teacher_name: Some(rule.teacher_name.clone()),
+            time_scope_type: rule.time_scope_type.clone(),
+            time_scope_ids: rule.time_scope_ids.clone(),
+            time_scope_labels: rule.time_scope_labels.clone(),
+            task_scope_type: rule.task_scope_type.clone(),
+            target_scope_type: rule.target_scope_type.clone(),
+            target_ids: rule.target_ids.clone(),
+            target_labels: rule.target_labels.clone(),
+        })
+        .collect::<Vec<_>>();
+    let matched_task_indexes = generated_rules
+        .iter()
+        .map(|rule| {
+            tasks.iter()
+                .enumerate()
+                .filter_map(|(index, task)| task_matches_custom_rule(task, rule).then_some(index))
+                .collect::<HashSet<_>>()
+        })
+        .collect::<Vec<_>>();
+
+    for (index, rule) in rules.iter().enumerate() {
+        if rule.target_scope_type == RULE_TARGET_SCOPE_SELECTED
+            && matched_task_indexes[index].is_empty()
+        {
+            return Err(AppError::new(format!(
+                "排班规则未命中任何可用对象：{}。如需指定考场或班级，请先完成一次考场/任务生成。",
+                build_custom_rule_summary(rule)
+            )));
+        }
+    }
+
+    for left in 0..rules.len() {
+        for right in (left + 1)..rules.len() {
+            if rules[left].teacher_id != rules[right].teacher_id {
+                continue;
+            }
+            if rules[left].action_type == rules[right].action_type {
+                continue;
+            }
+            if rules[left].task_scope_type != rules[right].task_scope_type {
+                continue;
+            }
+            if !matched_task_indexes[left]
+                .intersection(&matched_task_indexes[right])
+                .next()
+                .is_some()
+            {
+                continue;
+            }
+            return Err(AppError::new(format!(
+                "排班规则冲突：{} 与 {} 命中了同一批任务，请先调整后再保存。",
+                build_custom_rule_summary(&rules[left]),
+                build_custom_rule_summary(&rules[right])
+            )));
+        }
+    }
+
+    let mut required_task_records = Vec::<(i64, usize, String)>::new();
+    for (rule_index, rule) in rules.iter().enumerate() {
+        if rule.action_type != RULE_ACTION_REQUIRE {
+            continue;
+        }
+        for task_index in &matched_task_indexes[rule_index] {
+            required_task_records.push((
+                rule.teacher_id,
+                *task_index,
+                build_custom_rule_summary(rule),
+            ));
+        }
+    }
+    for left in 0..required_task_records.len() {
+        for right in (left + 1)..required_task_records.len() {
+            if required_task_records[left].0 != required_task_records[right].0 {
+                continue;
+            }
+            if required_task_records[left].1 == required_task_records[right].1 {
+                continue;
+            }
+            let left_task = &tasks[required_task_records[left].1];
+            let right_task = &tasks[required_task_records[right].1];
+            if left_task.start_ts < right_task.end_ts && right_task.start_ts < left_task.end_ts {
+                return Err(AppError::new(format!(
+                    "指定安排冲突：老师 {} 同时被要求承担重叠时段任务（{} / {}）。",
+                    rules
+                        .iter()
+                        .find(|rule| rule.teacher_id == required_task_records[left].0)
+                        .map(|rule| rule.teacher_name.as_str())
+                        .unwrap_or("未知老师"),
+                    required_task_records[left].2,
+                    required_task_records[right].2
+                )));
+            }
+        }
+    }
+
+    Ok(())
 }
 
 fn initial_runtime_by_teacher(teachers: &[TeacherInfo]) -> HashMap<i64, TeacherRuntimeState> {
@@ -2012,8 +2447,10 @@ fn add_teacher_timepoint_non_overlap_constraints(
                 continue;
             }
 
-            let mut group_key: Vec<usize> =
-                active_group.iter().map(|(task_index, _)| *task_index).collect();
+            let mut group_key: Vec<usize> = active_group
+                .iter()
+                .map(|(task_index, _)| *task_index)
+                .collect();
             group_key.sort_unstable();
             if !seen_groups.insert(group_key) {
                 continue;
@@ -2039,7 +2476,14 @@ fn add_solution_hints(
     }
 
     for bool_var in bool_vars {
-        model.add_hint(*bool_var, if bool_var.solution_value(response) { 1 } else { 0 });
+        model.add_hint(
+            *bool_var,
+            if bool_var.solution_value(response) {
+                1
+            } else {
+                0
+            },
+        );
     }
     for int_var in int_vars {
         model.add_hint(*int_var, int_var.solution_value(response));
@@ -2232,7 +2676,7 @@ fn build_cp_sat_plan_from_response(
 fn solve_with_cp_sat(
     tasks: &[TaskBuild],
     teachers: &[TeacherInfo],
-    exclusion_pairs: &HashSet<(i64, i64)>,
+    custom_rules: &[GenerateExamStaffPlanCustomRule],
     invigilation_config: &RuntimeInvigilationConfig,
     progress: Option<&StaffAssignmentProgressReporter>,
 ) -> CpSatAttempt {
@@ -2240,7 +2684,7 @@ fn solve_with_cp_sat(
     let candidate_summaries: Vec<TaskCandidateSummary> = tasks
         .iter()
         .map(|task| {
-            build_task_candidate_summary(task, teachers, exclusion_pairs, invigilation_config)
+            build_task_candidate_summary(task, teachers, custom_rules, invigilation_config)
         })
         .collect();
     let teacher_symmetry_groups = build_teacher_symmetry_groups(teachers, &candidate_summaries);
@@ -2252,7 +2696,11 @@ fn solve_with_cp_sat(
     let mut teacher_day_half_vars = HashMap::<(i64, String, HalfDay), Vec<BoolVar>>::new();
     let mut teacher_load_vars = HashMap::<i64, (IntVar, IntVar, IntVar)>::new();
 
-    let total_minutes_capacity = tasks.iter().map(|task| task.duration_minutes).sum::<i64>().max(1);
+    let total_minutes_capacity = tasks
+        .iter()
+        .map(|task| task.duration_minutes)
+        .sum::<i64>()
+        .max(1);
     let invigilation_minutes_capacity = tasks
         .iter()
         .filter(|task| task.role != StaffRole::SelfStudySupervisor)
@@ -2426,7 +2874,8 @@ fn solve_with_cp_sat(
     }
     model.add_eq(
         invigilation_assigned_minutes_expr + invigilation_unassigned_minutes_expr,
-        tasks.iter()
+        tasks
+            .iter()
             .filter(|task| task.role != StaffRole::SelfStudySupervisor)
             .map(|task| task.duration_minutes)
             .sum::<i64>(),
@@ -2445,34 +2894,27 @@ fn solve_with_cp_sat(
     }
     model.add_eq(
         self_study_assigned_minutes_expr + self_study_unassigned_minutes_expr,
-        tasks.iter()
+        tasks
+            .iter()
             .filter(|task| task.role == StaffRole::SelfStudySupervisor)
             .map(|task| task.duration_minutes)
             .sum::<i64>(),
     );
 
-    let unassigned_count_var = model.new_int_var_with_name(
-        [(0, tasks.len() as i64)],
-        "unassigned_count",
-    );
+    let unassigned_count_var =
+        model.new_int_var_with_name([(0, tasks.len() as i64)], "unassigned_count");
     model.add_eq(unassigned_count_var, unassigned_expr.clone());
 
-    let unassigned_penalty_var = model.new_int_var_with_name(
-        [(0, tasks.len() as i64 * 10000)],
-        "unassigned_penalty",
-    );
+    let unassigned_penalty_var =
+        model.new_int_var_with_name([(0, tasks.len() as i64 * 10000)], "unassigned_penalty");
     model.add_eq(unassigned_penalty_var, unassigned_penalty_expr);
 
-    let fallback_count_var = model.new_int_var_with_name(
-        [(0, self_study_task_capacity)],
-        "fallback_pool_assignments",
-    );
+    let fallback_count_var =
+        model.new_int_var_with_name([(0, self_study_task_capacity)], "fallback_pool_assignments");
     model.add_eq(fallback_count_var, fallback_expr.clone());
 
-    let homeroom_count_var = model.new_int_var_with_name(
-        [(0, self_study_task_capacity)],
-        "homeroom_assignments",
-    );
+    let homeroom_count_var =
+        model.new_int_var_with_name([(0, self_study_task_capacity)], "homeroom_assignments");
     model.add_eq(homeroom_count_var, homeroom_expr.clone());
 
     let pre_cross_proto = model.into_proto();
@@ -2485,7 +2927,12 @@ fn solve_with_cp_sat(
     let hint_int_vars: Vec<IntVar> = total_load_vars
         .iter()
         .copied()
-        .chain([unassigned_count_var, unassigned_penalty_var, fallback_count_var, homeroom_count_var])
+        .chain([
+            unassigned_count_var,
+            unassigned_penalty_var,
+            fallback_count_var,
+            homeroom_count_var,
+        ])
         .chain(invigilation_load_vars.iter().copied())
         .chain(self_study_load_vars.iter().copied())
         .chain([
@@ -2528,8 +2975,7 @@ fn solve_with_cp_sat(
     ];
 
     let mut last_successful: Option<(CpSolverResponse, OptimalityStatus)> = None;
-    for (stage_index, (stage_name, stage_label, objective)) in stage_objectives.iter().enumerate()
-    {
+    for (stage_index, (stage_name, stage_label, objective)) in stage_objectives.iter().enumerate() {
         if let Some(progress) = progress {
             let step = 6 + stage_index;
             progress.emit_running(
@@ -2682,10 +3128,7 @@ fn solve_with_cp_sat(
         } else {
             let morning_expr: LinearExpr = morning_vars.iter().copied().collect();
             cross_builder.add_ge(morning_expr.clone(), morning_present);
-            cross_builder.add_le(
-                morning_expr,
-                ((morning_vars.len() as i64), morning_present),
-            );
+            cross_builder.add_le(morning_expr, ((morning_vars.len() as i64), morning_present));
             if morning_vars
                 .iter()
                 .any(|var| var.solution_value(&pre_cross_response))
@@ -2916,7 +3359,11 @@ fn persist_solved_plan(
             let task_detail = if record.task.role == StaffRole::FloorRover {
                 record.task.space_name.clone()
             } else {
-                format!("{} {}", record.task.space_name, role_label(record.task.role))
+                format!(
+                    "{} {}",
+                    record.task.space_name,
+                    role_label(record.task.role)
+                )
             };
             format!(
                 "{}{} {}",
@@ -3016,7 +3463,7 @@ fn log_solver_outcome(
 fn generate_latest_exam_staff_plan_internal(
     conn: &mut Connection,
     invigilation_config: RuntimeInvigilationConfig,
-    exclusion_pairs: HashSet<(i64, i64)>,
+    custom_rules: Vec<GenerateExamStaffPlanCustomRule>,
     log_path: Option<&Path>,
     progress: Option<&StaffAssignmentProgressReporter>,
 ) -> Result<GenerateLatestExamStaffPlanResult, AppError> {
@@ -3086,11 +3533,13 @@ fn generate_latest_exam_staff_plan_internal(
         &class_subject_map,
         &teaching_classes,
     )?;
+    let persisted_rules = persisted_rules_from_payload(&custom_rules);
+    validate_custom_rules_against_tasks(&persisted_rules, &tasks)?;
 
     let cp_sat_attempt = solve_with_cp_sat(
         &tasks,
         &teachers,
-        &exclusion_pairs,
+        &custom_rules,
         &invigilation_config,
         progress,
     );
@@ -3259,19 +3708,15 @@ pub fn generate_latest_exam_staff_plan(
         let mut conn = score::open_connection(&app)?;
         exam_allocation::ensure_schema(&conn)?;
         let log_path = app_log::log_path(&app).ok();
+        ensure_invigilation_custom_rule_schema(&conn)?;
         let mut config = build_config_from_payload(&payload);
         hydrate_runtime_middle_manager_config(&conn, &mut config)?;
         config.self_study_class_subjects = load_self_study_class_subjects(&conn)?;
-        let exclusion_pairs = payload
-            .staff_exclusions
-            .iter()
-            .filter(|item| item.teacher_id > 0 && item.session_id > 0)
-            .map(|item| (item.teacher_id, item.session_id))
-            .collect::<HashSet<_>>();
+        let custom_rules = payload.custom_rules;
         generate_latest_exam_staff_plan_internal(
             &mut conn,
             config,
-            exclusion_pairs,
+            custom_rules,
             log_path.as_deref(),
             Some(&progress),
         )
@@ -3325,6 +3770,127 @@ pub fn list_invigilation_exclusion_session_options(
             });
         }
         Ok(items)
+    })();
+    result.map_err(|error| error.to_string())
+}
+
+pub fn list_invigilation_custom_rule_options(
+    app: AppHandle,
+) -> Result<InvigilationRuleOptions, String> {
+    let result = (|| -> Result<InvigilationRuleOptions, AppError> {
+        let conn = score::open_connection(&app)?;
+        exam_allocation::ensure_schema(&conn)?;
+        remove_legacy_monitor_draw_fixed_pairs_column(&conn)?;
+        ensure_invigilation_custom_rule_schema(&conn)?;
+
+        let session_times = load_session_times_runtime(&conn)?;
+        let exam_session_options = session_times
+            .iter()
+            .map(|session| InvigilationRuleTimeScopeOption {
+                id: session.session_id,
+                label: build_session_label(
+                    &session.grade_name,
+                    session.subject,
+                    &session.start_at,
+                    &session.end_at,
+                ),
+                start_at: session.start_at.clone(),
+                end_at: session.end_at.clone(),
+            })
+            .collect::<Vec<_>>();
+
+        let config = load_runtime_invigilation_config(&conn)?;
+        let class_subject_map = load_class_subject_map(&conn)?;
+        let teaching_classes = load_teaching_classes(&conn)?;
+        let tasks = build_staff_tasks(
+            &conn,
+            &session_times,
+            &config,
+            &class_subject_map,
+            &teaching_classes,
+        )
+        .unwrap_or_default();
+
+        let full_self_study_option = if !config.self_study_date.trim().is_empty()
+            && !config.self_study_start_time.trim().is_empty()
+            && !config.self_study_end_time.trim().is_empty()
+        {
+            let start_at = build_self_study_datetime(
+                &config.self_study_date,
+                &config.self_study_start_time,
+            )?;
+            let end_at =
+                build_self_study_datetime(&config.self_study_date, &config.self_study_end_time)?;
+            Some(InvigilationRuleFullSelfStudyOption {
+                label: format!(
+                    "全员自习 {} {}-{}",
+                    &config.self_study_date[5..],
+                    config.self_study_start_time,
+                    config.self_study_end_time
+                ),
+                start_at,
+                end_at,
+            })
+        } else {
+            None
+        };
+
+        let mut seen = HashSet::<(String, String, Option<i64>, String)>::new();
+        let mut target_options = Vec::<InvigilationRuleTargetOption>::new();
+        for task in tasks {
+            let task_scope_type = rule_task_scope_for_task(&task).to_string();
+            let time_scope_type = rule_time_scope_for_task(&task).to_string();
+            let time_scope_id = task.session_id;
+            let subtitle = Some(match task.task_source {
+                StaffTaskSource::ExamLinkedSelfStudy => self_study_topic_subtitle(&task)
+                    .unwrap_or_else(|| {
+                        build_session_label(
+                            &task.grade_name,
+                            task.subject,
+                            &task.start_at,
+                            &task.end_at,
+                        )
+                    }),
+                StaffTaskSource::FullSelfStudy => format!("{} {}", task.start_at, task.end_at),
+                _ => build_session_label(
+                    &task.grade_name,
+                    task.subject,
+                    &task.start_at,
+                    &task.end_at,
+                ),
+            });
+            let key = (
+                task_scope_type.clone(),
+                time_scope_type.clone(),
+                time_scope_id,
+                task.rule_target_id.clone(),
+            );
+            if !seen.insert(key) {
+                continue;
+            }
+            target_options.push(InvigilationRuleTargetOption {
+                id: task.rule_target_id.clone(),
+                label: task.space_name.clone(),
+                subtitle,
+                time_scope_type,
+                time_scope_id,
+                task_scope_type,
+            });
+        }
+
+        target_options.sort_by(|a, b| {
+            a.task_scope_type
+                .cmp(&b.task_scope_type)
+                .then(a.time_scope_type.cmp(&b.time_scope_type))
+                .then(a.time_scope_id.cmp(&b.time_scope_id))
+                .then(a.label.cmp(&b.label))
+        });
+
+        Ok(InvigilationRuleOptions {
+            exam_session_options,
+            full_self_study_option,
+            target_options,
+        })
     })();
     result.map_err(|error| error.to_string())
 }
@@ -3389,6 +3955,96 @@ fn remove_legacy_monitor_draw_fixed_pairs_column(conn: &Connection) -> Result<()
         FROM invigilation_config_settings;
         DROP TABLE invigilation_config_settings;
         ALTER TABLE invigilation_config_settings_new RENAME TO invigilation_config_settings;
+        COMMIT;
+        "#,
+    )?;
+    Ok(())
+}
+
+fn ensure_invigilation_custom_rule_schema(conn: &Connection) -> Result<(), AppError> {
+    let mut stmt = conn.prepare("PRAGMA table_info(invigilation_custom_rules)")?;
+    let rows = stmt.query_map([], |row| row.get::<_, String>(1))?;
+    let mut columns = HashSet::<String>::new();
+    for row in rows {
+        columns.insert(row?);
+    }
+    if columns.is_empty() {
+        return Ok(());
+    }
+    let has_new_schema = columns.contains("action_type")
+        && columns.contains("time_scope_ids_json")
+        && columns.contains("task_scope_type")
+        && columns.contains("target_ids_json");
+    if has_new_schema {
+        return Ok(());
+    }
+
+    conn.execute_batch(
+        r#"
+        BEGIN IMMEDIATE;
+        CREATE TABLE IF NOT EXISTS invigilation_custom_rules_new (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            action_type TEXT NOT NULL DEFAULT 'exclude',
+            teacher_id INTEGER NOT NULL,
+            teacher_name TEXT NOT NULL,
+            time_scope_type TEXT NOT NULL DEFAULT 'exam_session',
+            time_scope_ids_json TEXT NOT NULL DEFAULT '[]',
+            time_scope_labels_json TEXT NOT NULL DEFAULT '[]',
+            task_scope_type TEXT NOT NULL,
+            target_scope_type TEXT NOT NULL DEFAULT 'all',
+            target_ids_json TEXT NOT NULL DEFAULT '[]',
+            target_labels_json TEXT NOT NULL DEFAULT '[]',
+            created_at TEXT NOT NULL
+        );
+        INSERT INTO invigilation_custom_rules_new
+        (
+            id,
+            action_type,
+            teacher_id,
+            teacher_name,
+            time_scope_type,
+            time_scope_ids_json,
+            time_scope_labels_json,
+            task_scope_type,
+            target_scope_type,
+            target_ids_json,
+            target_labels_json,
+            created_at
+        )
+        SELECT
+            id,
+            CASE UPPER(COALESCE(rule_type, 'EXCLUDE'))
+                WHEN 'REQUIRE' THEN 'require'
+                ELSE 'exclude'
+            END,
+            teacher_id,
+            teacher_name,
+            CASE WHEN session_id IS NULL THEN 'full_self_study' ELSE 'exam_session' END,
+            CASE
+                WHEN session_id IS NULL THEN '[]'
+                ELSE json_array(session_id)
+            END,
+            CASE
+                WHEN session_label IS NULL OR TRIM(session_label) = '' THEN '[]'
+                ELSE json_array(session_label)
+            END,
+            CASE
+                WHEN task_role = 'floor_rover' THEN 'floor_rover'
+                WHEN task_role = 'self_study_supervisor' AND session_id IS NULL THEN 'full_self_study'
+                WHEN task_role = 'self_study_supervisor' THEN 'exam_linked_self_study'
+                ELSE 'exam_room'
+            END,
+            CASE WHEN space_name IS NULL OR TRIM(space_name) = '' THEN 'all' ELSE 'selected_targets' END,
+            '[]',
+            CASE
+                WHEN space_name IS NULL OR TRIM(space_name) = '' THEN '[]'
+                ELSE json_array(space_name)
+            END,
+            created_at
+        FROM invigilation_custom_rules;
+        DROP TABLE invigilation_custom_rules;
+        ALTER TABLE invigilation_custom_rules_new RENAME TO invigilation_custom_rules;
+        CREATE INDEX IF NOT EXISTS idx_invigilation_custom_rules_teacher ON invigilation_custom_rules(teacher_id);
         COMMIT;
         "#,
     )?;
@@ -3494,23 +4150,33 @@ pub fn import_monitor_draw_pairs_from_excel(
             let invigilator_a_name = monitor_draw_cell_to_string(row.get(a_col));
             let invigilator_b_name = monitor_draw_cell_to_string(row.get(b_col));
 
-            if group_no.is_empty() && invigilator_a_name.is_empty() && invigilator_b_name.is_empty() {
+            if group_no.is_empty() && invigilator_a_name.is_empty() && invigilator_b_name.is_empty()
+            {
                 continue;
             }
-            if group_no.is_empty() || invigilator_a_name.is_empty() || invigilator_b_name.is_empty() {
-                return Err(AppError::new(format!("第 {row_no} 行存在空值：组号、监考员甲、监考员乙均为必填")));
+            if group_no.is_empty() || invigilator_a_name.is_empty() || invigilator_b_name.is_empty()
+            {
+                return Err(AppError::new(format!(
+                    "第 {row_no} 行存在空值：组号、监考员甲、监考员乙均为必填"
+                )));
             }
             if invigilator_a_name == invigilator_b_name {
-                return Err(AppError::new(format!("第 {row_no} 行数据非法：监考员甲与监考员乙不能为同一人")));
+                return Err(AppError::new(format!(
+                    "第 {row_no} 行数据非法：监考员甲与监考员乙不能为同一人"
+                )));
             }
             if !seen_groups.insert(group_no.clone()) {
                 return Err(AppError::new(format!("导入失败：组号“{group_no}”重复")));
             }
             if !seen_a_names.insert(invigilator_a_name.clone()) {
-                return Err(AppError::new(format!("导入失败：监考员甲“{invigilator_a_name}”重复")));
+                return Err(AppError::new(format!(
+                    "导入失败：监考员甲“{invigilator_a_name}”重复"
+                )));
             }
             if !seen_b_names.insert(invigilator_b_name.clone()) {
-                return Err(AppError::new(format!("导入失败：监考员乙“{invigilator_b_name}”重复")));
+                return Err(AppError::new(format!(
+                    "导入失败：监考员乙“{invigilator_b_name}”重复"
+                )));
             }
 
             imported_rows.push(MonitorDrawImportRow {
@@ -3565,56 +4231,7 @@ fn build_session_label(grade_name: &str, subject: Subject, start_at: &str, end_a
     )
 }
 
-fn migrate_legacy_exclusions_to_session_rows(
-    conn: &Connection,
-    exclusions: Vec<PersistedExamStaffExclusion>,
-) -> Result<Vec<PersistedExamStaffExclusion>, AppError> {
-    if exclusions.iter().all(|item| item.session_id > 0) {
-        return Ok(exclusions);
-    }
-    let session_times = load_session_times_runtime(conn)?;
-    let mut sessions_by_subject = HashMap::<Subject, Vec<&SessionTimeRuntime>>::new();
-    for session in &session_times {
-        sessions_by_subject
-            .entry(session.subject)
-            .or_default()
-            .push(session);
-    }
-    let mut dedupe = HashSet::<(i64, i64)>::new();
-    let mut rewritten = Vec::<PersistedExamStaffExclusion>::new();
-    for item in exclusions {
-        if item.session_id > 0 {
-            if dedupe.insert((item.teacher_id, item.session_id)) {
-                rewritten.push(item);
-            }
-            continue;
-        }
-        // Legacy exclusions used negative template IDs; fan them out to real session IDs by subject.
-        let Some(subject) = subject_from_template_session_id(item.session_id) else {
-            continue;
-        };
-        let Some(sessions) = sessions_by_subject.get(&subject) else {
-            continue;
-        };
-        for session in sessions {
-            if !dedupe.insert((item.teacher_id, session.session_id)) {
-                continue;
-            }
-            rewritten.push(PersistedExamStaffExclusion {
-                teacher_id: item.teacher_id,
-                teacher_name: item.teacher_name.clone(),
-                session_id: session.session_id,
-                session_label: build_session_label(
-                    &session.grade_name,
-                    session.subject,
-                    &session.start_at,
-                    &session.end_at,
-                ),
-            });
-        }
-    }
-    Ok(rewritten)
-}
+
 
 pub fn get_persisted_invigilation_state(
     app: AppHandle,
@@ -3623,6 +4240,7 @@ pub fn get_persisted_invigilation_state(
         let mut conn = score::open_connection(&app)?;
         exam_allocation::ensure_schema(&conn)?;
         remove_legacy_monitor_draw_fixed_pairs_column(&conn)?;
+        ensure_invigilation_custom_rule_schema(&conn)?;
 
         let config = conn
             .query_row(
@@ -3682,62 +4300,44 @@ pub fn get_persisted_invigilation_state(
 
         let mut stmt = conn.prepare(
             r#"
-            SELECT teacher_id, teacher_name, session_id, session_label
-            FROM invigilation_staff_exclusions
+            SELECT
+                action_type,
+                teacher_id,
+                teacher_name,
+                time_scope_type,
+                time_scope_ids_json,
+                time_scope_labels_json,
+                task_scope_type,
+                target_scope_type,
+                target_ids_json,
+                target_labels_json
+            FROM invigilation_custom_rules
             ORDER BY id DESC
             "#,
         )?;
         let rows = stmt.query_map([], |row| {
-            Ok(PersistedExamStaffExclusion {
-                teacher_id: row.get(0)?,
-                teacher_name: row.get(1)?,
-                session_id: row.get(2)?,
-                session_label: row.get(3)?,
+            Ok(PersistedInvigilationCustomRule {
+                action_type: row.get(0)?,
+                teacher_id: row.get(1)?,
+                teacher_name: row.get(2)?,
+                time_scope_type: row.get(3)?,
+                time_scope_ids: parse_json_i64_list(&row.get::<_, String>(4)?),
+                time_scope_labels: parse_json_string_list(&row.get::<_, String>(5)?),
+                task_scope_type: row.get(6)?,
+                target_scope_type: row.get(7)?,
+                target_ids: parse_json_string_list(&row.get::<_, String>(8)?),
+                target_labels: parse_json_string_list(&row.get::<_, String>(9)?),
             })
         })?;
-        let mut exclusions = Vec::new();
+        let mut custom_rules = Vec::new();
         for row in rows {
-            exclusions.push(row?);
+            custom_rules.push(row?);
         }
         drop(stmt);
-        let migrated_exclusions = migrate_legacy_exclusions_to_session_rows(&conn, exclusions)?;
-        if migrated_exclusions
-            .iter()
-            .any(|item| item.session_id > 0)
-            && migrated_exclusions.len() != 0
-        {
-            let has_legacy = conn.query_row(
-                "SELECT COUNT(*) FROM invigilation_staff_exclusions WHERE session_id <= 0",
-                [],
-                |row| row.get::<_, i64>(0),
-            )?;
-            if has_legacy > 0 {
-                let tx = conn.transaction()?;
-                tx.execute("DELETE FROM invigilation_staff_exclusions", [])?;
-                let now = Utc::now().to_rfc3339();
-                for item in &migrated_exclusions {
-                    tx.execute(
-                        r#"
-                        INSERT INTO invigilation_staff_exclusions
-                        (teacher_id, teacher_name, session_id, session_label, created_at)
-                        VALUES (?1, ?2, ?3, ?4, ?5)
-                        "#,
-                        params![
-                            item.teacher_id,
-                            item.teacher_name.trim(),
-                            item.session_id,
-                            item.session_label.trim(),
-                            now
-                        ],
-                    )?;
-                }
-                tx.commit()?;
-            }
-        }
 
         Ok(PersistedInvigilationState {
             config,
-            exclusions: migrated_exclusions,
+            custom_rules,
             self_study_class_subjects,
         })
     })();
@@ -3752,6 +4352,7 @@ pub fn save_persisted_invigilation_config(
         let conn = score::open_connection(&app)?;
         exam_allocation::ensure_schema(&conn)?;
         remove_legacy_monitor_draw_fixed_pairs_column(&conn)?;
+        ensure_invigilation_custom_rule_schema(&conn)?;
         let now = Utc::now().to_rfc3339();
         let middle_manager_exception_teacher_ids_json = serde_json::to_string(
             &normalize_teacher_id_list(payload.middle_manager_exception_teacher_ids.clone()),
@@ -3830,28 +4431,65 @@ pub fn save_persisted_self_study_class_subjects(
     result.map_err(|e| e.to_string())
 }
 
-pub fn replace_persisted_invigilation_exclusions(
+pub fn replace_persisted_invigilation_custom_rules(
     app: AppHandle,
-    items: Vec<PersistedExamStaffExclusion>,
+    items: Vec<PersistedInvigilationCustomRule>,
 ) -> Result<SuccessResponse, String> {
     let result = (|| -> Result<SuccessResponse, AppError> {
         let mut conn = score::open_connection(&app)?;
         exam_allocation::ensure_schema(&conn)?;
+        remove_legacy_monitor_draw_fixed_pairs_column(&conn)?;
+        ensure_invigilation_custom_rule_schema(&conn)?;
+        let session_times = load_session_times_runtime(&conn)?;
+        let config = load_runtime_invigilation_config(&conn)?;
+        let class_subject_map = load_class_subject_map(&conn)?;
+        let teaching_classes = load_teaching_classes(&conn)?;
+        let tasks = build_staff_tasks(
+            &conn,
+            &session_times,
+            &config,
+            &class_subject_map,
+            &teaching_classes,
+        )?;
+        validate_custom_rules_against_tasks(&items, &tasks)?;
         let tx = conn.transaction()?;
-        tx.execute("DELETE FROM invigilation_staff_exclusions", [])?;
+        tx.execute("DELETE FROM invigilation_custom_rules", [])?;
         let now = Utc::now().to_rfc3339();
         for item in items {
+            let time_scope_ids_json = to_json_i64_list(&item.time_scope_ids)?;
+            let time_scope_labels_json =
+                to_json_string_list(&item.time_scope_labels, "时段标签")?;
+            let target_ids_json = to_json_string_list(&item.target_ids, "对象 ID")?;
+            let target_labels_json = to_json_string_list(&item.target_labels, "对象标签")?;
             tx.execute(
                 r#"
-                INSERT INTO invigilation_staff_exclusions
-                (teacher_id, teacher_name, session_id, session_label, created_at)
-                VALUES (?1, ?2, ?3, ?4, ?5)
+                INSERT INTO invigilation_custom_rules
+                (
+                    action_type,
+                    teacher_id,
+                    teacher_name,
+                    time_scope_type,
+                    time_scope_ids_json,
+                    time_scope_labels_json,
+                    task_scope_type,
+                    target_scope_type,
+                    target_ids_json,
+                    target_labels_json,
+                    created_at
+                )
+                VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
                 "#,
                 params![
+                    item.action_type,
                     item.teacher_id,
                     item.teacher_name.trim(),
-                    item.session_id,
-                    item.session_label.trim(),
+                    item.time_scope_type,
+                    time_scope_ids_json,
+                    time_scope_labels_json,
+                    item.task_scope_type,
+                    item.target_scope_type,
+                    target_ids_json,
+                    target_labels_json,
                     now
                 ],
             )?;
@@ -4399,7 +5037,11 @@ mod tests {
             &test_runtime_config(),
         );
         assert_eq!(
-            summary.candidates.iter().map(|item| item.teacher_id).collect::<Vec<_>>(),
+            summary
+                .candidates
+                .iter()
+                .map(|item| item.teacher_id)
+                .collect::<Vec<_>>(),
             vec![2]
         );
     }
@@ -4594,18 +5236,16 @@ mod tests {
             },
         ];
         let mut foreign_task = sample_self_study_task(StaffTaskSource::ExamLinkedSelfStudy);
-        foreign_task.recommended_self_study_topic = Some(
-            exam_allocation::build_foreign_group_self_study_topic(vec![
+        foreign_task.recommended_self_study_topic =
+            Some(exam_allocation::build_foreign_group_self_study_topic(vec![
                 Subject::English,
                 Subject::Russian,
-            ]),
-        );
-        foreign_task.priority_self_study_chain = vec![
-            exam_allocation::build_foreign_group_self_study_topic(vec![
+            ]));
+        foreign_task.priority_self_study_chain =
+            vec![exam_allocation::build_foreign_group_self_study_topic(vec![
                 Subject::English,
                 Subject::Russian,
-            ]),
-        ];
+            ])];
         let foreign_summary = build_task_candidate_summary(
             &foreign_task,
             &teachers,
@@ -4916,22 +5556,17 @@ mod tests {
         assert_eq!(cp_sat_plan.metrics.unassigned_count, 1);
         assert!(
             cp_sat_plan.records.iter().any(|record| {
-                record.task.role == StaffRole::ExamRoomInvigilator
-                    && record.teacher_id.is_some()
+                record.task.role == StaffRole::ExamRoomInvigilator && record.teacher_id.is_some()
             }),
             "考场监考应优先被分配"
         );
         assert!(
             cp_sat_plan.records.iter().any(|record| {
-                record.task.role == StaffRole::FloorRover
-                    && record.teacher_id.is_none()
+                record.task.role == StaffRole::FloorRover && record.teacher_id.is_none()
             }),
             "楼层流动在老师不足时允许不分配"
         );
     }
-
-
-
 
     #[test]
     #[ignore = "manual integration test against the real sqlite database"]
@@ -4994,7 +5629,9 @@ mod tests {
             )
             .expect("prepare reason query");
         let reason_rows = reason_stmt
-            .query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?)))
+            .query_map([], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
+            })
             .expect("query reason rows");
         let mut reason_counts = Vec::<(String, i64)>::new();
         for row in reason_rows {

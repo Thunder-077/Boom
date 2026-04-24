@@ -2,16 +2,34 @@
   <div
     class="fluent-combo"
     :class="{ open: isOpen, disabled }"
+    :tabindex="searchable ? -1 : 0"
     @keydown.esc.prevent="closeCombo"
-    tabindex="0"
     ref="comboRef"
   >
-    <div class="fluent-trigger" ref="triggerRef" @mousedown.prevent="toggleCombo">
-      <span class="fluent-value" :class="{ placeholder: isPlaceholder }">
-        {{ displayLabel }}
-      </span>
-      <span class="material-symbols-rounded combo-icon">keyboard_arrow_down</span>
-    </div>
+    <template v-if="searchable">
+      <div class="fluent-trigger fluent-searchable-trigger" ref="triggerRef" @mousedown.prevent="onSearchTriggerMouseDown">
+        <input
+          ref="searchInputRef"
+          class="fluent-searchable-input"
+          :value="searchKeyword"
+          :placeholder="isPlaceholder ? placeholder : ''"
+          @input="handleSearchInput"
+          @keydown.esc.prevent="closeCombo"
+          @keydown.down.prevent.stop="navigateOptions(1)"
+          @keydown.up.prevent.stop="navigateOptions(-1)"
+          @keydown.enter.prevent.stop="selectHighlighted"
+        />
+        <span class="material-symbols-rounded combo-icon">keyboard_arrow_down</span>
+      </div>
+    </template>
+    <template v-else>
+      <div class="fluent-trigger" ref="triggerRef" @mousedown.prevent="toggleCombo">
+        <span class="fluent-value" :class="{ placeholder: isPlaceholder }">
+          {{ displayLabel }}
+        </span>
+        <span class="material-symbols-rounded combo-icon">keyboard_arrow_down</span>
+      </div>
+    </template>
 
     <Teleport to="body">
       <div
@@ -21,23 +39,23 @@
         ref="menuRef"
       >
         <button
-          v-for="opt in options"
+          v-for="(opt, idx) in filteredOptions"
           :key="opt.value"
           type="button"
           class="fluent-option"
-          :class="{ selected: opt.value === modelValue }"
+          :class="{ selected: opt.value === modelValue, highlighted: idx === highlightIndex }"
           @click="selectOption(opt.value)"
         >
           {{ opt.label }}
         </button>
-        <div v-if="options.length === 0" class="menu-empty">无选项</div>
+        <div v-if="filteredOptions.length === 0" class="menu-empty">无匹配选项</div>
       </div>
     </Teleport>
   </div>
 </template>
 
 <script setup lang="ts" generic="T extends string | number">
-import { computed, ref, reactive, onUnmounted } from "vue";
+import { computed, ref, reactive, onUnmounted, watch, nextTick } from "vue";
 
 const props = withDefaults(
   defineProps<{
@@ -45,10 +63,12 @@ const props = withDefaults(
     options: { label: string; value: T | "" }[];
     placeholder?: string;
     disabled?: boolean;
+    searchable?: boolean;
   }>(),
   {
     placeholder: "请选择",
     disabled: false,
+    searchable: false,
   }
 );
 
@@ -61,11 +81,22 @@ const isOpen = ref(false);
 const comboRef = ref<HTMLElement | null>(null);
 const triggerRef = ref<HTMLElement | null>(null);
 const menuRef = ref<HTMLElement | null>(null);
+const searchInputRef = ref<HTMLInputElement | null>(null);
+const searchKeyword = ref("");
+const highlightIndex = ref(-1);
 
 const menuStyle = reactive({
   top: "0px",
   left: "0px",
   width: "auto",
+});
+
+const filteredOptions = computed(() => {
+  if (!props.searchable || !searchKeyword.value.trim()) {
+    return props.options;
+  }
+  const kw = searchKeyword.value.trim().toLowerCase();
+  return props.options.filter((opt) => opt.label.toLowerCase().includes(kw));
 });
 
 const displayLabel = computed(() => {
@@ -88,20 +119,18 @@ const isPlaceholder = computed(() => {
 function updatePosition() {
   if (!triggerRef.value) return;
   const rect = triggerRef.value.getBoundingClientRect();
-  
-  // Calculate top and bottom space
+
   const viewportHeight = window.innerHeight;
   const spaceBelow = viewportHeight - rect.bottom;
   const spaceAbove = rect.top;
   const estimatedHeight = Math.min(240, Math.max(spaceBelow, spaceAbove) - 12);
-  
-  // Choose direction (below by default, above if not enough space below)
+
   if (spaceBelow < 240 && spaceAbove > spaceBelow) {
     menuStyle.top = `${rect.top - estimatedHeight - 6}px`;
   } else {
     menuStyle.top = `${rect.bottom + 6}px`;
   }
-  
+
   menuStyle.left = `${rect.left}px`;
   menuStyle.width = `${rect.width}px`;
 }
@@ -123,22 +152,58 @@ function handleClickOutside(e: MouseEvent) {
   closeCombo();
 }
 
+function openCombo() {
+  if (props.disabled) return;
+  if (isOpen.value) return;
+  highlightIndex.value = -1;
+  updatePosition();
+  isOpen.value = true;
+  window.addEventListener("scroll", handleScrollOrResize, true);
+  window.addEventListener("resize", handleScrollOrResize);
+  document.addEventListener("mousedown", handleClickOutside);
+  if (props.searchable) {
+    nextTick(() => {
+      nextTick(() => {
+        const input = searchInputRef.value;
+        if (!input) return;
+        input.focus();
+        const len = input.value.length;
+        input.setSelectionRange(len, len);
+      });
+    });
+  } else {
+    comboRef.value?.focus();
+  }
+}
+
+function onSearchTriggerMouseDown() {
+  if (props.disabled) return;
+  if (!isOpen.value) {
+    openCombo();
+  } else {
+    const input = searchInputRef.value;
+    if (!input) return;
+    input.focus();
+    const len = input.value.length;
+    input.setSelectionRange(len, len);
+  }
+}
+
 function toggleCombo() {
   if (props.disabled) return;
   if (isOpen.value) {
     closeCombo();
   } else {
-    updatePosition();
-    isOpen.value = true;
-    comboRef.value?.focus();
-    window.addEventListener("scroll", handleScrollOrResize, true);
-    window.addEventListener("resize", handleScrollOrResize);
-    document.addEventListener("mousedown", handleClickOutside);
+    openCombo();
   }
 }
 
 function closeCombo() {
   isOpen.value = false;
+  if (!props.searchable) {
+    searchKeyword.value = "";
+  }
+  highlightIndex.value = -1;
   window.removeEventListener("scroll", handleScrollOrResize, true);
   window.removeEventListener("resize", handleScrollOrResize);
   document.removeEventListener("mousedown", handleClickOutside);
@@ -147,10 +212,59 @@ function closeCombo() {
 
 function selectOption(value: T | "") {
   if (props.disabled) return;
+  if (props.searchable) {
+    const selected = props.options.find((opt) => opt.value === value);
+    searchKeyword.value = selected ? selected.label : "";
+  }
   emit("update:modelValue", value);
   emit("change", value);
   closeCombo();
 }
+
+function handleSearchInput(e: Event) {
+  searchKeyword.value = (e.target as HTMLInputElement).value;
+  highlightIndex.value = -1;
+  if (!isOpen.value) {
+    openCombo();
+  }
+}
+
+function navigateOptions(direction: number) {
+  const len = filteredOptions.value.length;
+  if (len === 0) return;
+  if (highlightIndex.value === -1) {
+    highlightIndex.value = direction > 0 ? 0 : len - 1;
+  } else {
+    highlightIndex.value = (highlightIndex.value + direction + len) % len;
+  }
+  scrollHighlightedIntoView();
+}
+
+function selectHighlighted() {
+  if (highlightIndex.value >= 0 && highlightIndex.value < filteredOptions.value.length) {
+    selectOption(filteredOptions.value[highlightIndex.value].value);
+  }
+}
+
+function scrollHighlightedIntoView() {
+  nextTick(() => {
+    const menu = menuRef.value;
+    if (!menu) return;
+    const highlighted = menu.querySelector(".fluent-option.highlighted") as HTMLElement;
+    if (highlighted) {
+      highlighted.scrollIntoView({ block: "nearest" });
+    }
+  });
+}
+
+watch(() => isOpen.value, (val) => {
+  if (!val) {
+    if (!props.searchable) {
+      searchKeyword.value = "";
+    }
+    highlightIndex.value = -1;
+  }
+});
 
 onUnmounted(() => {
   window.removeEventListener("scroll", handleScrollOrResize, true);
@@ -178,11 +292,30 @@ onUnmounted(() => {
   border-radius: 14px;
   border: 1px solid var(--color-border-soft);
   background: var(--surface-panel);
-  cursor: pointer;
-  user-select: none;
+  cursor: text;
   font-size: 14px;
   color: var(--color-text);
   transition: all 0.2s ease;
+}
+
+.fluent-searchable-trigger {
+  padding-right: 34px;
+  padding-left: 14px;
+}
+
+.fluent-searchable-input {
+  flex: 1;
+  border: 0;
+  background: transparent;
+  outline: none;
+  font-size: 14px;
+  color: var(--color-text);
+  width: 100%;
+  min-height: 42px;
+}
+
+.fluent-searchable-input::placeholder {
+  color: var(--color-text-muted);
 }
 
 .fluent-value {
@@ -225,7 +358,6 @@ onUnmounted(() => {
 </style>
 
 <style>
-/* Global styles for teleported menu */
 .teleported-fluent-menu {
   position: fixed;
   max-height: 240px;
@@ -279,6 +411,12 @@ onUnmounted(() => {
   background: rgba(var(--accent-rgb), 0.12);
   color: var(--accent-primary);
   font-weight: 600;
+}
+
+.teleported-fluent-menu .fluent-option.highlighted {
+  background: rgba(var(--accent-rgb), 0.08);
+  outline: 2px solid rgba(var(--accent-rgb), 0.3);
+  outline-offset: -2px;
 }
 
 .teleported-fluent-menu .menu-empty {
