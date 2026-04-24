@@ -423,7 +423,7 @@
             </div>
           </div>
 
-          <div class="form-group">
+          <div v-if="draftRule.actionType" class="form-group form-group-step">
             <label class="field-label form-label">指定教师 <span class="required-mark">*</span></label>
             <FluentSelect
               v-model="draftRule.teacherId"
@@ -434,7 +434,7 @@
             />
           </div>
 
-          <div class="form-group">
+          <div v-if="draftRule.teacherId" class="form-group form-group-step">
             <label class="field-label form-label">时间范围</label>
             <div class="segment-wrap full-width">
               <button class="segment-btn" :class="{ active: draftRule.timeScopeType === 'exam_session' }" type="button" @click="selectRuleTimeScopeType('exam_session')">考试时段</button>
@@ -482,7 +482,7 @@
             </p>
           </div>
 
-          <div class="form-group">
+          <div v-if="showTaskScopeStep" class="form-group form-group-step">
             <label class="field-label form-label">任务类型</label>
             <div class="option-grid">
               <label v-for="option in availableTaskScopeOptions" :key="option.value" class="check-option single-option" :class="{ active: draftRule.taskScopeType === option.value }">
@@ -497,7 +497,7 @@
             </div>
           </div>
 
-          <div class="form-group">
+          <div v-if="showTargetScopeStep" class="form-group form-group-step">
             <label class="field-label form-label">作用对象</label>
             <div class="segment-wrap full-width">
               <button class="segment-btn" :class="{ active: draftRule.targetScopeType === 'all' }" type="button" @click="selectRuleTargetScopeType('all')">全部对象</button>
@@ -550,7 +550,7 @@
           <p v-else class="drawer-note">保存时会校验冲突规则，命中冲突将直接阻止保存。</p>
           <div class="drawer-actions">
             <button class="secondary-btn" type="button" @click="closeCustomRuleDrawer">取消</button>
-            <button class="primary-btn" :disabled="!draftRule.teacherId" @click="saveDraftRule">保存规则</button>
+            <button class="primary-btn" :disabled="!draftRule.actionType || !draftRule.teacherId" @click="saveDraftRule">保存规则</button>
           </div>
         </div>
       </aside>
@@ -904,7 +904,7 @@ const customRuleDetailOpen = ref(false);
 const selectedCustomRule = ref<ReadonlyInvigilationCustomRule | null>(null);
 const draftRuleError = ref("");
 const draftRule = ref<{
-  actionType: "exclude" | "require";
+  actionType: "exclude" | "require" | "";
   teacherId: number | "";
   timeScopeType: InvigilationRuleTimeScopeType;
   timeScopeIds: number[];
@@ -912,7 +912,7 @@ const draftRule = ref<{
   targetScopeType: "all" | "selected_targets";
   targetIds: string[];
 }>({
-  actionType: "exclude",
+  actionType: "",
   teacherId: "",
   timeScopeType: "exam_session",
   timeScopeIds: [],
@@ -1007,6 +1007,18 @@ const allRuleTargetsSelected = computed(() =>
   availableRuleTargetOptions.value.length > 0 &&
   availableRuleTargetOptions.value.every((option) => draftRule.value.targetIds.includes(option.id)),
 );
+const showTaskScopeStep = computed(() => {
+  if (draftRule.value.timeScopeType === "full_self_study") {
+    return true;
+  }
+  return draftRule.value.timeScopeIds.length > 0;
+});
+const showTargetScopeStep = computed(() => {
+  if (draftRule.value.timeScopeType === "full_self_study") {
+    return true;
+  }
+  return draftRule.value.timeScopeIds.length > 0;
+});
 const ruleTargetHintText = computed(() => {
   if (draftRule.value.targetScopeType !== "selected_targets") {
     return "";
@@ -1020,7 +1032,7 @@ const ruleTargetHintText = computed(() => {
   return "";
 });
 const draftRuleSummary = computed(() => {
-  const actionLabel = draftRule.value.actionType === "require" ? "指定安排" : "禁排";
+  const actionLabel = draftRule.value.actionType === "require" ? "指定安排" : draftRule.value.actionType === "exclude" ? "禁排" : "未选择动作";
   const teacherName = selectedRuleTeacherName.value || "某位老师";
   const timeLabel = selectedRuleTimeLabels.value.length > 0
     ? selectedRuleTimeLabels.value.join("、")
@@ -1216,7 +1228,7 @@ function closeActiveDrawer() {
 function openCustomRuleDrawer() {
   closeActiveDrawer();
   draftRule.value = {
-    actionType: "exclude",
+    actionType: "",
     teacherId: "",
     timeScopeType: "exam_session",
     timeScopeIds: [],
@@ -1244,6 +1256,10 @@ function closeCustomRuleDetail() {
 }
 
 async function saveDraftRule() {
+  if (!draftRule.value.actionType) {
+    draftRuleError.value = "请选择规则动作";
+    return;
+  }
   if (!draftRule.value.teacherId) {
     draftRuleError.value = "请选择教师";
     return;
@@ -2365,6 +2381,22 @@ onBeforeUnmount(() => {
   display: flex;
   flex-direction: column;
   gap: 10px;
+}
+
+.form-group-step {
+  animation: step-in 0.25s cubic-bezier(0.25, 0.8, 0.25, 1) forwards;
+  transform-origin: top;
+}
+
+@keyframes step-in {
+  from {
+    opacity: 0;
+    transform: translateY(-8px) scaleY(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scaleY(1);
+  }
 }
 
 .form-label {
