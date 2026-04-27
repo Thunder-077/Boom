@@ -322,30 +322,6 @@ const completeBadgeText = computed(() => {
   return "未开始";
 });
 
-const completeTitle = computed(() => {
-  if (store.viewState.generationProgress.status === "error") {
-    return "分配失败";
-  }
-  if (store.viewState.generating) {
-    return "分配进行中";
-  }
-  if (store.viewState.overview.generatedAt) {
-    return "分配已完成";
-  }
-  return "等待分配";
-});
-
-const completeDescription = computed(() => {
-  if (store.viewState.generationProgress.status === "error") {
-    return store.viewState.generationProgress.message || "执行失败，请处理后重试。";
-  }
-  if (!store.viewState.overview.generatedAt) {
-    return "尚未生成考场分配结果，完成配置后点击“开始分配考场”即可执行。";
-  }
-  return `完成 ${store.viewState.overview.examRoomCount} 个考场与 ${store.viewState.overview.studentAllocationCount} 名考生自动分配。`;
-});
-
-const completeSummary = computed(() => "尚未导出分配文件");
 const sessionTimeGradeOptions = computed(() =>
   store.viewState.sessionTimeGradeOptions.map((grade) => ({ label: grade, value: grade })),
 );
@@ -357,9 +333,6 @@ const exportFileName = computed(() => {
   const matched = raw.match(/[^\\/]+$/);
   return matched?.[0] ?? "考场安排";
 });
-
-const isCompletePending = computed(() => store.viewState.generating || !store.viewState.overview.generatedAt);
-const isCompleteError = computed(() => store.viewState.generationProgress.status === "error");
 
 function getStatusClass() {
   if (store.viewState.generationProgress.status === "error") {

@@ -441,6 +441,54 @@ fn apply_summary_column_widths(sheet: &mut Worksheet, widths: &[usize]) -> Resul
     Ok(())
 }
 
+fn ordered_subjects_by_exam_time(
+    sessions: &HashMap<Subject, SessionInfo>,
+) -> Vec<(Subject, &'static str)> {
+    let mut list = SUBJECT_EXPORT_ORDER
+        .iter()
+        .enumerate()
+        .map(|(idx, (subject, label))| (idx, *subject, *label))
+        .collect::<Vec<_>>();
+    list.sort_by(|(a_idx, a_subject, _), (b_idx, b_subject, _)| {
+        let a_ts = sessions.get(a_subject).and_then(|s| s.start_ts);
+        let b_ts = sessions.get(b_subject).and_then(|s| s.start_ts);
+        match (a_ts, b_ts) {
+            (Some(a), Some(b)) => a.cmp(&b).then(a_idx.cmp(b_idx)),
+            (Some(_), None) => std::cmp::Ordering::Less,
+            (None, Some(_)) => std::cmp::Ordering::Greater,
+            (None, None) => a_idx.cmp(b_idx),
+        }
+    });
+    list.into_iter()
+        .map(|(_, subject, label)| (subject, label))
+        .collect::<Vec<_>>()
+}
+
+fn apply_roster_column_widths(sheet: &mut Worksheet) -> Result<(), XlsxError> {
+    // 按 A4 纵向打印场景调整 6 列宽度，尽量铺满页面。
+    let widths = [12.0_f64, 14.0, 18.0, 14.0, 14.0, 10.0];
+    for (idx, width) in widths.iter().enumerate() {
+        sheet.set_column_width(idx as u16, *width)?;
+    }
+    Ok(())
+}
+
+fn write_roster_header(
+    sheet: &mut Worksheet,
+    title: &str,
+    title_fmt: &Format,
+    header_fmt: &Format,
+) -> Result<(), XlsxError> {
+    sheet.merge_range(0, 0, 0, 5, title, title_fmt)?;
+    sheet.write_string_with_format(1, 0, "姓名", header_fmt)?;
+    sheet.write_string_with_format(1, 1, "班级", header_fmt)?;
+    sheet.write_string_with_format(1, 2, "考号", header_fmt)?;
+    sheet.write_string_with_format(1, 3, "考试科目", header_fmt)?;
+    sheet.write_string_with_format(1, 4, "考场", header_fmt)?;
+    sheet.write_string_with_format(1, 5, "座位号", header_fmt)?;
+    Ok(())
+}
+
 fn build_tickets_html(
     exam_title: &str,
     notices: &[String],
@@ -584,6 +632,12 @@ where
             .set_bold()
             .set_align(FormatAlign::Center)
             .set_border(FormatBorder::Thin);
+        let roster_title_fmt = Format::new()
+            .set_bold()
+            .set_font_size(13.)
+            .set_align(FormatAlign::Center)
+            .set_align(FormatAlign::VerticalCenter)
+            .set_border_bottom(FormatBorder::Thin);
         let cell_fmt = Format::new()
             .set_border(FormatBorder::Thin)
             .set_align(FormatAlign::Center);
@@ -602,15 +656,19 @@ where
 
         let mut classes = class_group.keys().cloned().collect::<Vec<_>>();
         classes.sort_by(|a, b| sort_class_like(a, b));
+        let subject_order = ordered_subjects_by_exam_time(&sessions);
         for class_name in classes {
             let mut wb = Workbook::new();
             let class_rows = class_group.get(&class_name).cloned().unwrap_or_default();
-            for (subject, label) in SUBJECT_EXPORT_ORDER {
+            for (subject, label) in &subject_order {
                 let mut sheet_rows = class_rows
                     .iter()
                     .copied()
-                    .filter(|r| r.subject == subject)
+                    .filter(|r| r.subject == *subject)
                     .collect::<Vec<_>>();
+                if sheet_rows.is_empty() {
+                    continue;
+                }
                 sheet_rows.sort_by(|a, b| {
                     a.space_name
                         .cmp(&b.space_name)
@@ -621,11 +679,12 @@ where
                 sheet
                     .set_name(subject_sheet_name(label))
                     .map_err(|e| AppError::new(format!("设置 Sheet 名失败: {e}")))?;
-                write_common_header(
+                apply_roster_column_widths(sheet)
+                    .map_err(|e| AppError::new(format!("设置名册列宽失败: {e}")))?;
+                write_roster_header(
                     sheet,
-                    0,
                     &format!("{exam_title}（班级名册）"),
-                    true,
+                    &roster_title_fmt,
                     &header_fmt,
                 )
                 .map_err(|e| AppError::new(format!("写入班级名册表头失败: {e}")))?;
@@ -642,12 +701,15 @@ where
         for room_name in rooms {
             let mut wb = Workbook::new();
             let room_rows = room_group.get(&room_name).cloned().unwrap_or_default();
-            for (subject, label) in SUBJECT_EXPORT_ORDER {
+            for (subject, label) in &subject_order {
                 let mut sheet_rows = room_rows
                     .iter()
                     .copied()
-                    .filter(|r| r.subject == subject)
+                    .filter(|r| r.subject == *subject)
                     .collect::<Vec<_>>();
+                if sheet_rows.is_empty() {
+                    continue;
+                }
                 sheet_rows.sort_by(|a, b| {
                     a.seat_no
                         .cmp(&b.seat_no)
@@ -657,11 +719,12 @@ where
                 sheet
                     .set_name(subject_sheet_name(label))
                     .map_err(|e| AppError::new(format!("设置 Sheet 名失败: {e}")))?;
-                write_common_header(
+                apply_roster_column_widths(sheet)
+                    .map_err(|e| AppError::new(format!("设置名册列宽失败: {e}")))?;
+                write_roster_header(
                     sheet,
-                    0,
                     &format!("{exam_title}（考场名册）"),
-                    true,
+                    &roster_title_fmt,
                     &header_fmt,
                 )
                 .map_err(|e| AppError::new(format!("写入考场名册表头失败: {e}")))?;
@@ -690,9 +753,9 @@ where
             display_width("考号"),
             display_width("班级名次"),
         ];
-        summary_widths.resize(4 + SUBJECT_EXPORT_ORDER.len() * 2, display_width("座位号"));
+        summary_widths.resize(4 + subject_order.len() * 2, display_width("座位号"));
 
-        for (idx, (subject, label)) in SUBJECT_EXPORT_ORDER.iter().enumerate() {
+        for (idx, (subject, label)) in subject_order.iter().enumerate() {
             let col = 4_u16 + (idx as u16 * 2);
             let title = if let Some(s) = sessions.get(subject) {
                 if let (Some(start), Some(end)) = (s.start_at.as_deref(), s.end_at.as_deref()) {
@@ -760,7 +823,7 @@ where
             summary_widths[2] = summary_widths[2].max(display_width(&stu.admission_no));
             summary_widths[3] = summary_widths[3].max(display_width(&stu.class_rank.to_string()));
 
-            for (sidx, (subject, _)) in SUBJECT_EXPORT_ORDER.iter().enumerate() {
+            for (sidx, (subject, _)) in subject_order.iter().enumerate() {
                 let col = 4_u16 + (sidx as u16 * 2);
                 if let Some((room, seat)) = alloc_map.get(&(stu.admission_no.clone(), *subject)) {
                     summary_sheet
@@ -787,10 +850,10 @@ where
         apply_summary_column_widths(summary_sheet, &summary_widths)
             .map_err(|e| AppError::new(format!("设置总览列宽失败: {e}")))?;
 
-        for (subject, label) in SUBJECT_EXPORT_ORDER {
+        for (subject, label) in &subject_order {
             let mut srows = rows
                 .iter()
-                .filter(|r| r.subject == subject)
+                .filter(|r| r.subject == *subject)
                 .collect::<Vec<_>>();
             srows.sort_by(|a, b| {
                 a.space_name
