@@ -1304,6 +1304,64 @@ fn load_teacher_pool(conn: &Connection) -> Result<Vec<TeacherInfo>, AppError> {
     Ok(teachers)
 }
 
+fn infer_grade_name_from_class_name(class_name: &str) -> Option<String> {
+    let trimmed = class_name.trim();
+    if trimmed.starts_with("高一") {
+        return Some("高一".to_string());
+    }
+    if trimmed.starts_with("高二") {
+        return Some("高二".to_string());
+    }
+    if trimmed.starts_with("高三") {
+        return Some("高三".to_string());
+    }
+    None
+}
+
+fn load_teacher_grade_subject_pairs(
+    conn: &Connection,
+) -> Result<HashMap<i64, HashSet<(String, Subject)>>, AppError> {
+    let mut stmt = conn.prepare(
+        r#"
+        SELECT ta.teacher_id, ta.subject, ta.class_name, c.grade_name
+        FROM latest_teacher_assignments_v2 ta
+        LEFT JOIN class_configs c
+          ON c.config_type = 'teaching_class'
+         AND c.class_name = ta.class_name
+        ORDER BY ta.teacher_id ASC, ta.id ASC
+        "#,
+    )?;
+    let rows = stmt.query_map([], |row| {
+        Ok((
+            row.get::<_, i64>(0)?,
+            row.get::<_, String>(1)?,
+            row.get::<_, String>(2)?,
+            row.get::<_, Option<String>>(3)?,
+        ))
+    })?;
+
+    let mut out = HashMap::<i64, HashSet<(String, Subject)>>::new();
+    for row in rows {
+        let (teacher_id, subject_key, class_name, grade_name_from_config) = row?;
+        let Some(subject) = Subject::from_key(&subject_key) else {
+            continue;
+        };
+        let Some(grade_name) = grade_name_from_config
+            .and_then(|value| {
+                let trimmed = value.trim().to_string();
+                (!trimmed.is_empty()).then_some(trimmed)
+            })
+            .or_else(|| infer_grade_name_from_class_name(&class_name))
+        else {
+            continue;
+        };
+        out.entry(teacher_id)
+            .or_default()
+            .insert((grade_name, subject));
+    }
+    Ok(out)
+}
+
 fn load_class_subject_map(
     conn: &Connection,
 ) -> Result<HashMap<(String, String), HashSet<Subject>>, AppError> {
@@ -1464,6 +1522,8 @@ fn build_task_candidate_summary(
     teachers: &[TeacherInfo],
     custom_rules: &[GenerateExamStaffPlanCustomRule],
     config: &RuntimeInvigilationConfig,
+    slot_forbidden_grade_subjects: &HashSet<(String, Subject)>,
+    teacher_grade_subject_pairs: &HashMap<i64, HashSet<(String, Subject)>>,
 ) -> TaskCandidateSummary {
     let required_teacher_ids: HashSet<i64> = teachers
         .iter()
@@ -1487,6 +1547,15 @@ fn build_task_candidate_summary(
                 return false;
             }
             if !is_teacher_enabled_for_task_source(teacher, task.task_source, config) {
+                return false;
+            }
+            let teacher_pairs = teacher_grade_subject_pairs.get(&teacher.id);
+            let hit_forbidden_slot_pair = slot_forbidden_grade_subjects.iter().any(|pair| {
+                teacher_pairs
+                    .map(|pairs| pairs.contains(pair))
+                    .unwrap_or(false)
+            });
+            if hit_forbidden_slot_pair {
                 return false;
             }
             
@@ -2678,13 +2747,37 @@ fn solve_with_cp_sat(
     teachers: &[TeacherInfo],
     custom_rules: &[GenerateExamStaffPlanCustomRule],
     invigilation_config: &RuntimeInvigilationConfig,
+    teacher_grade_subject_pairs: &HashMap<i64, HashSet<(String, Subject)>>,
     progress: Option<&StaffAssignmentProgressReporter>,
 ) -> CpSatAttempt {
     let started_at = Instant::now();
+    let mut forbidden_grade_subjects_by_slot =
+        HashMap::<(i64, i64), HashSet<(String, Subject)>>::new();
+    for task in tasks {
+        // “师生同考”禁排只对考试时段生效：同一时段内出现的全部(年级,科目)都应回避。
+        if task.session_id.is_some() {
+            forbidden_grade_subjects_by_slot
+                .entry((task.start_ts, task.end_ts))
+                .or_default()
+                .insert((task.grade_name.clone(), task.subject));
+        }
+    }
+
+    let empty_forbidden_pairs = HashSet::<(String, Subject)>::new();
     let candidate_summaries: Vec<TaskCandidateSummary> = tasks
         .iter()
         .map(|task| {
-            build_task_candidate_summary(task, teachers, custom_rules, invigilation_config)
+            let slot_forbidden_grade_subjects = forbidden_grade_subjects_by_slot
+                .get(&(task.start_ts, task.end_ts))
+                .unwrap_or(&empty_forbidden_pairs);
+            build_task_candidate_summary(
+                task,
+                teachers,
+                custom_rules,
+                invigilation_config,
+                slot_forbidden_grade_subjects,
+                teacher_grade_subject_pairs,
+            )
         })
         .collect();
     let teacher_symmetry_groups = build_teacher_symmetry_groups(teachers, &candidate_summaries);
@@ -3491,6 +3584,7 @@ fn generate_latest_exam_staff_plan_internal(
         );
     }
     let teachers = load_teacher_pool(conn)?;
+    let teacher_grade_subject_pairs = load_teacher_grade_subject_pairs(conn)?;
     if let Some(progress) = progress {
         progress.emit_running(
             3,
@@ -3541,6 +3635,7 @@ fn generate_latest_exam_staff_plan_internal(
         &teachers,
         &custom_rules,
         &invigilation_config,
+        &teacher_grade_subject_pairs,
         progress,
     );
 
@@ -4802,6 +4897,31 @@ mod tests {
         }
     }
 
+    fn build_test_teacher_grade_subject_pairs(
+        teachers: &[TeacherInfo],
+    ) -> HashMap<i64, HashSet<(String, Subject)>> {
+        let mut result = HashMap::new();
+        for teacher in teachers {
+            let mut pairs = HashSet::new();
+            for class_name in &teacher.class_names {
+                let grade_name = if class_name.starts_with("高一") {
+                    "高一"
+                } else if class_name.starts_with("高二") {
+                    "高二"
+                } else if class_name.starts_with("高三") {
+                    "高三"
+                } else {
+                    continue;
+                };
+                for subject in &teacher.subjects {
+                    pairs.insert((grade_name.to_string(), *subject));
+                }
+            }
+            result.insert(teacher.id, pairs);
+        }
+        result
+    }
+
     fn setup_build_staff_tasks_test_db() -> Connection {
         let conn = Connection::open_in_memory().expect("in-memory sqlite should open");
         conn.execute_batch(
@@ -5047,6 +5167,234 @@ mod tests {
     }
 
     #[test]
+    fn test_candidate_summary_blocks_teachers_for_all_grade_subjects_in_same_slot() {
+        let teachers = vec![
+            TeacherInfo {
+                id: 1,
+                name: "高二数学老师".to_string(),
+                subjects: HashSet::from([Subject::Math]),
+                class_names: HashSet::from(["高二1班".to_string()]),
+                homeroom_classes: HashSet::new(),
+                is_middle_manager: false,
+            },
+            TeacherInfo {
+                id: 2,
+                name: "高一英语老师".to_string(),
+                subjects: HashSet::from([Subject::English]),
+                class_names: HashSet::from(["高一2班".to_string()]),
+                homeroom_classes: HashSet::new(),
+                is_middle_manager: false,
+            },
+            TeacherInfo {
+                id: 3,
+                name: "高二历史老师".to_string(),
+                subjects: HashSet::from([Subject::History]),
+                class_names: HashSet::from(["高二3班".to_string()]),
+                homeroom_classes: HashSet::new(),
+                is_middle_manager: false,
+            },
+        ];
+        let slot_forbidden_grade_subjects = HashSet::from([
+            ("高一".to_string(), Subject::English),
+            ("高二".to_string(), Subject::Math),
+        ]);
+        let teacher_grade_subject_pairs = build_test_teacher_grade_subject_pairs(&teachers);
+        let custom_rules = Vec::<GenerateExamStaffPlanCustomRule>::new();
+
+        let summary = super::build_task_candidate_summary(
+            &sample_exam_task(Subject::English),
+            &teachers,
+            &custom_rules,
+            &test_runtime_config(),
+            &slot_forbidden_grade_subjects,
+            &teacher_grade_subject_pairs,
+        );
+        assert_eq!(
+            summary
+                .candidates
+                .iter()
+                .map(|item| item.teacher_id)
+                .collect::<Vec<_>>(),
+            vec![3]
+        );
+    }
+
+    #[test]
+    fn test_candidate_summary_blocks_teachers_for_cross_grade_slot_english_math() {
+        let teachers = vec![
+            TeacherInfo {
+                id: 1,
+                name: "高一英语老师".to_string(),
+                subjects: HashSet::from([Subject::English]),
+                class_names: HashSet::from(["高一1班".to_string()]),
+                homeroom_classes: HashSet::new(),
+                is_middle_manager: false,
+            },
+            TeacherInfo {
+                id: 2,
+                name: "高二数学老师".to_string(),
+                subjects: HashSet::from([Subject::Math]),
+                class_names: HashSet::from(["高二1班".to_string()]),
+                homeroom_classes: HashSet::new(),
+                is_middle_manager: false,
+            },
+            TeacherInfo {
+                id: 3,
+                name: "高一历史老师".to_string(),
+                subjects: HashSet::from([Subject::History]),
+                class_names: HashSet::from(["高一3班".to_string()]),
+                homeroom_classes: HashSet::new(),
+                is_middle_manager: false,
+            },
+        ];
+        let slot_forbidden_grade_subjects = HashSet::from([
+            ("高一".to_string(), Subject::English),
+            ("高二".to_string(), Subject::Math),
+        ]);
+        let teacher_grade_subject_pairs = build_test_teacher_grade_subject_pairs(&teachers);
+        let custom_rules = Vec::<GenerateExamStaffPlanCustomRule>::new();
+
+        let summary_english_exam = super::build_task_candidate_summary(
+            &sample_exam_task(Subject::English),
+            &teachers,
+            &custom_rules,
+            &test_runtime_config(),
+            &slot_forbidden_grade_subjects,
+            &teacher_grade_subject_pairs,
+        );
+        assert!(
+            !summary_english_exam.candidates.iter().any(|c| c.teacher_id == 1),
+            "高一英语老师不应出现在高一英语考试监考候选中"
+        );
+        assert!(
+            !summary_english_exam.candidates.iter().any(|c| c.teacher_id == 2),
+            "高二数学老师不应出现在高一英语考试监考候选中（同场有高二数学考试）"
+        );
+        assert!(
+            summary_english_exam.candidates.iter().any(|c| c.teacher_id == 3),
+            "高一历史老师应该可以监考高一英语考试"
+        );
+    }
+
+    #[test]
+    fn test_candidate_summary_blocks_teachers_for_cross_grade_slot_math_english() {
+        let teachers = vec![
+            TeacherInfo {
+                id: 1,
+                name: "高一数学老师".to_string(),
+                subjects: HashSet::from([Subject::Math]),
+                class_names: HashSet::from(["高一1班".to_string()]),
+                homeroom_classes: HashSet::new(),
+                is_middle_manager: false,
+            },
+            TeacherInfo {
+                id: 2,
+                name: "高二英语老师".to_string(),
+                subjects: HashSet::from([Subject::English]),
+                class_names: HashSet::from(["高二1班".to_string()]),
+                homeroom_classes: HashSet::new(),
+                is_middle_manager: false,
+            },
+            TeacherInfo {
+                id: 3,
+                name: "高二物理老师".to_string(),
+                subjects: HashSet::from([Subject::Physics]),
+                class_names: HashSet::from(["高二3班".to_string()]),
+                homeroom_classes: HashSet::new(),
+                is_middle_manager: false,
+            },
+        ];
+        let slot_forbidden_grade_subjects = HashSet::from([
+            ("高一".to_string(), Subject::Math),
+            ("高二".to_string(), Subject::English),
+        ]);
+        let teacher_grade_subject_pairs = build_test_teacher_grade_subject_pairs(&teachers);
+        let custom_rules = Vec::<GenerateExamStaffPlanCustomRule>::new();
+
+        let mut math_task = sample_exam_task(Subject::Math);
+        math_task.grade_name = "高一".to_string();
+        let summary_math_exam = super::build_task_candidate_summary(
+            &math_task,
+            &teachers,
+            &custom_rules,
+            &test_runtime_config(),
+            &slot_forbidden_grade_subjects,
+            &teacher_grade_subject_pairs,
+        );
+        assert!(
+            !summary_math_exam.candidates.iter().any(|c| c.teacher_id == 1),
+            "高一数学老师不应出现在高一数学考试监考候选中"
+        );
+        assert!(
+            !summary_math_exam.candidates.iter().any(|c| c.teacher_id == 2),
+            "高二英语老师不应出现在高一数学考试监考候选中（同场有高二英语考试）"
+        );
+        assert!(
+            summary_math_exam.candidates.iter().any(|c| c.teacher_id == 3),
+            "高二物理老师应该可以监考高一数学考试"
+        );
+    }
+
+    #[test]
+    fn test_candidate_summary_blocks_teachers_for_same_slot_geography() {
+        let teachers = vec![
+            TeacherInfo {
+                id: 1,
+                name: "高一地理老师".to_string(),
+                subjects: HashSet::from([Subject::Geography]),
+                class_names: HashSet::from(["高一1班".to_string()]),
+                homeroom_classes: HashSet::new(),
+                is_middle_manager: false,
+            },
+            TeacherInfo {
+                id: 2,
+                name: "高二地理老师".to_string(),
+                subjects: HashSet::from([Subject::Geography]),
+                class_names: HashSet::from(["高二1班".to_string()]),
+                homeroom_classes: HashSet::new(),
+                is_middle_manager: false,
+            },
+            TeacherInfo {
+                id: 3,
+                name: "高一历史老师".to_string(),
+                subjects: HashSet::from([Subject::History]),
+                class_names: HashSet::from(["高一3班".to_string()]),
+                homeroom_classes: HashSet::new(),
+                is_middle_manager: false,
+            },
+        ];
+        let slot_forbidden_grade_subjects = HashSet::from([
+            ("高一".to_string(), Subject::Geography),
+            ("高二".to_string(), Subject::Geography),
+        ]);
+        let teacher_grade_subject_pairs = build_test_teacher_grade_subject_pairs(&teachers);
+        let custom_rules = Vec::<GenerateExamStaffPlanCustomRule>::new();
+
+        let mut geo_task = sample_exam_task(Subject::Geography);
+        geo_task.grade_name = "高一".to_string();
+        let summary_geo_exam = super::build_task_candidate_summary(
+            &geo_task,
+            &teachers,
+            &custom_rules,
+            &test_runtime_config(),
+            &slot_forbidden_grade_subjects,
+            &teacher_grade_subject_pairs,
+        );
+        assert!(
+            !summary_geo_exam.candidates.iter().any(|c| c.teacher_id == 1),
+            "高一地理老师不应出现在高一地理考试监考候选中"
+        );
+        assert!(
+            !summary_geo_exam.candidates.iter().any(|c| c.teacher_id == 2),
+            "高二地理老师不应出现在高一地理考试监考候选中（同场有高二地理考试）"
+        );
+        assert!(
+            summary_geo_exam.candidates.iter().any(|c| c.teacher_id == 3),
+            "高一历史老师应该可以监考高一地理考试"
+        );
+    }
+
+    #[test]
     fn test_candidate_summary_self_study_tier_order() {
         let teachers = vec![
             TeacherInfo {
@@ -5091,6 +5439,141 @@ mod tests {
                 (2, Some(AssignmentTier::Homeroom)),
                 (3, Some(AssignmentTier::FallbackPool)),
             ]
+        );
+    }
+
+    #[test]
+    fn test_self_study_blocks_teachers_for_slot_forbidden_grade_subjects() {
+        let teachers = vec![
+            TeacherInfo {
+                id: 1,
+                name: "高一英语老师".to_string(),
+                subjects: HashSet::from([Subject::English]),
+                class_names: HashSet::from(["高一1班".to_string()]),
+                homeroom_classes: HashSet::new(),
+                is_middle_manager: false,
+            },
+            TeacherInfo {
+                id: 2,
+                name: "高二数学老师".to_string(),
+                subjects: HashSet::from([Subject::Math]),
+                class_names: HashSet::from(["高二1班".to_string()]),
+                homeroom_classes: HashSet::new(),
+                is_middle_manager: false,
+            },
+            TeacherInfo {
+                id: 3,
+                name: "高一历史老师".to_string(),
+                subjects: HashSet::from([Subject::History]),
+                class_names: HashSet::from(["高一3班".to_string()]),
+                homeroom_classes: HashSet::new(),
+                is_middle_manager: false,
+            },
+        ];
+        let slot_forbidden_grade_subjects = HashSet::from([
+            ("高一".to_string(), Subject::English),
+            ("高二".to_string(), Subject::Math),
+        ]);
+        let teacher_grade_subject_pairs = build_test_teacher_grade_subject_pairs(&teachers);
+        let custom_rules = Vec::<GenerateExamStaffPlanCustomRule>::new();
+
+        let self_study_task = sample_self_study_task(StaffTaskSource::ExamLinkedSelfStudy);
+        let summary = super::build_task_candidate_summary(
+            &self_study_task,
+            &teachers,
+            &custom_rules,
+            &test_runtime_config(),
+            &slot_forbidden_grade_subjects,
+            &teacher_grade_subject_pairs,
+        );
+        assert!(
+            !summary.candidates.iter().any(|c| c.teacher_id == 1),
+            "高一英语老师不应出现在自习监考候选中（同场有高一英语考试）"
+        );
+        assert!(
+            !summary.candidates.iter().any(|c| c.teacher_id == 2),
+            "高二数学老师不应出现在自习监考候选中（同场有高二数学考试）"
+        );
+        assert!(
+            summary.candidates.iter().any(|c| c.teacher_id == 3),
+            "高一历史老师应该可以参与自习监考"
+        );
+    }
+
+    #[test]
+    fn test_floor_rover_blocks_teachers_for_slot_forbidden_grade_subjects() {
+        let teachers = vec![
+            TeacherInfo {
+                id: 1,
+                name: "高一英语老师".to_string(),
+                subjects: HashSet::from([Subject::English]),
+                class_names: HashSet::from(["高一1班".to_string()]),
+                homeroom_classes: HashSet::new(),
+                is_middle_manager: false,
+            },
+            TeacherInfo {
+                id: 2,
+                name: "高二数学老师".to_string(),
+                subjects: HashSet::from([Subject::Math]),
+                class_names: HashSet::from(["高二1班".to_string()]),
+                homeroom_classes: HashSet::new(),
+                is_middle_manager: false,
+            },
+            TeacherInfo {
+                id: 3,
+                name: "高一历史老师".to_string(),
+                subjects: HashSet::from([Subject::History]),
+                class_names: HashSet::from(["高一3班".to_string()]),
+                homeroom_classes: HashSet::new(),
+                is_middle_manager: false,
+            },
+        ];
+        let slot_forbidden_grade_subjects = HashSet::from([
+            ("高一".to_string(), Subject::English),
+            ("高二".to_string(), Subject::Math),
+        ]);
+        let teacher_grade_subject_pairs = build_test_teacher_grade_subject_pairs(&teachers);
+        let custom_rules = Vec::<GenerateExamStaffPlanCustomRule>::new();
+
+        let floor_rover_task = TaskBuild {
+            session_id: Some(101),
+            space_id: None,
+            task_source: StaffTaskSource::Exam,
+            role: StaffRole::FloorRover,
+            grade_name: "高一".to_string(),
+            subject: Subject::English,
+            space_name: "3层 楼层流动".to_string(),
+            floor: "3层".to_string(),
+            start_at: "2026-03-24T08:00".to_string(),
+            end_at: "2026-03-24T10:00".to_string(),
+            start_ts: 1_000,
+            end_ts: 2_000,
+            duration_minutes: 120,
+            subject_avoidance_subjects: vec![Subject::English],
+            recommended_self_study_topic: None,
+            priority_self_study_chain: Vec::new(),
+            day_key: "2026-03-24".to_string(),
+            half_day: HalfDay::Morning,
+        };
+        let summary = super::build_task_candidate_summary(
+            &floor_rover_task,
+            &teachers,
+            &custom_rules,
+            &test_runtime_config(),
+            &slot_forbidden_grade_subjects,
+            &teacher_grade_subject_pairs,
+        );
+        assert!(
+            !summary.candidates.iter().any(|c| c.teacher_id == 1),
+            "高一英语老师不应出现在楼层流动监考候选中（同场有高一英语考试）"
+        );
+        assert!(
+            !summary.candidates.iter().any(|c| c.teacher_id == 2),
+            "高二数学老师不应出现在楼层流动监考候选中（同场有高二数学考试）"
+        );
+        assert!(
+            summary.candidates.iter().any(|c| c.teacher_id == 3),
+            "高一历史老师应该可以参与楼层流动监考"
         );
     }
 
@@ -5360,11 +5843,14 @@ mod tests {
                 half_day: HalfDay::Morning,
             },
         ];
+        let empty_custom_rules = Vec::<GenerateExamStaffPlanCustomRule>::new();
+        let teacher_grade_subject_pairs = build_test_teacher_grade_subject_pairs(&teachers);
         let cp_sat_attempt = solve_with_cp_sat(
             &tasks,
             &teachers,
-            &HashSet::new(),
+            &empty_custom_rules,
             &test_runtime_config(),
+            &teacher_grade_subject_pairs,
             None,
         );
         let cp_sat_plan = cp_sat_attempt.plan.expect("cp-sat should produce a plan");
@@ -5476,11 +5962,14 @@ mod tests {
             },
         ];
 
+        let empty_custom_rules = Vec::<GenerateExamStaffPlanCustomRule>::new();
+        let teacher_grade_subject_pairs = build_test_teacher_grade_subject_pairs(&teachers);
         let cp_sat_attempt = solve_with_cp_sat(
             &tasks,
             &teachers,
-            &HashSet::new(),
+            &empty_custom_rules,
             &test_runtime_config(),
+            &teacher_grade_subject_pairs,
             None,
         );
         let cp_sat_plan = cp_sat_attempt.plan.expect("cp-sat should produce a plan");
@@ -5544,11 +6033,14 @@ mod tests {
             },
         ];
 
+        let empty_custom_rules = Vec::<GenerateExamStaffPlanCustomRule>::new();
+        let teacher_grade_subject_pairs = build_test_teacher_grade_subject_pairs(&teachers);
         let cp_sat_attempt = solve_with_cp_sat(
             &tasks,
             &teachers,
-            &HashSet::new(),
+            &empty_custom_rules,
             &test_runtime_config(),
+            &teacher_grade_subject_pairs,
             None,
         );
         let cp_sat_plan = cp_sat_attempt.plan.expect("cp-sat should produce a plan");

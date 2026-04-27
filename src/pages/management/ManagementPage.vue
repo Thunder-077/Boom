@@ -58,48 +58,55 @@ const activeSection = computed<AppSection>(() => {
   return "exam-assignment";
 });
 
-const pageMap: Record<AppSection, { title: string; description: string; breadcrumb: string; pageTitle: string;}> = {
+const pageMap: Record<AppSection, { title: string; description: string; breadcrumb: string; pageTitle: string; summary: string }> = {
   teachers: {
     title: "教师管理",
     description: "教师资料与授课班级关系维护",
     breadcrumb: "教师管理 / 教师列表",
     pageTitle: "教师列表",
+    summary: "维护教师资料、学科与授课班级关系。",
   },
   scores: {
     title: "学生管理",
     description: "教务核心模块与考试编排入口",
     breadcrumb: "学生管理 / 成绩管理",
     pageTitle: "成绩管理",
+    summary: "管理成绩数据并支撑后续考试编排。",
   },
   classes: {
     title: "班级管理",
     description: "班级科目与教学楼信息配置",
     breadcrumb: "班级管理 / 班级配置",
     pageTitle: "班级配置",
+    summary: "配置班级科目、教学楼及相关基础信息。",
   },
   "exam-assignment": {
     title: "考试管理",
     description: "考场分配与监考安排配置",
     breadcrumb: "考试管理 / 考场分配",
     pageTitle: "考场分配",
+    summary: "完成考场分配、结果导出与考试配置管理。",
   },
   "monitor-draw": {
     title: "考试管理",
     description: "考场分配与监考安排配置",
     breadcrumb: "考试管理 / 监考抽签",
     pageTitle: "监考抽签",
+    summary: "按规则执行监考抽签并查看抽签结果。",
   },
   "monitor-config": {
     title: "考试管理",
     description: "监考配置与津贴规则设置",
     breadcrumb: "考试管理 / 监考配置",
     pageTitle: "监考配置",
+    summary: "配置监考规则、任务与津贴参数。",
   },
   settings: {
     title: "系统设置",
     description: "主题外观与后续工作区偏好的集中入口",
     breadcrumb: "系统设置 / 外观主题",
     pageTitle: "系统设置",
+    summary: "调整主题外观与系统偏好设置。",
   },
 };
 
