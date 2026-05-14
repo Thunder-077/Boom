@@ -4964,6 +4964,7 @@ mod tests {
             priority_self_study_chain: Vec::new(),
             day_key: "2026-03-24".to_string(),
             half_day: HalfDay::Morning,
+            rule_target_id: String::new(),
         }
     }
 
@@ -4998,6 +4999,7 @@ mod tests {
             ],
             day_key: "2026-03-24".to_string(),
             half_day: HalfDay::Morning,
+            rule_target_id: String::new(),
         }
     }
 
@@ -5121,10 +5123,17 @@ mod tests {
             priority_self_study_chain: Vec::new(),
             day_key: "2026-03-24".to_string(),
             half_day: HalfDay::Morning,
+            rule_target_id: String::new(),
         };
 
-        let summary =
-            build_task_candidate_summary(&task, &teachers, &HashSet::new(), &test_runtime_config());
+        let summary = build_task_candidate_summary(
+            &task,
+            &teachers,
+            &[],
+            &test_runtime_config(),
+            &HashSet::new(),
+            &HashMap::new(),
+        );
 
         assert_eq!(summary.candidates.len(), 1);
         assert_eq!(summary.candidates[0].teacher_id, 3);
@@ -5153,8 +5162,10 @@ mod tests {
         let summary = build_task_candidate_summary(
             &sample_exam_task(Subject::Math),
             &teachers,
-            &HashSet::new(),
+            &[],
             &test_runtime_config(),
+            &HashSet::new(),
+            &HashMap::new(),
         );
         assert_eq!(
             summary
@@ -5425,8 +5436,10 @@ mod tests {
         let summary = build_task_candidate_summary(
             &sample_self_study_task(StaffTaskSource::ExamLinkedSelfStudy),
             &teachers,
-            &HashSet::new(),
+            &[],
             &test_runtime_config(),
+            &HashSet::new(),
+            &HashMap::new(),
         );
         assert_eq!(
             summary
@@ -5554,6 +5567,7 @@ mod tests {
             priority_self_study_chain: Vec::new(),
             day_key: "2026-03-24".to_string(),
             half_day: HalfDay::Morning,
+            rule_target_id: String::new(),
         };
         let summary = super::build_task_candidate_summary(
             &floor_rover_task,
@@ -5590,8 +5604,10 @@ mod tests {
         let summary = build_task_candidate_summary(
             &sample_self_study_task(StaffTaskSource::ExamLinkedSelfStudy),
             &middle_manager,
-            &HashSet::new(),
+            &[],
             &test_runtime_config(),
+            &HashSet::new(),
+            &HashMap::new(),
         );
         assert!(summary.candidates.is_empty());
 
@@ -5600,8 +5616,10 @@ mod tests {
         let enabled = build_task_candidate_summary(
             &sample_exam_task(Subject::Math),
             &middle_manager,
-            &HashSet::new(),
+            &[],
             &config,
+            &HashSet::new(),
+            &HashMap::new(),
         );
         assert_eq!(enabled.candidates.len(), 1);
 
@@ -5609,8 +5627,10 @@ mod tests {
         let disabled_again = build_task_candidate_summary(
             &sample_self_study_task(StaffTaskSource::FullSelfStudy),
             &middle_manager,
-            &HashSet::new(),
+            &[],
             &config,
+            &HashSet::new(),
+            &HashMap::new(),
         );
         assert!(disabled_again.candidates.is_empty());
     }
@@ -5628,8 +5648,10 @@ mod tests {
         let exam_linked = build_task_candidate_summary(
             &sample_self_study_task(StaffTaskSource::ExamLinkedSelfStudy),
             &teachers,
-            &HashSet::new(),
+            &[],
             &test_runtime_config(),
+            &HashSet::new(),
+            &HashMap::new(),
         );
         assert_eq!(
             exam_linked.candidates[0].assignment_tier,
@@ -5639,8 +5661,10 @@ mod tests {
         let full_self_study = build_task_candidate_summary(
             &sample_self_study_task(StaffTaskSource::FullSelfStudy),
             &teachers,
-            &HashSet::from([(9_i64, 99_i64)]),
+            &[],
             &test_runtime_config(),
+            &HashSet::new(),
+            &HashMap::new(),
         );
         assert_eq!(full_self_study.candidates.len(), 1);
         assert_eq!(full_self_study.candidates[0].teacher_id, 9);
@@ -5656,21 +5680,36 @@ mod tests {
             homeroom_classes: HashSet::new(),
             is_middle_manager: false,
         }];
-        let exclusion_pairs = HashSet::from([(11_i64, 1_i64)]);
+        let exclusion_rules = vec![GenerateExamStaffPlanCustomRule {
+            action_type: RULE_ACTION_EXCLUDE.to_string(),
+            teacher_id: 11,
+            teacher_name: None,
+            time_scope_type: RULE_TIME_SCOPE_EXAM_SESSION.to_string(),
+            time_scope_ids: vec![1],
+            time_scope_labels: Vec::new(),
+            task_scope_type: RULE_TASK_SCOPE_EXAM_ROOM.to_string(),
+            target_scope_type: RULE_TARGET_SCOPE_ALL.to_string(),
+            target_ids: Vec::new(),
+            target_labels: Vec::new(),
+        }];
 
         let exam_room_summary = build_task_candidate_summary(
             &sample_exam_task(Subject::Math),
             &teachers,
-            &exclusion_pairs,
+            &exclusion_rules,
             &test_runtime_config(),
+            &HashSet::new(),
+            &HashMap::new(),
         );
         assert!(exam_room_summary.candidates.is_empty());
 
         let self_study_summary = build_task_candidate_summary(
             &sample_self_study_task(StaffTaskSource::ExamLinkedSelfStudy),
             &teachers,
-            &exclusion_pairs,
+            &exclusion_rules,
             &test_runtime_config(),
+            &HashSet::new(),
+            &HashMap::new(),
         );
         assert_eq!(self_study_summary.candidates.len(), 1);
         assert_eq!(self_study_summary.candidates[0].teacher_id, 11);
@@ -5683,8 +5722,10 @@ mod tests {
         let floor_rover_summary = build_task_candidate_summary(
             &floor_rover_task,
             &teachers,
-            &exclusion_pairs,
+            &[],
             &test_runtime_config(),
+            &HashSet::new(),
+            &HashMap::new(),
         );
         assert_eq!(floor_rover_summary.candidates.len(), 1);
         assert_eq!(floor_rover_summary.candidates[0].teacher_id, 11);
@@ -5732,8 +5773,10 @@ mod tests {
         let foreign_summary = build_task_candidate_summary(
             &foreign_task,
             &teachers,
-            &HashSet::new(),
+            &[],
             &test_runtime_config(),
+            &HashSet::new(),
+            &HashMap::new(),
         );
         assert_eq!(
             foreign_summary
@@ -5754,8 +5797,10 @@ mod tests {
         let free_summary = build_task_candidate_summary(
             &free_task,
             &teachers,
-            &HashSet::new(),
+            &[],
             &test_runtime_config(),
+            &HashSet::new(),
+            &HashMap::new(),
         );
         assert_eq!(free_summary.candidates[0].teacher_id, 1);
         assert_eq!(free_summary.candidates[1].teacher_id, 2);
@@ -5821,6 +5866,7 @@ mod tests {
                 priority_self_study_chain: Vec::new(),
                 day_key: "2026-03-24".to_string(),
                 half_day: HalfDay::Morning,
+                rule_target_id: String::new(),
             },
             TaskBuild {
                 session_id: Some(1),
@@ -5841,6 +5887,7 @@ mod tests {
                 priority_self_study_chain: vec![topic_subject(Subject::English)],
                 day_key: "2026-03-24".to_string(),
                 half_day: HalfDay::Morning,
+                rule_target_id: String::new(),
             },
         ];
         let empty_custom_rules = Vec::<GenerateExamStaffPlanCustomRule>::new();
@@ -5899,6 +5946,7 @@ mod tests {
                 priority_self_study_chain: Vec::new(),
                 day_key: "2026-03-24".to_string(),
                 half_day: HalfDay::Morning,
+                rule_target_id: String::new(),
             },
             TaskBuild {
                 session_id: Some(2),
@@ -5919,6 +5967,7 @@ mod tests {
                 priority_self_study_chain: Vec::new(),
                 day_key: "2026-03-24".to_string(),
                 half_day: HalfDay::Morning,
+                rule_target_id: String::new(),
             },
             TaskBuild {
                 session_id: Some(3),
@@ -5939,6 +5988,7 @@ mod tests {
                 priority_self_study_chain: Vec::new(),
                 day_key: "2026-03-24".to_string(),
                 half_day: HalfDay::Morning,
+                rule_target_id: String::new(),
             },
             TaskBuild {
                 session_id: Some(4),
@@ -5959,6 +6009,7 @@ mod tests {
                 priority_self_study_chain: vec![topic_subject(Subject::English)],
                 day_key: "2026-03-24".to_string(),
                 half_day: HalfDay::Morning,
+                rule_target_id: String::new(),
             },
         ];
 
@@ -6010,6 +6061,7 @@ mod tests {
                 priority_self_study_chain: Vec::new(),
                 day_key: "2026-03-24".to_string(),
                 half_day: HalfDay::Morning,
+                rule_target_id: String::new(),
             },
             TaskBuild {
                 session_id: Some(1),
@@ -6030,6 +6082,7 @@ mod tests {
                 priority_self_study_chain: Vec::new(),
                 day_key: "2026-03-24".to_string(),
                 half_day: HalfDay::Morning,
+                rule_target_id: String::new(),
             },
         ];
 
@@ -6080,13 +6133,13 @@ mod tests {
             default_exam_room_required_count: persisted_settings.0,
             indoor_allowance_per_minute: persisted_settings.1,
             outdoor_allowance_per_minute: persisted_settings.2,
-            staff_exclusions: Vec::new(),
+            custom_rules: Vec::new(),
         });
         hydrate_runtime_middle_manager_config(&conn, &mut config).expect("hydrate config");
         config.self_study_class_subjects =
             load_self_study_class_subjects(&conn).expect("load self study subjects");
 
-        let mut exclusion_pairs = HashSet::new();
+        let mut custom_rules = Vec::new();
         let mut stmt = conn
             .prepare("SELECT teacher_id, session_id FROM invigilation_staff_exclusions")
             .expect("prepare exclusions");
@@ -6096,7 +6149,18 @@ mod tests {
         for row in rows {
             let (teacher_id, session_id) = row.expect("read exclusion row");
             if teacher_id > 0 && session_id > 0 {
-                exclusion_pairs.insert((teacher_id, session_id));
+                custom_rules.push(GenerateExamStaffPlanCustomRule {
+                    action_type: RULE_ACTION_EXCLUDE.to_string(),
+                    teacher_id,
+                    teacher_name: None,
+                    time_scope_type: RULE_TIME_SCOPE_EXAM_SESSION.to_string(),
+                    time_scope_ids: vec![session_id],
+                    time_scope_labels: Vec::new(),
+                    task_scope_type: RULE_TASK_SCOPE_EXAM_ROOM.to_string(),
+                    target_scope_type: RULE_TARGET_SCOPE_ALL.to_string(),
+                    target_ids: Vec::new(),
+                    target_labels: Vec::new(),
+                });
             }
         }
         drop(stmt);
@@ -6109,7 +6173,7 @@ mod tests {
         let result = generate_latest_exam_staff_plan_internal(
             &mut conn,
             config,
-            exclusion_pairs,
+            custom_rules,
             Some(log_path.as_path()),
             None,
         )
