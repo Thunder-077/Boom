@@ -1017,7 +1017,9 @@ fn hydrate_runtime_middle_manager_config(
     Ok(())
 }
 
-fn load_runtime_invigilation_config(conn: &Connection) -> Result<RuntimeInvigilationConfig, AppError> {
+fn load_runtime_invigilation_config(
+    conn: &Connection,
+) -> Result<RuntimeInvigilationConfig, AppError> {
     let mut config = RuntimeInvigilationConfig {
         default_exam_room_required_count: 1,
         indoor_allowance_per_minute: 0.5,
@@ -1558,13 +1560,13 @@ fn build_task_candidate_summary(
             if hit_forbidden_slot_pair {
                 return false;
             }
-            
+
             let is_excluded = custom_rules.iter().any(|rule| {
                 rule.action_type == RULE_ACTION_EXCLUDE
                     && rule.teacher_id == teacher.id
                     && task_matches_custom_rule(task, rule)
             });
-            
+
             !is_excluded
         })
         .collect();
@@ -1577,7 +1579,10 @@ fn build_task_candidate_summary(
     if task.role == StaffRole::ExamRoomInvigilator {
         let candidates: Vec<TaskCandidate> = active_teachers
             .iter()
-            .filter(|teacher| required_teacher_ids.contains(&teacher.id) || !teacher.subjects.contains(&task.subject))
+            .filter(|teacher| {
+                required_teacher_ids.contains(&teacher.id)
+                    || !teacher.subjects.contains(&task.subject)
+            })
             .map(|teacher| TaskCandidate {
                 teacher_id: teacher.id,
                 assignment_tier: None,
@@ -2236,11 +2241,14 @@ fn to_persisted_rule(
 fn persisted_rules_from_payload(
     rules: &[GenerateExamStaffPlanCustomRule],
 ) -> Vec<PersistedInvigilationCustomRule> {
-    rules.iter()
+    rules
+        .iter()
         .map(|rule| {
             to_persisted_rule(
                 rule,
-                rule.teacher_name.clone().unwrap_or_else(|| format!("教师{}", rule.teacher_id)),
+                rule.teacher_name
+                    .clone()
+                    .unwrap_or_else(|| format!("教师{}", rule.teacher_id)),
                 rule.time_scope_labels.clone(),
                 rule.target_labels.clone(),
             )
@@ -2248,15 +2256,16 @@ fn persisted_rules_from_payload(
         .collect()
 }
 
-fn validate_custom_rule_shapes(
-    rules: &[PersistedInvigilationCustomRule],
-) -> Result<(), AppError> {
+fn validate_custom_rule_shapes(rules: &[PersistedInvigilationCustomRule]) -> Result<(), AppError> {
     for rule in rules {
         if rule.teacher_id <= 0 || rule.teacher_name.trim().is_empty() {
             return Err(AppError::new("排班规则缺少教师信息"));
         }
         if rule.action_type != RULE_ACTION_EXCLUDE && rule.action_type != RULE_ACTION_REQUIRE {
-            return Err(AppError::new(format!("排班规则动作无效：{}", rule.action_type)));
+            return Err(AppError::new(format!(
+                "排班规则动作无效：{}",
+                rule.action_type
+            )));
         }
         if rule.time_scope_type != RULE_TIME_SCOPE_EXAM_SESSION
             && rule.time_scope_type != RULE_TIME_SCOPE_FULL_SELF_STUDY
@@ -2329,7 +2338,8 @@ fn validate_custom_rules_against_tasks(
     let matched_task_indexes = generated_rules
         .iter()
         .map(|rule| {
-            tasks.iter()
+            tasks
+                .iter()
                 .enumerate()
                 .filter_map(|(index, task)| task_matches_custom_rule(task, rule).then_some(index))
                 .collect::<HashSet<_>>()
@@ -3910,10 +3920,8 @@ pub fn list_invigilation_custom_rule_options(
             && !config.self_study_start_time.trim().is_empty()
             && !config.self_study_end_time.trim().is_empty()
         {
-            let start_at = build_self_study_datetime(
-                &config.self_study_date,
-                &config.self_study_start_time,
-            )?;
+            let start_at =
+                build_self_study_datetime(&config.self_study_date, &config.self_study_start_time)?;
             let end_at =
                 build_self_study_datetime(&config.self_study_date, &config.self_study_end_time)?;
             Some(InvigilationRuleFullSelfStudyOption {
@@ -4326,8 +4334,6 @@ fn build_session_label(grade_name: &str, subject: Subject, start_at: &str, end_a
     )
 }
 
-
-
 pub fn get_persisted_invigilation_state(
     app: AppHandle,
 ) -> Result<PersistedInvigilationState, String> {
@@ -4552,8 +4558,7 @@ pub fn replace_persisted_invigilation_custom_rules(
         let now = Utc::now().to_rfc3339();
         for item in items {
             let time_scope_ids_json = to_json_i64_list(&item.time_scope_ids)?;
-            let time_scope_labels_json =
-                to_json_string_list(&item.time_scope_labels, "时段标签")?;
+            let time_scope_labels_json = to_json_string_list(&item.time_scope_labels, "时段标签")?;
             let target_ids_json = to_json_string_list(&item.target_ids, "对象 ID")?;
             let target_labels_json = to_json_string_list(&item.target_labels, "对象标签")?;
             tx.execute(
@@ -5274,15 +5279,24 @@ mod tests {
             &teacher_grade_subject_pairs,
         );
         assert!(
-            !summary_english_exam.candidates.iter().any(|c| c.teacher_id == 1),
+            !summary_english_exam
+                .candidates
+                .iter()
+                .any(|c| c.teacher_id == 1),
             "高一英语老师不应出现在高一英语考试监考候选中"
         );
         assert!(
-            !summary_english_exam.candidates.iter().any(|c| c.teacher_id == 2),
+            !summary_english_exam
+                .candidates
+                .iter()
+                .any(|c| c.teacher_id == 2),
             "高二数学老师不应出现在高一英语考试监考候选中（同场有高二数学考试）"
         );
         assert!(
-            summary_english_exam.candidates.iter().any(|c| c.teacher_id == 3),
+            summary_english_exam
+                .candidates
+                .iter()
+                .any(|c| c.teacher_id == 3),
             "高一历史老师应该可以监考高一英语考试"
         );
     }
@@ -5333,15 +5347,24 @@ mod tests {
             &teacher_grade_subject_pairs,
         );
         assert!(
-            !summary_math_exam.candidates.iter().any(|c| c.teacher_id == 1),
+            !summary_math_exam
+                .candidates
+                .iter()
+                .any(|c| c.teacher_id == 1),
             "高一数学老师不应出现在高一数学考试监考候选中"
         );
         assert!(
-            !summary_math_exam.candidates.iter().any(|c| c.teacher_id == 2),
+            !summary_math_exam
+                .candidates
+                .iter()
+                .any(|c| c.teacher_id == 2),
             "高二英语老师不应出现在高一数学考试监考候选中（同场有高二英语考试）"
         );
         assert!(
-            summary_math_exam.candidates.iter().any(|c| c.teacher_id == 3),
+            summary_math_exam
+                .candidates
+                .iter()
+                .any(|c| c.teacher_id == 3),
             "高二物理老师应该可以监考高一数学考试"
         );
     }
@@ -5392,15 +5415,24 @@ mod tests {
             &teacher_grade_subject_pairs,
         );
         assert!(
-            !summary_geo_exam.candidates.iter().any(|c| c.teacher_id == 1),
+            !summary_geo_exam
+                .candidates
+                .iter()
+                .any(|c| c.teacher_id == 1),
             "高一地理老师不应出现在高一地理考试监考候选中"
         );
         assert!(
-            !summary_geo_exam.candidates.iter().any(|c| c.teacher_id == 2),
+            !summary_geo_exam
+                .candidates
+                .iter()
+                .any(|c| c.teacher_id == 2),
             "高二地理老师不应出现在高一地理考试监考候选中（同场有高二地理考试）"
         );
         assert!(
-            summary_geo_exam.candidates.iter().any(|c| c.teacher_id == 3),
+            summary_geo_exam
+                .candidates
+                .iter()
+                .any(|c| c.teacher_id == 3),
             "高一历史老师应该可以监考高一地理考试"
         );
     }
