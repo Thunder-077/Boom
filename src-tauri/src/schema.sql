@@ -86,6 +86,72 @@ CREATE INDEX IF NOT EXISTS idx_latest_teacher_homerooms_v2_teacher_id ON latest_
 CREATE INDEX IF NOT EXISTS idx_latest_teacher_homerooms_v2_class_name ON latest_teacher_homerooms_v2(class_name);
 
 -- ---------------------------------------------------------------------------
+-- 课务管理模块 (course_management)
+-- ---------------------------------------------------------------------------
+
+CREATE TABLE IF NOT EXISTS course_schedule_imports (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    imported_at TEXT NOT NULL,
+    source_file TEXT NOT NULL,
+    entry_count INTEGER NOT NULL,
+    teacher_count INTEGER NOT NULL,
+    admin_class_count INTEGER NOT NULL,
+    foreign_class_count INTEGER NOT NULL,
+    effective_start_date TEXT,
+    effective_end_date TEXT,
+    start_week INTEGER NOT NULL DEFAULT 1
+);
+
+CREATE TABLE IF NOT EXISTS course_schedule_classes (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    import_id INTEGER NOT NULL,
+    class_name TEXT NOT NULL,
+    display_name TEXT NOT NULL,
+    class_type TEXT NOT NULL,
+    sort_index INTEGER NOT NULL,
+    UNIQUE(import_id, class_name, class_type),
+    FOREIGN KEY(import_id) REFERENCES course_schedule_imports(id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS course_schedule_entries (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    import_id INTEGER NOT NULL,
+    class_name TEXT NOT NULL,
+    display_class_name TEXT NOT NULL,
+    class_type TEXT NOT NULL,
+    week_index INTEGER NOT NULL,
+    day_of_week INTEGER NOT NULL,
+    day_label TEXT NOT NULL,
+    period_index INTEGER NOT NULL,
+    period_label TEXT NOT NULL,
+    section_label TEXT NOT NULL,
+    subject TEXT NOT NULL,
+    teacher_names TEXT NOT NULL,
+    teacher_search_text TEXT NOT NULL,
+    FOREIGN KEY(import_id) REFERENCES course_schedule_imports(id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS course_schedule_periods (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    import_id INTEGER NOT NULL,
+    week_index INTEGER NOT NULL,
+    day_of_week INTEGER NOT NULL,
+    day_label TEXT NOT NULL,
+    period_index INTEGER NOT NULL,
+    period_label TEXT NOT NULL,
+    section_label TEXT NOT NULL,
+    UNIQUE(import_id, week_index, day_of_week, period_index),
+    FOREIGN KEY(import_id) REFERENCES course_schedule_imports(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_course_schedule_imports_imported_at ON course_schedule_imports(imported_at);
+CREATE INDEX IF NOT EXISTS idx_course_schedule_classes_import_type ON course_schedule_classes(import_id, class_type);
+CREATE INDEX IF NOT EXISTS idx_course_schedule_entries_import_class ON course_schedule_entries(import_id, class_type, class_name);
+CREATE INDEX IF NOT EXISTS idx_course_schedule_entries_import_teacher ON course_schedule_entries(import_id, teacher_search_text);
+CREATE INDEX IF NOT EXISTS idx_course_schedule_entries_slot ON course_schedule_entries(import_id, week_index, day_of_week, period_index);
+CREATE INDEX IF NOT EXISTS idx_course_schedule_periods_import_week ON course_schedule_periods(import_id, week_index, day_of_week, period_index);
+
+-- ---------------------------------------------------------------------------
 -- 班级配置模块 (class_config)
 -- ---------------------------------------------------------------------------
 

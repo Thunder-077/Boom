@@ -310,11 +310,7 @@ fn display_width(value: &str) -> usize {
 }
 
 fn multiline_display_width(value: &str) -> usize {
-    value
-        .split('\n')
-        .map(display_width)
-        .max()
-        .unwrap_or(0)
+    value.split('\n').map(display_width).max().unwrap_or(0)
 }
 
 fn is_pending_teacher_name(value: &str) -> bool {
@@ -1991,10 +1987,7 @@ mod tests {
         ];
         assert_eq!(
             collect_accounting_exam_theme_headers(&slots),
-            vec![
-                "语文".to_string(),
-                "高一-数学\n高二-外语".to_string()
-            ]
+            vec!["语文".to_string(), "高一-数学\n高二-外语".to_string()]
         );
     }
 

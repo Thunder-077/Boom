@@ -1,11 +1,11 @@
 export interface RailItem {
   key: string;
   label: string;
-  icon: "person" | "badge" | "domain" | "event_note";
+  icon: "person" | "badge" | "domain" | "event_note" | "calendar_month";
 }
 
 export interface SecondaryNavItem {
   key: string;
   label: string;
-  icon?: "assignment" | "badge" | "settings" | "inventory_2" | "shuffle" | "tune" | "palette";
+  icon?: "assignment" | "badge" | "settings" | "inventory_2" | "shuffle" | "tune" | "palette" | "calendar_month";
 }

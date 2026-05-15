@@ -21,6 +21,7 @@
       <TeacherListPanel v-if="activeSection === 'teachers'" />
       <ScoreManagementPanel v-else-if="activeSection === 'scores'" />
       <ClassConfigPanel v-else-if="activeSection === 'classes'" />
+      <CourseManagementPanel v-else-if="activeSection === 'course-management'" />
       <ExamDashboardPanel v-else-if="activeSection === 'exam-assignment'" />
       <SettingsPanel v-else-if="activeSection === 'settings'" />
       <KeepAlive>
@@ -39,6 +40,7 @@ import TopHeader from "../../widgets/layout/TopHeader.vue";
 import type { AppSection } from "../../app/router";
 import type { RailItem, SecondaryNavItem } from "../../widgets/layout/types";
 import ClassConfigPanel from "../../features/classes/ui/ClassConfigPanel.vue";
+import CourseManagementPanel from "../../features/course-management/ui/CourseManagementPanel.vue";
 import ExamDashboardPanel from "../../features/dashboard/ui/ExamDashboardPanel.vue";
 import InvigilationPanel from "../../features/invigilation/ui/InvigilationPanel.vue";
 import MonitorDrawPanel from "../../features/monitor-draw/ui/MonitorDrawPanel.vue";
@@ -51,7 +53,7 @@ const router = useRouter();
 
 const activeSection = computed<AppSection>(() => {
   const section = route.params.section as string;
-  const validSections: AppSection[] = ["teachers", "scores", "classes", "exam-assignment", "monitor-draw", "monitor-config", "settings"];
+  const validSections: AppSection[] = ["teachers", "scores", "classes", "course-management", "exam-assignment", "monitor-draw", "monitor-config", "settings"];
   if (validSections.includes(section as AppSection)) {
     return section as AppSection;
   }
@@ -79,6 +81,13 @@ const pageMap: Record<AppSection, { title: string; description: string; breadcru
     breadcrumb: "班级管理 / 班级配置",
     pageTitle: "班级配置",
     summary: "配置班级科目、教学楼及相关基础信息。",
+  },
+  "course-management": {
+    title: "教务管理",
+    description: "课表导入、课务关系同步与课表查看",
+    breadcrumb: "教务管理 / 课务管理",
+    pageTitle: "课务管理",
+    summary: "导入双周循环课表，查看教师、行政班和外语教学班课表。",
   },
   "exam-assignment": {
     title: "考试管理",
@@ -116,6 +125,7 @@ const railItems: RailItem[] = [
   { key: "students", label: "学生模块", icon: "person" },
   { key: "teachers", label: "教师模块", icon: "badge" },
   { key: "classes", label: "班级模块", icon: "domain" },
+  { key: "academic", label: "教务模块", icon: "calendar_month" },
   { key: "dashboard", label: "考试模块", icon: "event_note" },
 ];
 
@@ -132,6 +142,9 @@ const activeRail = computed(() => {
   if (activeSection.value === "classes") {
     return "classes";
   }
+  if (activeSection.value === "course-management") {
+    return "academic";
+  }
   return "dashboard";
 });
 
@@ -147,6 +160,9 @@ const secondaryItems = computed<SecondaryNavItem[]>(() => {
   }
   if (activeRail.value === "classes") {
     return [{ key: "classes", label: "班级配置", icon: "settings" }];
+  }
+  if (activeRail.value === "academic") {
+    return [{ key: "course-management", label: "课务管理", icon: "calendar_month" }];
   }
   return [
     { key: "exam-assignment", label: "考场分配", icon: "inventory_2" },
@@ -166,6 +182,10 @@ function onRailSelect(key: string) {
   }
   if (key === "teachers") {
     void router.push("/app/teachers");
+    return;
+  }
+  if (key === "academic") {
+    void router.push("/app/course-management");
     return;
   }
   void router.push("/app/classes");

@@ -1,5 +1,6 @@
 mod app_log;
 mod class_config;
+mod course_management;
 mod exam_allocation;
 mod exam_plan;
 mod exam_staff;
@@ -37,6 +38,14 @@ pub fn run() {
             class_config::update_class_config,
             class_config::delete_class_config,
             class_config::list_grade_options,
+            course_management::import_course_schedule_from_excel,
+            course_management::get_course_schedule_summary,
+            course_management::list_course_schedule_imports,
+            course_management::update_course_schedule_import_settings,
+            course_management::delete_course_schedule_import,
+            course_management::list_course_schedule_classes,
+            course_management::list_course_schedule_teachers,
+            course_management::get_course_schedule_view,
             exam_plan::get_exam_allocation_settings,
             exam_plan::update_exam_allocation_settings,
             exam_plan::start_generate_latest_exam_plan,
@@ -113,5 +122,3 @@ fn configure_cp_sat_runtime(app: &mut tauri::App) {
         }
     }
 }
-
-

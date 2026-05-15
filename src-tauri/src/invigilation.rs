@@ -10,7 +10,7 @@ pub use crate::exam_staff::{
     GenerateExamStaffPlanPayload, GenerateLatestExamStaffPlanResult,
     InvigilationExclusionSessionOption, InvigilationRuleOptions, ListExamSessionTimesParams,
     ListExamStaffTasksParams, ListTeacherDutyStatsParams, MonitorDrawImportResult,
-    PersistedInvigilationCustomRule, PersistedInvigilationConfig, PersistedInvigilationState,
+    PersistedInvigilationConfig, PersistedInvigilationCustomRule, PersistedInvigilationState,
     PersistedSelfStudyClassSubject, TeacherDutyStat,
 };
 pub use crate::export_invigilation::ExportLatestInvigilationScheduleResult;
