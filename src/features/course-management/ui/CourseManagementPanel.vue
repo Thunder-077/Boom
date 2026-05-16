@@ -107,19 +107,27 @@
           </button>
         </div>
         <div class="schedule-table-scroll">
-          <div class="schedule-grid" :style="{ '--period-count': String(periodLabels.length) }">
+          <div class="schedule-grid" :style="{ '--period-count': String(periodRows.length) }">
             <div class="corner-cell">节次</div>
             <div v-for="day in days" :key="day.value" class="day-head">{{ day.label }}</div>
-            <template v-for="period in periodLabels" :key="`p-${selectedWeekIndex}-${period.index}`">
-              <div class="period-cell">
-                <strong>{{ period.label }}</strong>
+            <template v-for="period in periodRows" :key="`p-${selectedWeekIndex}-${period.index}`">
+              <div
+                v-if="period.isSectionStart"
+                class="section-cell"
+                :class="sectionToneClass(period.section)"
+                :style="{ gridRow: `span ${period.sectionSpan}` }"
+              >
                 <span>{{ period.section }}</span>
+              </div>
+              <div class="period-cell" :class="sectionToneClass(period.section)">
+                <strong>{{ period.label }}</strong>
               </div>
               <div v-for="day in days" :key="`${selectedWeekIndex}-${period.index}-${day.value}`" class="lesson-cell">
                 <div
                   v-for="entry in entriesFor(selectedWeekIndex, day.value, period.index)"
                   :key="`${entry.className}-${entry.subject}-${entry.periodIndex}`"
                   class="lesson"
+                  :class="sectionToneClass(period.section)"
                 >
                   <strong>{{ entry.subject }}</strong>
                   <span v-if="store.viewState.viewType === 'teacher'">{{ entry.displayClassName }}</span>
@@ -231,6 +239,26 @@ const periodLabels = computed(() => {
   return Array.from(map.values()).sort((a, b) => a.index - b.index);
 });
 
+const periodRows = computed(() => {
+  const rows = periodLabels.value.map((period) => ({
+    ...period,
+    isSectionStart: false,
+    sectionSpan: 1,
+  }));
+  let index = 0;
+  while (index < rows.length) {
+    const section = rows[index].section;
+    let span = 1;
+    while (index + span < rows.length && rows[index + span].section === section) {
+      span += 1;
+    }
+    rows[index].isSectionStart = true;
+    rows[index].sectionSpan = span;
+    index += span;
+  }
+  return rows;
+});
+
 const currentWeekPeriods = computed<readonly CoursePeriodSlot[]>(() =>
   (store.viewState.schedule?.periods ?? []).filter((period) => period.weekIndex === selectedWeekIndex.value),
 );
@@ -239,6 +267,15 @@ function entriesFor(weekIndex: number, dayOfWeek: number, periodIndex: number): 
   return currentWeekEntries.value.filter(
     (entry) => entry.weekIndex === weekIndex && entry.dayOfWeek === dayOfWeek && entry.periodIndex === periodIndex,
   );
+}
+
+function sectionToneClass(section: string) {
+  const normalized = section.replace(/\s+/g, "");
+  if (normalized.includes("早")) return "tone-early";
+  if (normalized.includes("上午")) return "tone-morning";
+  if (normalized.includes("下午")) return "tone-afternoon";
+  if (normalized.includes("晚")) return "tone-evening";
+  return "tone-default";
 }
 
 watch(
@@ -395,8 +432,7 @@ onUnmounted(() => {
   flex-direction: column;
   gap: 18px;
   min-width: 1160px;
-  min-height: 0;
-  height: calc(100vh - 118px);
+  min-height: calc(100vh - 118px);
   position: relative;
 }
 
@@ -406,7 +442,7 @@ onUnmounted(() => {
 
 .panel :deep(.table-card .content) {
   min-height: 0;
-  overflow: hidden;
+  overflow: visible;
 }
 
 .toolbar-fields {
@@ -563,7 +599,6 @@ onUnmounted(() => {
   flex-direction: column;
   gap: 12px;
   min-height: 0;
-  height: calc(100vh - 410px);
   padding: 4px;
 }
 
@@ -597,15 +632,18 @@ onUnmounted(() => {
 
 .schedule-table-scroll {
   min-height: 0;
+  max-height: calc(100vh - 360px);
   overflow: auto;
   border: 1px solid var(--border-default);
   border-radius: 12px;
   background: var(--surface-table-content);
+  padding-bottom: 10px;
+  scrollbar-gutter: stable;
 }
 
 .schedule-grid {
   display: grid;
-  grid-template-columns: 92px repeat(7, minmax(120px, 1fr));
+  grid-template-columns: 34px 72px repeat(7, minmax(120px, 1fr));
   grid-auto-rows: minmax(78px, auto);
   min-width: 1040px;
   background: var(--surface-table-content);
@@ -613,10 +651,15 @@ onUnmounted(() => {
 
 .corner-cell,
 .day-head,
+.section-cell,
 .period-cell,
 .lesson-cell {
   border-right: 1px solid var(--border-default);
   border-bottom: 1px solid var(--border-default);
+}
+
+.corner-cell {
+  grid-column: span 2;
 }
 
 .corner-cell,
@@ -630,23 +673,37 @@ onUnmounted(() => {
   background: rgba(var(--accent-rgb), 0.08);
 }
 
+.section-cell {
+  grid-column: 1;
+  padding: 8px 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--period-section-bg, var(--surface-table-stripe));
+}
+
+.section-cell span {
+  color: var(--color-text);
+  font-size: 15px;
+  font-weight: 700;
+  writing-mode: vertical-rl;
+  text-orientation: upright;
+  letter-spacing: 0.16em;
+}
+
 .period-cell {
+  grid-column: 2;
   padding: 10px;
   display: flex;
   flex-direction: column;
   justify-content: center;
   gap: 4px;
-  background: var(--surface-table-stripe);
+  background: var(--period-cell-bg, var(--surface-table-stripe));
 }
 
 .period-cell strong {
   color: var(--color-text);
   font-size: 14px;
-}
-
-.period-cell span {
-  color: var(--color-text-muted);
-  font-size: 12px;
 }
 
 .lesson-cell {
@@ -661,11 +718,40 @@ onUnmounted(() => {
   min-height: 54px;
   padding: 8px 10px;
   border-radius: 8px;
-  background: rgba(var(--accent-rgb), 0.08);
+  background: var(--period-lesson-bg, rgba(var(--accent-rgb), 0.08));
   display: flex;
   flex-direction: column;
   justify-content: center;
   gap: 4px;
+  border-left: 3px solid var(--period-accent, var(--accent-primary));
+}
+
+.tone-early {
+  --period-section-bg: rgba(35, 118, 196, 0.14);
+  --period-cell-bg: rgba(35, 118, 196, 0.08);
+  --period-lesson-bg: rgba(35, 118, 196, 0.10);
+  --period-accent: #2376c4;
+}
+
+.tone-morning {
+  --period-section-bg: rgba(24, 141, 102, 0.14);
+  --period-cell-bg: rgba(24, 141, 102, 0.08);
+  --period-lesson-bg: rgba(24, 141, 102, 0.10);
+  --period-accent: #188d66;
+}
+
+.tone-afternoon {
+  --period-section-bg: rgba(191, 119, 31, 0.16);
+  --period-cell-bg: rgba(191, 119, 31, 0.09);
+  --period-lesson-bg: rgba(191, 119, 31, 0.11);
+  --period-accent: #bf771f;
+}
+
+.tone-evening {
+  --period-section-bg: rgba(108, 91, 181, 0.16);
+  --period-cell-bg: rgba(108, 91, 181, 0.09);
+  --period-lesson-bg: rgba(108, 91, 181, 0.11);
+  --period-accent: #6c5bb5;
 }
 
 .lesson strong {
