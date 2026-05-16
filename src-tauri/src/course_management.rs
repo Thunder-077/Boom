@@ -429,35 +429,6 @@ fn subject_from_schedule_label(text: &str) -> Option<ParsedSubject> {
     parse_subject(text).or_else(|| subject_from_bracket_suffix(text))
 }
 
-fn is_schedule_subject(text: &str) -> bool {
-    let normalized = normalize_subject_name(text);
-    if normalized.is_empty() || normalized.starts_with('=') || normalized.starts_with('#') {
-        return false;
-    }
-    subject_from_schedule_label(&normalized).is_some()
-        || matches!(
-            normalized.as_str(),
-            "班会"
-                | "自习"
-                | "听力"
-                | "练字"
-                | "阅读"
-                | "活动"
-                | "理化"
-                | "政史"
-                | "地生"
-                | "限时"
-        )
-        || normalized.starts_with("自习（")
-        || normalized.starts_with("自习(")
-        || normalized.starts_with("限时（")
-        || normalized.starts_with("限时(")
-        || normalized.starts_with("听力（")
-        || normalized.starts_with("听力(")
-        || normalized.starts_with("练字（")
-        || normalized.starts_with("练字(")
-}
-
 fn is_importable_schedule_cell(text: &str) -> bool {
     let normalized = normalize_subject_name(text);
     !normalized.is_empty() && !normalized.starts_with('=') && !normalized.starts_with('#')
@@ -479,23 +450,6 @@ fn normalize_class_code(token: &str) -> String {
         }
     }
     trimmed.to_string()
-}
-
-fn class_to_teacher_header(class_name: &str) -> String {
-    let pattern = Regex::new(r"^([123])(\d{2})$").expect("class header regex should be valid");
-    if let Some(caps) = pattern.captures(class_name.trim()) {
-        let grade = match &caps[1] {
-            "1" => "高一",
-            "2" => "高二",
-            "3" => "高三",
-            _ => return class_name.to_string(),
-        };
-        let class_no = caps[2].parse::<i32>().unwrap_or(0);
-        if class_no > 0 {
-            return format!("{grade}（{class_no}）班");
-        }
-    }
-    class_name.to_string()
 }
 
 fn is_admin_class(class_name: &str) -> bool {
@@ -533,6 +487,21 @@ fn split_teacher_names(text: &str) -> Vec<String> {
         .map(str::trim)
         .filter(|name| !name.is_empty())
         .map(ToString::to_string)
+        .collect()
+}
+
+fn is_teacher_name_placeholder(name: &str) -> bool {
+    matches!(name.trim(), "" | "0" | "-" | "—" | "无")
+}
+
+fn schedule_row_teacher_names(range: &Range<Data>, subject_row: usize, col: usize) -> Vec<String> {
+    let teacher_row = subject_row + 1;
+    if teacher_row >= range.height() || !get_cell(range, teacher_row, 1).is_empty() {
+        return Vec::new();
+    }
+    split_teacher_names(&get_cell(range, teacher_row, col))
+        .into_iter()
+        .filter(|name| !is_teacher_name_placeholder(name))
         .collect()
 }
 
@@ -578,7 +547,7 @@ fn foreign_subject_for_entry(entry: &ParsedEntry) -> Option<ParsedSubject> {
 
 fn is_generic_foreign_subject_text(text: &str) -> bool {
     let normalized = normalize_subject_name(text);
-    if matches!(normalized.as_str(), "外语" | "外") {
+    if matches!(normalized.as_str(), "外语" | "外" | "听力") {
         return true;
     }
     let matcher = Regex::new(r"[（(]([^）)]+)[）)]").expect("subject suffix regex should be valid");
@@ -646,79 +615,8 @@ fn find_day_blocks(range: &Range<Data>) -> Vec<DayBlock> {
         .collect()
 }
 
-fn parse_teacher_arrangements(
-    range: &Range<Data>,
-) -> (
-    HashMap<(String, String), Vec<String>>,
-    Vec<TeacherAssignment>,
-) {
-    let mut teacher_map = HashMap::new();
-    let mut assignments = Vec::new();
-    let mut headers = Vec::new();
-    let header_row = 1;
-    for col in 1..range.width() {
-        let header = get_cell(range, header_row, col);
-        if !header.is_empty() {
-            headers.push((col, header));
-        }
-    }
-
-    for row in 2..range.height() {
-        let subject_name = normalize_subject_name(&get_cell(range, row, 0));
-        if subject_name.is_empty() || !is_schedule_subject(&subject_name) {
-            continue;
-        };
-        for (col, class_header) in &headers {
-            let teacher_text = get_cell(range, row, *col);
-            if teacher_text.is_empty() {
-                continue;
-            }
-            let teachers = split_teacher_names(&teacher_text);
-            teacher_map.insert(
-                (subject_name.clone(), class_header.clone()),
-                teachers.clone(),
-            );
-            let Some(subject) = subject_from_schedule_label(&subject_name) else {
-                continue;
-            };
-            for teacher_name in teachers {
-                if !should_import_teacher_name(&teacher_name) {
-                    continue;
-                }
-                assignments.push(TeacherAssignment {
-                    teacher_name,
-                    subject,
-                    class_name: normalize_class_code(class_header),
-                });
-            }
-        }
-    }
-    (teacher_map, assignments)
-}
-
-fn resolve_teachers(
-    teacher_map: &HashMap<(String, String), Vec<String>>,
-    class_name: &str,
-    subject: &str,
-) -> Vec<String> {
-    let subject_name = normalize_subject_name(subject);
-    let header = class_to_teacher_header(class_name);
-    teacher_map
-        .get(&(subject_name.clone(), header.clone()))
-        .or_else(|| {
-            if subject_name == "英语" || subject_name == "俄语" {
-                teacher_map.get(&("外语".to_string(), header.clone()))
-            } else {
-                None
-            }
-        })
-        .cloned()
-        .unwrap_or_default()
-}
-
 fn parse_total_schedule(
     range: &Range<Data>,
-    teacher_map: &HashMap<(String, String), Vec<String>>,
 ) -> (
     Vec<ParsedEntry>,
     Vec<CoursePeriodSlot>,
@@ -775,7 +673,7 @@ fn parse_total_schedule(
                 } else {
                     class_name.clone()
                 };
-                let teacher_names = resolve_teachers(teacher_map, &class_name, &subject);
+                let teacher_names = schedule_row_teacher_names(range, row, col);
 
                 class_set
                     .entry((class_type.clone(), class_name.clone()))
@@ -865,9 +763,18 @@ fn expand_short_foreign_teacher_names(entries: &mut [ParsedEntry]) {
             })
             .filter(|(_, name)| should_import_teacher_name(name))
             .collect::<Vec<_>>();
-        if matched_foreign_teachers.is_empty() {
-            continue;
-        }
+        let grade_foreign_teachers = foreign_entries
+            .iter()
+            .filter(|foreign_entry| foreign_entry_matches_admin_foreign_subject(foreign_entry, entry))
+            .flat_map(|foreign_entry| {
+                foreign_entry
+                    .teacher_names
+                    .iter()
+                    .map(|teacher_name| (foreign_entry.subject.clone(), teacher_name.clone()))
+                    .collect::<Vec<_>>()
+            })
+            .filter(|(_, name)| should_import_teacher_name(name))
+            .collect::<Vec<_>>();
 
         let mut expanded = Vec::new();
         for name in &entry.teacher_names {
@@ -875,15 +782,26 @@ fn expand_short_foreign_teacher_names(entries: &mut [ParsedEntry]) {
                 expanded.push(name.clone());
                 continue;
             }
-            let matches = matched_foreign_teachers
+            let unique_matches: BTreeSet<String> = matched_foreign_teachers
                 .iter()
                 .filter(|(_, candidate)| teacher_surname(candidate).as_deref() == Some(name.as_str()))
-                .cloned()
-                .collect::<Vec<_>>();
-            if matches.len() == 1 {
-                expanded.push(matches[0].1.clone());
+                .map(|(_, candidate)| candidate.clone())
+                .collect();
+            if unique_matches.len() == 1 {
+                expanded.push(unique_matches.iter().next().unwrap().clone());
             } else {
-                expanded.push(name.clone());
+                let grade_unique_matches: BTreeSet<String> = grade_foreign_teachers
+                    .iter()
+                    .filter(|(_, candidate)| {
+                        teacher_surname(candidate).as_deref() == Some(name.as_str())
+                    })
+                    .map(|(_, candidate)| candidate.clone())
+                    .collect();
+                if grade_unique_matches.len() == 1 {
+                    expanded.push(grade_unique_matches.iter().next().unwrap().clone());
+                } else {
+                    expanded.push(name.clone());
+                }
             }
         }
         entry.teacher_names = expanded;
@@ -955,19 +873,15 @@ fn validate_no_short_teacher_names(entries: &[ParsedEntry]) -> Result<(), AppErr
         format!(" 共 {} 处", unresolved.len())
     };
     Err(AppError::new(format!(
-        "课表中仍存在未能推导完整姓名的单姓教师：{preview}{suffix}。请检查对应外语教学班任课教师或教师安排表。"
+        "课表中仍存在未能推导完整姓名的单姓教师：{preview}{suffix}。请检查总课表中对应外语教学班的任课教师。"
     )))
 }
 
 fn parse_course_workbook(file_path: &str) -> Result<ParsedWorkbook, AppError> {
     let mut workbook = open_workbook_auto(file_path)?;
-    let teacher_range = workbook
-        .worksheet_range("教师安排")
-        .map_err(AppError::from)?;
     let total_range = workbook.worksheet_range("总课表").map_err(AppError::from)?;
 
-    let (teacher_map, _assignments) = parse_teacher_arrangements(&teacher_range);
-    let (mut entries, periods, classes) = parse_total_schedule(&total_range, &teacher_map);
+    let (mut entries, periods, classes) = parse_total_schedule(&total_range);
     expand_short_foreign_teacher_names(&mut entries);
     validate_no_short_teacher_names(&entries)?;
     let assignments = build_teacher_assignments_from_entries(&entries);
@@ -1734,47 +1648,51 @@ fn save_workload_report(
 }
 
 #[tauri::command]
-pub fn import_course_schedule_from_excel(
+pub async fn import_course_schedule_from_excel(
     app: AppHandle,
     file_path: String,
 ) -> Result<CourseImportResult, String> {
-    let start = Utc::now();
-    let result = (|| -> Result<CourseImportResult, AppError> {
-        let mut conn = score::open_connection(&app)?;
-        ensure_schema(&conn)?;
-        let parsed = parse_course_workbook(&file_path)?;
-        let imported_at = Utc::now().to_rfc3339();
-        persist_course_import(&mut conn, &imported_at, &file_path, &parsed)?;
-        Ok(CourseImportResult {
-            imported_at,
-            entry_count: parsed.entries.len() as i64,
-            teacher_count: parsed
-                .assignments
-                .iter()
-                .map(|item| item.teacher_name.clone())
-                .collect::<HashSet<_>>()
-                .len() as i64,
-            admin_class_count: parsed
-                .classes
-                .iter()
-                .filter(|item| item.class_type == "admin")
-                .count() as i64,
-            foreign_class_count: parsed
-                .classes
-                .iter()
-                .filter(|item| item.class_type == "foreign")
-                .count() as i64,
-            duration_ms: (Utc::now() - start).num_milliseconds(),
+    tauri::async_runtime::spawn_blocking(move || {
+        let start = Utc::now();
+        let result = (|| -> Result<CourseImportResult, AppError> {
+            let mut conn = score::open_connection(&app)?;
+            ensure_schema(&conn)?;
+            let parsed = parse_course_workbook(&file_path)?;
+            let imported_at = Utc::now().to_rfc3339();
+            persist_course_import(&mut conn, &imported_at, &file_path, &parsed)?;
+            Ok(CourseImportResult {
+                imported_at,
+                entry_count: parsed.entries.len() as i64,
+                teacher_count: parsed
+                    .assignments
+                    .iter()
+                    .map(|item| item.teacher_name.clone())
+                    .collect::<HashSet<_>>()
+                    .len() as i64,
+                admin_class_count: parsed
+                    .classes
+                    .iter()
+                    .filter(|item| item.class_type == "admin")
+                    .count() as i64,
+                foreign_class_count: parsed
+                    .classes
+                    .iter()
+                    .filter(|item| item.class_type == "foreign")
+                    .count() as i64,
+                duration_ms: (Utc::now() - start).num_milliseconds(),
+            })
+        })();
+        result.map_err(|e| {
+            app_log::log_error(
+                &app,
+                "course_management.import_course_schedule_from_excel",
+                &format!("file_path={file_path} | {e}"),
+            );
+            e.to_string()
         })
-    })();
-    result.map_err(|e| {
-        app_log::log_error(
-            &app,
-            "course_management.import_course_schedule_from_excel",
-            &format!("file_path={file_path} | {e}"),
-        );
-        e.to_string()
     })
+    .await
+    .map_err(|error| format!("课表导入任务执行失败: {error}"))?
 }
 
 #[tauri::command]
@@ -2353,11 +2271,11 @@ pub fn get_course_schedule_view(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use calamine::Cell;
 
     #[test]
     fn test_class_normalization() {
         assert_eq!(normalize_class_code("101"), "高一1班");
-        assert_eq!(class_to_teacher_header("201"), "高二（1）班");
         assert_eq!(class_type_for("高一英语（1）班"), "foreign");
         assert_eq!(class_type_for("101/104（英）"), "foreign");
         assert_eq!(class_type_for("7/9/10/11（俄）"), "foreign");
@@ -2371,11 +2289,39 @@ mod tests {
     }
 
     #[test]
-    fn test_self_study_subject_labels_are_importable() {
-        assert!(is_schedule_subject("自习（数）"));
-        assert!(is_schedule_subject("限时（历）"));
-        assert!(is_schedule_subject("听力（英）"));
-        assert!(is_schedule_subject("练字（语）"));
+    fn test_parse_total_schedule_reads_teacher_row_when_arrangement_is_empty() {
+        let range = Range::from_sparse(vec![
+            Cell::new(
+                (0, 0),
+                Data::String("江河高级中学2026年春季学期总课表\n星期二".to_string()),
+            ),
+            Cell::new((2, 0), Data::String("班级".to_string())),
+            Cell::new((2, 2), Data::String("207".to_string())),
+            Cell::new((2, 3), Data::String("高二英语（1）班".to_string())),
+            Cell::new((3, 0), Data::String("早上".to_string())),
+            Cell::new((3, 1), Data::String("晨读".to_string())),
+            Cell::new((3, 2), Data::String("外语".to_string())),
+            Cell::new((3, 3), Data::String("英语".to_string())),
+            Cell::new((4, 2), Data::String("王".to_string())),
+            Cell::new((4, 3), Data::String("王丽丽".to_string())),
+        ]);
+        let (mut entries, _, _) = parse_total_schedule(&range);
+        expand_short_foreign_teacher_names(&mut entries);
+
+        let admin_entry = entries
+            .iter()
+            .find(|entry| entry.class_name == "207")
+            .expect("admin entry should be parsed");
+        let foreign_entry = entries
+            .iter()
+            .find(|entry| entry.class_name == "高二英语（1）班")
+            .expect("foreign entry should be parsed");
+        assert_eq!(foreign_entry.teacher_names, vec!["王丽丽"]);
+        assert_eq!(admin_entry.teacher_names, vec!["王丽丽"]);
+    }
+
+    #[test]
+    fn test_self_study_subject_labels_resolve_subject_suffix() {
         assert_eq!(
             subject_from_schedule_label("自习（数）"),
             Some(ParsedSubject::Math)
@@ -2383,6 +2329,10 @@ mod tests {
         assert_eq!(
             subject_from_schedule_label("限时（历）"),
             Some(ParsedSubject::History)
+        );
+        assert_eq!(
+            subject_from_schedule_label("听力（英）"),
+            Some(ParsedSubject::English)
         );
     }
 
@@ -2505,6 +2455,42 @@ mod tests {
     }
 
     #[test]
+    fn test_expand_plain_listening_as_generic_foreign_subject() {
+        let mut entries = vec![
+            ParsedEntry {
+                class_name: "207".to_string(),
+                display_class_name: "高二7班".to_string(),
+                class_type: "admin".to_string(),
+                week_index: 1,
+                day_of_week: 4,
+                day_label: "星期四".to_string(),
+                period_index: 13,
+                period_label: "晚读".to_string(),
+                section_label: "晚上".to_string(),
+                subject: "听力".to_string(),
+                teacher_names: vec!["宋".to_string()],
+            },
+            ParsedEntry {
+                class_name: "高二英语（1）班".to_string(),
+                display_class_name: "高二英语（1）班".to_string(),
+                class_type: "foreign".to_string(),
+                week_index: 1,
+                day_of_week: 2,
+                day_label: "星期二".to_string(),
+                period_index: 2,
+                period_label: "早读".to_string(),
+                section_label: "早上".to_string(),
+                subject: "英语".to_string(),
+                teacher_names: vec!["宋平".to_string()],
+            },
+        ];
+
+        expand_short_foreign_teacher_names(&mut entries);
+
+        assert_eq!(entries[0].teacher_names, vec!["宋平"]);
+    }
+
+    #[test]
     fn test_expand_generic_foreign_morning_reading_from_foreign_class_name() {
         let mut entries = vec![
             ParsedEntry {
@@ -2575,6 +2561,91 @@ mod tests {
         expand_short_foreign_teacher_names(&mut entries);
 
         assert_eq!(entries[0].teacher_names, vec!["王"]);
+    }
+
+    #[test]
+    fn test_expand_short_name_when_same_teacher_in_multiple_foreign_classes() {
+        let mut entries = vec![
+            ParsedEntry {
+                class_name: "207".to_string(),
+                display_class_name: "高二7班".to_string(),
+                class_type: "admin".to_string(),
+                week_index: 1,
+                day_of_week: 2,
+                day_label: "星期二".to_string(),
+                period_index: 1,
+                period_label: "晨读".to_string(),
+                section_label: "早上".to_string(),
+                subject: "外语".to_string(),
+                teacher_names: vec!["王".to_string()],
+            },
+            ParsedEntry {
+                class_name: "高二英语（1）班".to_string(),
+                display_class_name: "高二英语（1）班".to_string(),
+                class_type: "foreign".to_string(),
+                week_index: 1,
+                day_of_week: 2,
+                day_label: "星期二".to_string(),
+                period_index: 1,
+                period_label: "晨读".to_string(),
+                section_label: "早上".to_string(),
+                subject: "英语".to_string(),
+                teacher_names: vec!["王丽丽".to_string()],
+            },
+            ParsedEntry {
+                class_name: "高二英语（2）班".to_string(),
+                display_class_name: "高二英语（2）班".to_string(),
+                class_type: "foreign".to_string(),
+                week_index: 1,
+                day_of_week: 2,
+                day_label: "星期二".to_string(),
+                period_index: 1,
+                period_label: "晨读".to_string(),
+                section_label: "早上".to_string(),
+                subject: "英语".to_string(),
+                teacher_names: vec!["王丽丽".to_string()],
+            },
+        ];
+
+        expand_short_foreign_teacher_names(&mut entries);
+
+        assert_eq!(entries[0].teacher_names, vec!["王丽丽"]);
+    }
+
+    #[test]
+    fn test_expand_short_name_from_same_grade_foreign_class_when_period_is_blank() {
+        let mut entries = vec![
+            ParsedEntry {
+                class_name: "207".to_string(),
+                display_class_name: "高二7班".to_string(),
+                class_type: "admin".to_string(),
+                week_index: 1,
+                day_of_week: 2,
+                day_label: "星期二".to_string(),
+                period_index: 1,
+                period_label: "晨读".to_string(),
+                section_label: "早上".to_string(),
+                subject: "外语".to_string(),
+                teacher_names: vec!["王".to_string()],
+            },
+            ParsedEntry {
+                class_name: "高二俄语（2）班".to_string(),
+                display_class_name: "高二俄语（2）班".to_string(),
+                class_type: "foreign".to_string(),
+                week_index: 1,
+                day_of_week: 2,
+                day_label: "星期二".to_string(),
+                period_index: 2,
+                period_label: "早读".to_string(),
+                section_label: "早上".to_string(),
+                subject: "俄语".to_string(),
+                teacher_names: vec!["王灼".to_string()],
+            },
+        ];
+
+        expand_short_foreign_teacher_names(&mut entries);
+
+        assert_eq!(entries[0].teacher_names, vec!["王灼"]);
     }
 
     #[test]

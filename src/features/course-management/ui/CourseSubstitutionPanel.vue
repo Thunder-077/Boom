@@ -483,15 +483,13 @@ watch(
 <style scoped>
 .panel {
   min-width: 1160px;
-  min-height: 0;
-  height: calc(100vh - 118px);
+  min-height: calc(100vh - 118px);
 }
 
 .workspace {
-  display: grid;
-  grid-template-rows: minmax(0, 1.5fr) minmax(220px, 0.8fr);
+  display: flex;
+  flex-direction: column;
   gap: 18px;
-  height: 100%;
   min-height: 0;
 }
 
@@ -501,7 +499,7 @@ watch(
 
 .workspace :deep(.table-card .content) {
   min-height: 0;
-  overflow: hidden;
+  overflow: visible;
 }
 
 .substitution-form {
@@ -610,6 +608,10 @@ watch(
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
+  max-height: 112px;
+  overflow-y: auto;
+  padding-right: 4px;
+  scrollbar-gutter: stable;
 }
 
 .period-buttons button.active {
@@ -655,6 +657,7 @@ watch(
 
 .candidate-table-wrap {
   min-height: 0;
+  max-height: 360px;
   overflow: auto;
   border: 1px solid var(--border-default);
   border-radius: 12px;
@@ -723,7 +726,7 @@ watch(
 }
 
 .change-list {
-  height: 100%;
+  max-height: 360px;
   min-height: 0;
   overflow: auto;
   padding: 8px;
