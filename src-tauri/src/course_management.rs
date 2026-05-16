@@ -556,18 +556,36 @@ fn foreign_subject_from_text(text: &str) -> Option<ParsedSubject> {
     subject_from_schedule_label(text).filter(|subject| is_foreign_language_subject(*subject))
 }
 
-fn is_generic_foreign_subject_text(text: &str) -> bool {
-    matches!(normalize_subject_name(text).as_str(), "外语" | "外")
+fn foreign_subject_from_label_text(text: &str) -> Option<ParsedSubject> {
+    let normalized = normalize_subject_name(text);
+    if normalized.contains("俄语") || normalized.contains("（俄）") || normalized.contains("(俄)") {
+        return Some(ParsedSubject::Russian);
+    }
+    if normalized.contains("日语") || normalized.contains("（日）") || normalized.contains("(日)") {
+        return Some(ParsedSubject::Japanese);
+    }
+    if normalized.contains("英语") || normalized.contains("（英）") || normalized.contains("(英)") {
+        return Some(ParsedSubject::English);
+    }
+    foreign_subject_from_text(&normalized)
 }
 
-fn foreign_subjects_compatible(foreign_text: &str, admin_text: &str) -> bool {
-    let Some(foreign_subject) = foreign_subject_from_text(foreign_text) else {
-        return false;
-    };
-    if is_generic_foreign_subject_text(admin_text) {
+fn foreign_subject_for_entry(entry: &ParsedEntry) -> Option<ParsedSubject> {
+    foreign_subject_from_text(&entry.subject)
+        .or_else(|| foreign_subject_from_label_text(&entry.class_name))
+        .or_else(|| foreign_subject_from_label_text(&entry.display_class_name))
+}
+
+fn is_generic_foreign_subject_text(text: &str) -> bool {
+    let normalized = normalize_subject_name(text);
+    if matches!(normalized.as_str(), "外语" | "外") {
         return true;
     }
-    foreign_subject_from_text(admin_text) == Some(foreign_subject)
+    let matcher = Regex::new(r"[（(]([^）)]+)[）)]").expect("subject suffix regex should be valid");
+    matcher
+        .captures(&normalized)
+        .and_then(|caps| caps.get(1).map(|m| m.as_str().to_string()))
+        .is_some_and(|token| matches!(token.as_str(), "外语" | "外"))
 }
 
 fn grade_digit_from_text(text: &str) -> Option<char> {
@@ -795,7 +813,12 @@ fn foreign_entry_matches_admin_foreign_subject(
     if foreign_entry.class_type != "foreign" || admin_entry.class_type != "admin" {
         return false;
     }
-    if !foreign_subjects_compatible(&foreign_entry.subject, &admin_entry.subject) {
+    let Some(foreign_subject) = foreign_subject_for_entry(foreign_entry) else {
+        return false;
+    };
+    if !is_generic_foreign_subject_text(&admin_entry.subject)
+        && foreign_subject_for_entry(admin_entry) != Some(foreign_subject)
+    {
         return false;
     }
     if grade_digit_from_text(&foreign_entry.class_name) != grade_digit_from_text(&admin_entry.class_name) {
@@ -812,7 +835,10 @@ fn expand_short_foreign_teacher_names(entries: &mut [ParsedEntry]) {
         .collect::<Vec<_>>();
 
     for entry in entries.iter_mut() {
-        if entry.class_type != "admin" || foreign_subject_from_text(&entry.subject).is_none() {
+        if entry.class_type != "admin"
+            || (foreign_subject_from_text(&entry.subject).is_none()
+                && !is_generic_foreign_subject_text(&entry.subject))
+        {
             continue;
         }
         let has_short_name = entry
@@ -855,9 +881,6 @@ fn expand_short_foreign_teacher_names(entries: &mut [ParsedEntry]) {
                 .cloned()
                 .collect::<Vec<_>>();
             if matches.len() == 1 {
-                if is_generic_foreign_subject_text(&entry.subject) {
-                    entry.subject = matches[0].0.clone();
-                }
                 expanded.push(matches[0].1.clone());
             } else {
                 expanded.push(name.clone());
@@ -2441,7 +2464,81 @@ mod tests {
         expand_short_foreign_teacher_names(&mut entries);
 
         assert_eq!(entries[0].teacher_names, vec!["厉明明"]);
-        assert_eq!(entries[0].subject, "俄语");
+        assert_eq!(entries[0].subject, "外语");
+    }
+
+    #[test]
+    fn test_expand_generic_foreign_suffix_self_study_from_foreign_class() {
+        let mut entries = vec![
+            ParsedEntry {
+                class_name: "102".to_string(),
+                display_class_name: "高一2班".to_string(),
+                class_type: "admin".to_string(),
+                week_index: 1,
+                day_of_week: 1,
+                day_label: "星期一".to_string(),
+                period_index: 13,
+                period_label: "晚3".to_string(),
+                section_label: "晚上".to_string(),
+                subject: "自习（外）".to_string(),
+                teacher_names: vec!["岳".to_string()],
+            },
+            ParsedEntry {
+                class_name: "高一英语（1）班".to_string(),
+                display_class_name: "高一英语（1）班".to_string(),
+                class_type: "foreign".to_string(),
+                week_index: 1,
+                day_of_week: 1,
+                day_label: "星期一".to_string(),
+                period_index: 13,
+                period_label: "晚3".to_string(),
+                section_label: "晚上".to_string(),
+                subject: "英语".to_string(),
+                teacher_names: vec!["岳海霞".to_string()],
+            },
+        ];
+
+        expand_short_foreign_teacher_names(&mut entries);
+
+        assert_eq!(entries[0].teacher_names, vec!["岳海霞"]);
+        assert_eq!(entries[0].subject, "自习（外）");
+    }
+
+    #[test]
+    fn test_expand_generic_foreign_morning_reading_from_foreign_class_name() {
+        let mut entries = vec![
+            ParsedEntry {
+                class_name: "207".to_string(),
+                display_class_name: "高二7班".to_string(),
+                class_type: "admin".to_string(),
+                week_index: 1,
+                day_of_week: 2,
+                day_label: "星期二".to_string(),
+                period_index: 1,
+                period_label: "晨读".to_string(),
+                section_label: "早上".to_string(),
+                subject: "外语".to_string(),
+                teacher_names: vec!["王".to_string()],
+            },
+            ParsedEntry {
+                class_name: "高二英语（1）班".to_string(),
+                display_class_name: "高二英语（1）班".to_string(),
+                class_type: "foreign".to_string(),
+                week_index: 1,
+                day_of_week: 2,
+                day_label: "星期二".to_string(),
+                period_index: 1,
+                period_label: "晨读".to_string(),
+                section_label: "早上".to_string(),
+                subject: "晨读".to_string(),
+                teacher_names: vec!["王丽丽".to_string()],
+            },
+        ];
+
+        expand_short_foreign_teacher_names(&mut entries);
+
+        assert_eq!(entries[0].teacher_names, vec!["王丽丽"]);
+        assert_eq!(entries[0].subject, "外语");
     }
 
     #[test]
