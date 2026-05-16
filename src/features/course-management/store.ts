@@ -3,9 +3,17 @@ import type {
   CourseClassOption,
   CourseImportBatch,
   CourseImportResult,
+  CourseScheduleChange,
+  CoursePeriodSlot,
+  CourseSubstitutionCandidate,
+  CourseSubstitutionCandidateQuery,
   CourseScheduleView,
   CourseSummary,
   CourseViewType,
+  SaveCourseSubstitutionsPayload,
+  CourseWorkloadQuery,
+  CourseWorkloadReport,
+  ExportCourseWorkloadResult,
 } from "../../entities/course-management/model";
 import { courseManagementService, type CourseManagementService } from "./service";
 
@@ -39,7 +47,13 @@ export function createCourseManagementStore(service: CourseManagementService = c
     adminClasses: [] as CourseClassOption[],
     foreignClasses: [] as CourseClassOption[],
     teachers: [] as string[],
+    periods: [] as CoursePeriodSlot[],
     schedule: null as CourseScheduleView | null,
+    substitutionCandidates: [] as CourseSubstitutionCandidate[],
+    scheduleChanges: [] as CourseScheduleChange[],
+    workloadReport: null as CourseWorkloadReport | null,
+    exportingWorkload: false,
+    lastWorkloadExport: null as ExportCourseWorkloadResult | null,
     importStatus: "idle" as ImportStatus,
     importMessage: "",
     lastImportResult: null as CourseImportResult | null,
@@ -58,6 +72,8 @@ export function createCourseManagementStore(service: CourseManagementService = c
       state.selectedImportId = selectedStillExists ? state.selectedImportId : imports[0]?.id ?? summary.latestImportId;
       syncSettingsDraft();
       await loadClassesForSelectedImport();
+      await loadPeriodsForSelectedImport();
+      await loadScheduleChanges();
       if (!targetExists(state.viewType, state.target)) {
         state.target = defaultTargetFor(state.viewType);
       }
@@ -100,6 +116,14 @@ export function createCourseManagementStore(service: CourseManagementService = c
     state.teachers = await service.listTeachers(state.selectedImportId);
   }
 
+  async function loadPeriodsForSelectedImport() {
+    if (!state.selectedImportId) {
+      state.periods = [];
+      return;
+    }
+    state.periods = await service.listPeriods(state.selectedImportId);
+  }
+
   function targetExists(viewType: CourseViewType, target: string) {
     if (!target) return false;
     if (viewType === "teacher") return state.teachers.includes(target);
@@ -134,6 +158,8 @@ export function createCourseManagementStore(service: CourseManagementService = c
     state.selectedImportId = Number(importId) || null;
     syncSettingsDraft();
     await loadClassesForSelectedImport();
+    await loadPeriodsForSelectedImport();
+    await loadScheduleChanges();
     if (!targetExists(state.viewType, state.target)) {
       state.target = defaultTargetFor(state.viewType);
     }
@@ -161,6 +187,9 @@ export function createCourseManagementStore(service: CourseManagementService = c
     await service.deleteImport(state.selectedImportId);
     state.target = "";
     state.schedule = null;
+    state.substitutionCandidates = [];
+    state.scheduleChanges = [];
+    state.workloadReport = null;
     state.selectedImportId = null;
     await loadOptions();
   }
@@ -188,6 +217,69 @@ export function createCourseManagementStore(service: CourseManagementService = c
     state.importMessage = message;
   }
 
+  async function loadScheduleChanges() {
+    if (!state.selectedImportId) {
+      state.scheduleChanges = [];
+      return;
+    }
+    state.scheduleChanges = await service.listScheduleChanges(state.selectedImportId);
+  }
+
+  async function findSubstitutionCandidates(query: Omit<CourseSubstitutionCandidateQuery, "importId">) {
+    if (!state.selectedImportId) {
+      state.substitutionCandidates = [];
+      return [];
+    }
+    const candidates = await service.listSubstitutionCandidates({
+      ...query,
+      importId: state.selectedImportId,
+    });
+    state.substitutionCandidates = candidates;
+    return candidates;
+  }
+
+  async function saveSubstitutions(payload: Omit<SaveCourseSubstitutionsPayload, "importId">) {
+    if (!state.selectedImportId) return [];
+    state.scheduleChanges = await service.saveSubstitutions({
+      ...payload,
+      importId: state.selectedImportId,
+    });
+    return state.scheduleChanges;
+  }
+
+  async function revokeScheduleChange(changeId: number) {
+    await service.revokeScheduleChange(changeId);
+    await loadScheduleChanges();
+  }
+
+  async function loadWorkloadReport(query: Omit<CourseWorkloadQuery, "importId">) {
+    if (!state.selectedImportId) {
+      state.workloadReport = null;
+      return null;
+    }
+    const report = await service.getWorkloadReport({
+      ...query,
+      importId: state.selectedImportId,
+    });
+    state.workloadReport = report;
+    return report;
+  }
+
+  async function exportWorkloadReport(query: Omit<CourseWorkloadQuery, "importId">) {
+    if (!state.selectedImportId) return null;
+    state.exportingWorkload = true;
+    try {
+      const result = await service.exportWorkloadReport({
+        ...query,
+        importId: state.selectedImportId,
+      });
+      state.lastWorkloadExport = result;
+      return result;
+    } finally {
+      state.exportingWorkload = false;
+    }
+  }
+
   const viewState = readonly(
     computed(() => ({
       loading: state.loading,
@@ -201,7 +293,13 @@ export function createCourseManagementStore(service: CourseManagementService = c
       adminClasses: state.adminClasses,
       foreignClasses: state.foreignClasses,
       teachers: state.teachers,
+      periods: state.periods,
       schedule: state.schedule,
+      substitutionCandidates: state.substitutionCandidates,
+      scheduleChanges: state.scheduleChanges,
+      workloadReport: state.workloadReport,
+      exportingWorkload: state.exportingWorkload,
+      lastWorkloadExport: state.lastWorkloadExport,
       importStatus: state.importStatus,
       importMessage: state.importMessage,
       lastImportResult: state.lastImportResult,
@@ -219,6 +317,12 @@ export function createCourseManagementStore(service: CourseManagementService = c
     deleteSelectedImport,
     importExcel,
     setImportFeedback,
+    loadScheduleChanges,
+    findSubstitutionCandidates,
+    saveSubstitutions,
+    revokeScheduleChange,
+    loadWorkloadReport,
+    exportWorkloadReport,
     get viewState() {
       return viewState.value;
     },

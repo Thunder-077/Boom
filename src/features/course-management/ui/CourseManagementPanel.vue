@@ -142,9 +142,11 @@ import FilterToolbar from "../../../widgets/common/FilterToolbar.vue";
 import FluentSelect from "../../../widgets/common/FluentSelect.vue";
 import InfoHint from "../../../widgets/common/InfoHint.vue";
 import TableCard from "../../../widgets/common/TableCard.vue";
+import { useAppDialog } from "../../../shared/ui/appDialog";
 import { useCourseManagementStore } from "../store";
 
 const store = useCourseManagementStore();
+const dialog = useAppDialog();
 const isDragging = ref(false);
 const selectedWeekIndex = ref(1);
 const isSavingSettings = ref(false);
@@ -301,7 +303,14 @@ async function saveImportSettings() {
 async function deleteImportBatch() {
   const batch = selectedBatch.value;
   if (!batch) return;
-  const confirmed = window.confirm(`确定删除 ${formatDate(batch.importedAt)} 导入的全部课表数据吗？`);
+  const confirmed = await dialog.confirm({
+    tone: "danger",
+    title: "删除课表批次",
+    summary: `确定删除 ${formatDate(batch.importedAt)} 导入的全部课表数据吗？删除后该批次的课表、节次与调代课引用都将不可恢复。`,
+    details: [excelFileName(batch.sourceFile), `导入时间：${formatDate(batch.importedAt)}`],
+    confirmText: "确认删除",
+    cancelText: "取消",
+  });
   if (!confirmed) return;
   isDeletingImport.value = true;
   try {
