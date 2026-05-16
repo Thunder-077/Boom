@@ -4,9 +4,17 @@ import type {
   CourseImportBatch,
   CourseImportResult,
   CourseImportSettingsPayload,
+  CourseScheduleChange,
+  CoursePeriodSlot,
   CourseScheduleQuery,
   CourseScheduleView,
+  CourseSubstitutionCandidate,
+  CourseSubstitutionCandidateQuery,
   CourseSummary,
+  SaveCourseSubstitutionsPayload,
+  CourseWorkloadQuery,
+  CourseWorkloadReport,
+  ExportCourseWorkloadResult,
 } from "../../entities/course-management/model";
 
 export interface CourseManagementService {
@@ -17,6 +25,13 @@ export interface CourseManagementService {
   deleteImport(importId: number): Promise<void>;
   listClasses(classType: "admin" | "foreign", importId?: number): Promise<CourseClassOption[]>;
   listTeachers(importId?: number): Promise<string[]>;
+  listPeriods(importId?: number): Promise<CoursePeriodSlot[]>;
+  listSubstitutionCandidates(query: CourseSubstitutionCandidateQuery): Promise<CourseSubstitutionCandidate[]>;
+  saveSubstitutions(payload: SaveCourseSubstitutionsPayload): Promise<CourseScheduleChange[]>;
+  listScheduleChanges(importId?: number): Promise<CourseScheduleChange[]>;
+  revokeScheduleChange(changeId: number): Promise<void>;
+  getWorkloadReport(query: CourseWorkloadQuery): Promise<CourseWorkloadReport>;
+  exportWorkloadReport(query: CourseWorkloadQuery): Promise<ExportCourseWorkloadResult>;
   getScheduleView(query: CourseScheduleQuery): Promise<CourseScheduleView>;
 }
 
@@ -41,6 +56,27 @@ export const courseManagementService: CourseManagementService = {
   },
   listTeachers(importId) {
     return invoke<string[]>("list_course_schedule_teachers", { importId });
+  },
+  listPeriods(importId) {
+    return invoke<CoursePeriodSlot[]>("list_course_schedule_periods", { importId });
+  },
+  listSubstitutionCandidates(query) {
+    return invoke<CourseSubstitutionCandidate[]>("list_course_substitution_candidates", { query });
+  },
+  saveSubstitutions(payload) {
+    return invoke<CourseScheduleChange[]>("save_course_substitutions", { payload });
+  },
+  listScheduleChanges(importId) {
+    return invoke<CourseScheduleChange[]>("list_course_schedule_changes", { importId });
+  },
+  revokeScheduleChange(changeId) {
+    return invoke<void>("revoke_course_schedule_change", { changeId });
+  },
+  getWorkloadReport(query) {
+    return invoke<CourseWorkloadReport>("get_course_workload_report", { query });
+  },
+  exportWorkloadReport(query) {
+    return invoke<ExportCourseWorkloadResult>("export_course_workload_report", { query });
   },
   getScheduleView(query) {
     return invoke<CourseScheduleView>("get_course_schedule_view", { query });

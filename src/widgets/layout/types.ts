@@ -7,5 +7,5 @@ export interface RailItem {
 export interface SecondaryNavItem {
   key: string;
   label: string;
-  icon?: "assignment" | "badge" | "settings" | "inventory_2" | "shuffle" | "tune" | "palette" | "calendar_month";
+  icon?: "assignment" | "badge" | "settings" | "inventory_2" | "shuffle" | "tune" | "palette" | "calendar_month" | "published_with_changes" | "query_stats";
 }

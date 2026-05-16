@@ -9,6 +9,8 @@ export type AppSection =
   | "scores"
   | "classes"
   | "course-management"
+  | "course-substitution"
+  | "course-workload"
   | "settings";
 
 export const router = createRouter({

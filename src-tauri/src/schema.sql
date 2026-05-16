@@ -144,12 +144,32 @@ CREATE TABLE IF NOT EXISTS course_schedule_periods (
     FOREIGN KEY(import_id) REFERENCES course_schedule_imports(id) ON DELETE CASCADE
 );
 
+CREATE TABLE IF NOT EXISTS course_schedule_changes (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    import_id INTEGER NOT NULL,
+    source_entry_id INTEGER NOT NULL,
+    change_type TEXT NOT NULL DEFAULT 'substitute',
+    status TEXT NOT NULL DEFAULT 'active',
+    target_date TEXT NOT NULL,
+    source_teacher_name TEXT NOT NULL,
+    actual_teacher_name TEXT NOT NULL,
+    reason TEXT NOT NULL DEFAULT '',
+    remark TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    revoked_at TEXT,
+    FOREIGN KEY(import_id) REFERENCES course_schedule_imports(id) ON DELETE CASCADE,
+    FOREIGN KEY(source_entry_id) REFERENCES course_schedule_entries(id) ON DELETE CASCADE
+);
+
 CREATE INDEX IF NOT EXISTS idx_course_schedule_imports_imported_at ON course_schedule_imports(imported_at);
 CREATE INDEX IF NOT EXISTS idx_course_schedule_classes_import_type ON course_schedule_classes(import_id, class_type);
 CREATE INDEX IF NOT EXISTS idx_course_schedule_entries_import_class ON course_schedule_entries(import_id, class_type, class_name);
 CREATE INDEX IF NOT EXISTS idx_course_schedule_entries_import_teacher ON course_schedule_entries(import_id, teacher_search_text);
 CREATE INDEX IF NOT EXISTS idx_course_schedule_entries_slot ON course_schedule_entries(import_id, week_index, day_of_week, period_index);
 CREATE INDEX IF NOT EXISTS idx_course_schedule_periods_import_week ON course_schedule_periods(import_id, week_index, day_of_week, period_index);
+CREATE INDEX IF NOT EXISTS idx_course_schedule_changes_import_status ON course_schedule_changes(import_id, status, target_date);
+CREATE INDEX IF NOT EXISTS idx_course_schedule_changes_source_slot ON course_schedule_changes(source_entry_id, target_date, source_teacher_name, status);
 
 -- ---------------------------------------------------------------------------
 -- 班级配置模块 (class_config)

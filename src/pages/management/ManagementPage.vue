@@ -22,6 +22,8 @@
       <ScoreManagementPanel v-else-if="activeSection === 'scores'" />
       <ClassConfigPanel v-else-if="activeSection === 'classes'" />
       <CourseManagementPanel v-else-if="activeSection === 'course-management'" />
+      <CourseSubstitutionPanel v-else-if="activeSection === 'course-substitution'" />
+      <CourseWorkloadPanel v-else-if="activeSection === 'course-workload'" />
       <ExamDashboardPanel v-else-if="activeSection === 'exam-assignment'" />
       <SettingsPanel v-else-if="activeSection === 'settings'" />
       <KeepAlive>
@@ -41,6 +43,8 @@ import type { AppSection } from "../../app/router";
 import type { RailItem, SecondaryNavItem } from "../../widgets/layout/types";
 import ClassConfigPanel from "../../features/classes/ui/ClassConfigPanel.vue";
 import CourseManagementPanel from "../../features/course-management/ui/CourseManagementPanel.vue";
+import CourseSubstitutionPanel from "../../features/course-management/ui/CourseSubstitutionPanel.vue";
+import CourseWorkloadPanel from "../../features/course-management/ui/CourseWorkloadPanel.vue";
 import ExamDashboardPanel from "../../features/dashboard/ui/ExamDashboardPanel.vue";
 import InvigilationPanel from "../../features/invigilation/ui/InvigilationPanel.vue";
 import MonitorDrawPanel from "../../features/monitor-draw/ui/MonitorDrawPanel.vue";
@@ -53,7 +57,7 @@ const router = useRouter();
 
 const activeSection = computed<AppSection>(() => {
   const section = route.params.section as string;
-  const validSections: AppSection[] = ["teachers", "scores", "classes", "course-management", "exam-assignment", "monitor-draw", "monitor-config", "settings"];
+  const validSections: AppSection[] = ["teachers", "scores", "classes", "course-management", "course-substitution", "course-workload", "exam-assignment", "monitor-draw", "monitor-config", "settings"];
   if (validSections.includes(section as AppSection)) {
     return section as AppSection;
   }
@@ -88,6 +92,20 @@ const pageMap: Record<AppSection, { title: string; description: string; breadcru
     breadcrumb: "教务管理 / 课务管理",
     pageTitle: "课务管理",
     summary: "导入双周循环课表，查看教师、行政班和外语教学班课表。",
+  },
+  "course-substitution": {
+    title: "教务管理",
+    description: "教师请假、临时换课与代课记录维护",
+    breadcrumb: "教务管理 / 调代课管理",
+    pageTitle: "调代课管理",
+    summary: "按教师和日期范围筛选课次，逐节指定实际代课教师。",
+  },
+  "course-workload": {
+    title: "教务管理",
+    description: "教师实际课时明细、分类汇总与导出",
+    breadcrumb: "教务管理 / 课时统计",
+    pageTitle: "课时统计",
+    summary: "按真实日期和节次范围统计教师课时，支持导出明细与分类汇总。",
   },
   "exam-assignment": {
     title: "考试管理",
@@ -142,7 +160,7 @@ const activeRail = computed(() => {
   if (activeSection.value === "classes") {
     return "classes";
   }
-  if (activeSection.value === "course-management") {
+  if (activeSection.value === "course-management" || activeSection.value === "course-substitution" || activeSection.value === "course-workload") {
     return "academic";
   }
   return "dashboard";
@@ -162,7 +180,11 @@ const secondaryItems = computed<SecondaryNavItem[]>(() => {
     return [{ key: "classes", label: "班级配置", icon: "settings" }];
   }
   if (activeRail.value === "academic") {
-    return [{ key: "course-management", label: "课务管理", icon: "calendar_month" }];
+    return [
+      { key: "course-management", label: "课务管理", icon: "calendar_month" },
+      { key: "course-substitution", label: "调代课管理", icon: "published_with_changes" },
+      { key: "course-workload", label: "课时统计", icon: "query_stats" },
+    ];
   }
   return [
     { key: "exam-assignment", label: "考场分配", icon: "inventory_2" },

@@ -4,11 +4,13 @@
     <div class="app-content">
       <RouterView />
     </div>
+    <AppDialogHost />
   </div>
 </template>
 
 <script setup lang="ts">
 import { RouterView } from "vue-router";
+import AppDialogHost from "../widgets/common/AppDialogHost.vue";
 import WindowTitleBar from "../widgets/layout/WindowTitleBar.vue";
 </script>
 
