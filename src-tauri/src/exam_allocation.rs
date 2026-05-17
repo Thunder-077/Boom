@@ -1442,8 +1442,11 @@ fn generate_latest_exam_plan_internal(
     pause_after_generation_stage();
 
     let generated_at = Utc::now().to_rfc3339();
-    let tx = tauri::async_runtime::block_on(db.begin())?;
-    clear_latest_plan_snapshot(&tx)?;
+    {
+        let clear_tx = tauri::async_runtime::block_on(db.begin())?;
+        clear_latest_plan_snapshot(&clear_tx)?;
+        tauri::async_runtime::block_on(clear_tx.commit())?;
+    }
     update_exam_generation_progress(
         &db,
         "running",
@@ -1510,6 +1513,7 @@ fn generate_latest_exam_plan_internal(
             })
             .collect::<Vec<_>>();
 
+        let grade_tx = tauri::async_runtime::block_on(db.begin())?;
         let mut foreign_occupied = HashSet::new();
         for subject in subjects {
             let current_start_ts = current_grade_schedule_order
@@ -1518,7 +1522,7 @@ fn generate_latest_exam_plan_internal(
                 .unwrap_or_else(|| subject_order(subject) as i64);
             let built = build_session(
                 &db,
-                &tx,
+                &grade_tx,
                 grade_name,
                 subject,
                 grade_ctx,
@@ -1531,20 +1535,24 @@ fn generate_latest_exam_plan_internal(
             session_count += 1;
             warning_count += built.warning_count;
         }
+        tauri::async_runtime::block_on(grade_tx.commit())?;
     }
 
-    tauri::async_runtime::block_on(exam_allocation_repo::insert_plan_meta(
-        &tx,
-        exam_allocation_repo::PlanMetaInsertRow {
-            generated_at: generated_at.clone(),
-            default_capacity,
-            max_capacity,
-            grade_count: grades.len() as i64,
-            session_count,
-            warning_count,
-        },
-    ))?;
-    tauri::async_runtime::block_on(tx.commit())?;
+    {
+        let meta_tx = tauri::async_runtime::block_on(db.begin())?;
+        tauri::async_runtime::block_on(exam_allocation_repo::insert_plan_meta(
+            &meta_tx,
+            exam_allocation_repo::PlanMetaInsertRow {
+                generated_at: generated_at.clone(),
+                default_capacity,
+                max_capacity,
+                grade_count: grades.len() as i64,
+                session_count,
+                warning_count,
+            },
+        ))?;
+        tauri::async_runtime::block_on(meta_tx.commit())?;
+    }
     update_exam_generation_progress(
         &db,
         "running",
