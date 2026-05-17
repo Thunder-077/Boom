@@ -1701,7 +1701,11 @@ fn generate_latest_exam_plan_internal(
         total_grades,
     )?;
     pause_after_generation_stage();
-    crate::exam_staff::seed_default_session_times(&conn)?;
+    tauri::async_runtime::block_on(async {
+        let db = crate::db::connect(&app).await?;
+        crate::db::repos::exam_staff::seed_default_session_times(&db, &Utc::now().to_rfc3339())
+            .await
+    })?;
     update_exam_generation_progress(
         &conn,
         "running",

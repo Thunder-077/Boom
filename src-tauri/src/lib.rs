@@ -100,6 +100,10 @@ pub fn run() {
 }
 
 fn clear_runtime_result_snapshots(app: &AppHandle) -> Result<(), score::AppError> {
+    tauri::async_runtime::block_on(async {
+        let db = crate::db::connect(app).await?;
+        crate::db::repos::exam_staff::clear_latest_staff_plan_snapshot(&db).await
+    })?;
     let mut conn = score::open_connection(app)?;
     exam_allocation::ensure_schema(&conn)?;
     clear_runtime_result_snapshots_in_conn(&mut conn)
@@ -109,7 +113,6 @@ fn clear_runtime_result_snapshots_in_conn(
     conn: &mut rusqlite::Connection,
 ) -> Result<(), score::AppError> {
     let tx = conn.transaction()?;
-    exam_staff::clear_latest_staff_plan_snapshot(&tx)?;
     exam_allocation::clear_latest_plan_snapshot(&tx)?;
     exam_allocation::reset_exam_generation_progress(&tx)?;
     tx.commit()?;

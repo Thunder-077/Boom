@@ -6,12 +6,12 @@ use calamine::{open_workbook_auto, Data, Reader};
 use chrono::{DateTime, NaiveDateTime, Timelike, Utc};
 use cp_sat::builder::{BoolVar, CpModelBuilder, IntVar, LinearExpr};
 use cp_sat::proto::{CpSolverResponse, CpSolverStatus, SatParameters};
-use rusqlite::types::Value;
-use rusqlite::{params, params_from_iter, Connection};
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter};
 
 use crate::app_log;
+use crate::db::repos::exam_staff as exam_staff_repo;
+use crate::entity::invigilation_config_settings;
 use crate::exam_allocation::{self, SuccessResponse};
 use crate::score::{self, AppError, ListResult, Subject};
 
@@ -741,25 +741,6 @@ fn template_session_id(subject: Subject) -> i64 {
     -(subject_order(subject) as i64)
 }
 
-fn subject_from_template_session_id(session_id: i64) -> Option<Subject> {
-    let order = -session_id;
-    [
-        Subject::Chinese,
-        Subject::Math,
-        Subject::English,
-        Subject::Physics,
-        Subject::Chemistry,
-        Subject::Biology,
-        Subject::Politics,
-        Subject::History,
-        Subject::Geography,
-        Subject::Russian,
-        Subject::Japanese,
-    ]
-    .into_iter()
-    .find(|subject| (subject_order(*subject) as i64) == order)
-}
-
 fn sorted_grade_names(mut grades: Vec<String>) -> Vec<String> {
     grades.sort_by(|a, b| {
         exam_allocation::grade_order_key(a)
@@ -770,37 +751,31 @@ fn sorted_grade_names(mut grades: Vec<String>) -> Vec<String> {
     grades
 }
 
-fn load_effective_session_time_grade_options(conn: &Connection) -> Result<Vec<String>, AppError> {
-    let mut grades = exam_allocation::load_distinct_teaching_grades(conn)?;
-    for grade in exam_allocation::load_grade_time_template_grades(conn)? {
+async fn load_effective_session_time_grade_options(
+    db: &sea_orm::DatabaseConnection,
+) -> Result<Vec<String>, AppError> {
+    let mut grades = exam_staff_repo::load_teaching_class_rows(db)
+        .await?
+        .into_iter()
+        .map(|row| row.grade_name)
+        .collect::<Vec<_>>();
+    for grade in exam_staff_repo::list_template_grades(db).await? {
         grades.push(grade);
     }
     Ok(sorted_grade_names(grades))
 }
 
-fn load_grade_subject_template_map(
-    conn: &Connection,
+async fn load_grade_subject_template_map(
+    db: &sea_orm::DatabaseConnection,
 ) -> Result<HashMap<String, HashMap<Subject, (String, String)>>, AppError> {
     let mut out = HashMap::<String, HashMap<Subject, (String, String)>>::new();
-    let mut stmt = conn.prepare(
-        "SELECT grade_name, subject, start_at, end_at FROM exam_grade_subject_time_templates ORDER BY grade_name ASC, subject ASC",
-    )?;
-    let rows = stmt.query_map([], |row| {
-        Ok((
-            row.get::<_, String>(0)?,
-            row.get::<_, String>(1)?,
-            row.get::<_, String>(2)?,
-            row.get::<_, String>(3)?,
-        ))
-    })?;
-    for row in rows {
-        let (grade_name, subject_key, start_at, end_at) = row?;
-        let Some(subject) = Subject::from_key(&subject_key) else {
+    for row in exam_staff_repo::list_grade_subject_templates(db).await? {
+        let Some(subject) = Subject::from_key(&row.subject) else {
             continue;
         };
-        out.entry(grade_name)
+        out.entry(row.grade_name)
             .or_default()
-            .insert(subject, (start_at, end_at));
+            .insert(subject, (row.start_at, row.end_at));
     }
     Ok(out)
 }
@@ -924,28 +899,6 @@ fn self_study_topic_from_parts(
     }))
 }
 
-fn self_study_topic_subtitle(task: &TaskBuild) -> Option<String> {
-    let topic = task
-        .recommended_self_study_topic
-        .as_ref()
-        .or_else(|| task.priority_self_study_chain.first())?;
-    let label = topic.label.trim();
-    if label.is_empty() {
-        return None;
-    }
-    let date_time_text = if task.start_at.len() >= 16 && task.end_at.len() >= 16 {
-        format!(
-            "{} {}-{}",
-            &task.start_at[5..10],
-            &task.start_at[11..16],
-            &task.end_at[11..16]
-        )
-    } else {
-        format!("{}-{}", task.start_at, task.end_at)
-    };
-    Some(format!("{label} {date_time_text}"))
-}
-
 fn round_to_two(value: f64) -> f64 {
     (value * 100.0).round() / 100.0
 }
@@ -984,41 +937,28 @@ fn build_config_from_payload(payload: &GenerateExamStaffPlanPayload) -> RuntimeI
     }
 }
 
-fn hydrate_runtime_middle_manager_config(
-    conn: &Connection,
+async fn hydrate_runtime_middle_manager_config(
+    db: &sea_orm::DatabaseConnection,
     config: &mut RuntimeInvigilationConfig,
 ) -> Result<(), AppError> {
-    let persisted: Option<(i64, String, String, String, String)> = conn
-        .query_row(
-            "SELECT middle_manager_default_enabled, middle_manager_exception_teacher_ids_json, self_study_date, self_study_start_time, self_study_end_time FROM invigilation_config_settings WHERE id = 1",
-            [],
-            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?)),
-        )
-        .ok();
-    if let Some((
-        default_enabled,
-        exception_json,
-        self_study_date,
-        self_study_start_time,
-        self_study_end_time,
-    )) = persisted
+    if let Some(persisted) = exam_staff_repo::get_config(db).await?
     {
-        config.middle_manager_default_enabled = default_enabled == 1;
+        config.middle_manager_default_enabled = persisted.middle_manager_default_enabled == 1;
         config.middle_manager_exception_teacher_ids =
-            serde_json::from_str::<Vec<i64>>(&exception_json)
+            serde_json::from_str::<Vec<i64>>(&persisted.middle_manager_exception_teacher_ids_json)
                 .map(normalize_teacher_id_list)
                 .unwrap_or_default()
                 .into_iter()
                 .collect();
-        config.self_study_date = self_study_date.trim().to_string();
-        config.self_study_start_time = self_study_start_time.trim().to_string();
-        config.self_study_end_time = self_study_end_time.trim().to_string();
+        config.self_study_date = persisted.self_study_date.trim().to_string();
+        config.self_study_start_time = persisted.self_study_start_time.trim().to_string();
+        config.self_study_end_time = persisted.self_study_end_time.trim().to_string();
     }
     Ok(())
 }
 
-fn load_runtime_invigilation_config(
-    conn: &Connection,
+async fn load_runtime_invigilation_config(
+    db: &sea_orm::DatabaseConnection,
 ) -> Result<RuntimeInvigilationConfig, AppError> {
     let mut config = RuntimeInvigilationConfig {
         default_exam_room_required_count: 1,
@@ -1029,9 +969,9 @@ fn load_runtime_invigilation_config(
         self_study_date: String::new(),
         self_study_start_time: "12:10".to_string(),
         self_study_end_time: "13:40".to_string(),
-        self_study_class_subjects: load_self_study_class_subjects(conn)?,
+        self_study_class_subjects: load_self_study_class_subjects(db).await?,
     };
-    hydrate_runtime_middle_manager_config(conn, &mut config)?;
+    hydrate_runtime_middle_manager_config(db, &mut config).await?;
     Ok(config)
 }
 
@@ -1069,11 +1009,11 @@ fn is_teacher_enabled_for_task_source(
     }
 }
 
-fn load_session_time_template_rows(
-    conn: &Connection,
+async fn load_session_time_template_rows(
+    db: &sea_orm::DatabaseConnection,
     selected_grade_name: &str,
 ) -> Result<Vec<ExamSessionTime>, AppError> {
-    let grade_templates = load_grade_subject_template_map(conn)?;
+    let grade_templates = load_grade_subject_template_map(db).await?;
     let mut out = Vec::<ExamSessionTime>::new();
     for subject in [
         Subject::Chinese,
@@ -1129,89 +1069,38 @@ fn load_session_time_template_rows(
     Ok(out)
 }
 
-pub(crate) fn seed_default_session_times(conn: &Connection) -> Result<(), AppError> {
-    let now = Utc::now().to_rfc3339();
-    let grade_templates = load_grade_subject_template_map(conn)?;
-    let mut stmt = conn
-        .prepare("SELECT id, grade_name, subject FROM latest_exam_plan_sessions ORDER BY id ASC")?;
-    let rows = stmt.query_map([], |row| {
-        Ok((
-            row.get::<_, i64>(0)?,
-            row.get::<_, String>(1)?,
-            row.get::<_, String>(2)?,
-        ))
-    })?;
-    for row in rows {
-        let (session_id, grade_name, subject_key) = row?;
-        let Some(subject) = Subject::from_key(&subject_key) else {
-            continue;
-        };
-        let Some((start_at, end_at, _, _)) =
-            resolve_effective_grade_subject_template(&grade_name, subject, &grade_templates)
-        else {
-            continue;
-        };
-        conn.execute(
-            r#"
-            INSERT INTO exam_session_times (session_id, subject, start_at, end_at, updated_at)
-            VALUES (?1, ?2, ?3, ?4, ?5)
-            ON CONFLICT(session_id) DO UPDATE SET
-                subject = excluded.subject,
-                start_at = excluded.start_at,
-                end_at = excluded.end_at,
-                updated_at = excluded.updated_at
-            "#,
-            params![session_id, subject.as_key(), start_at, end_at, now],
-        )?;
-    }
-    Ok(())
+async fn load_session_times_runtime(
+    db: &sea_orm::DatabaseConnection,
+) -> Result<Vec<SessionTimeRuntime>, AppError> {
+    load_session_times_runtime_with_policy(db, false).await
 }
 
-fn load_session_times_runtime(conn: &Connection) -> Result<Vec<SessionTimeRuntime>, AppError> {
-    let grade_templates = load_grade_subject_template_map(conn)?;
-    let mut stmt = conn.prepare(
-        r#"
-        SELECT
-            s.id,
-            s.grade_name,
-            s.subject,
-            t.start_at AS start_at,
-            t.end_at AS end_at
-        FROM latest_exam_plan_sessions s
-        LEFT JOIN exam_session_times t ON t.session_id = s.id
-        ORDER BY s.grade_name ASC, s.id ASC
-        "#,
-    )?;
-    let rows = stmt.query_map([], |row| {
-        let subject_key: String = row.get(2)?;
-        let subject = Subject::from_key(&subject_key).ok_or_else(|| {
-            rusqlite::Error::InvalidColumnType(
-                2,
-                "subject".to_string(),
-                rusqlite::types::Type::Text,
-            )
-        })?;
-        Ok(ExamSessionTime {
-            session_id: row.get(0)?,
-            grade_name: row.get(1)?,
-            subject,
-            start_at: row.get(3)?,
-            end_at: row.get(4)?,
-            source_grade_name: None,
-            is_inherited: false,
-        })
-    })?;
+async fn load_configured_session_times_runtime(
+    db: &sea_orm::DatabaseConnection,
+) -> Result<Vec<SessionTimeRuntime>, AppError> {
+    load_session_times_runtime_with_policy(db, true).await
+}
+
+async fn load_session_times_runtime_with_policy(
+    db: &sea_orm::DatabaseConnection,
+    skip_missing_time: bool,
+) -> Result<Vec<SessionTimeRuntime>, AppError> {
+    let grade_templates = load_grade_subject_template_map(db).await?;
     let mut out = Vec::new();
-    for row in rows {
-        let row = row?;
+    for row in exam_staff_repo::list_session_time_rows(db).await? {
+        let subject = Subject::from_key(&row.subject)
+            .ok_or_else(|| AppError::new(format!("无效的科目: {}", row.subject)))?;
         let resolved_time = match (row.start_at.clone(), row.end_at.clone()) {
             (Some(start_at), Some(end_at)) => (start_at, end_at),
             _ => {
                 let Some((start_at, end_at, _, _)) = resolve_effective_grade_subject_template(
                     &row.grade_name,
-                    row.subject,
+                    subject,
                     &grade_templates,
                 ) else {
+                    if skip_missing_time {
+                        continue;
+                    }
                     return Err(AppError::new(format!(
                         "场次 {} 未配置开始或结束时间",
                         row.session_id
@@ -1228,7 +1117,7 @@ fn load_session_times_runtime(conn: &Connection) -> Result<Vec<SessionTimeRuntim
         out.push(SessionTimeRuntime {
             session_id: row.session_id,
             grade_name: row.grade_name,
-            subject: row.subject,
+            subject,
             start_at,
             end_at,
             start_ts,
@@ -1243,61 +1132,37 @@ fn load_session_times_runtime(conn: &Connection) -> Result<Vec<SessionTimeRuntim
     Ok(out)
 }
 
-fn load_teacher_pool(conn: &Connection) -> Result<Vec<TeacherInfo>, AppError> {
+async fn load_teacher_pool(
+    db: &sea_orm::DatabaseConnection,
+) -> Result<Vec<TeacherInfo>, AppError> {
     let mut map: HashMap<i64, TeacherInfo> = HashMap::new();
 
-    let mut teacher_stmt =
-        conn.prepare("SELECT id, teacher_name, COALESCE(is_middle_manager, 0) FROM latest_teachers_v2 ORDER BY id ASC")?;
-    let teacher_rows = teacher_stmt.query_map([], |row| {
-        Ok((
-            row.get::<_, i64>(0)?,
-            row.get::<_, String>(1)?,
-            row.get::<_, i64>(2)?,
-        ))
-    })?;
-    for row in teacher_rows {
-        let (id, name, is_middle_manager) = row?;
+    for row in exam_staff_repo::load_teacher_rows(db).await? {
         map.insert(
-            id,
+            row.id,
             TeacherInfo {
-                id,
-                name,
+                id: row.id,
+                name: row.name,
                 subjects: HashSet::new(),
                 class_names: HashSet::new(),
                 homeroom_classes: HashSet::new(),
-                is_middle_manager: is_middle_manager == 1,
+                is_middle_manager: row.is_middle_manager,
             },
         );
     }
 
-    let mut assignment_stmt =
-        conn.prepare("SELECT teacher_id, subject, class_name FROM latest_teacher_assignments_v2 ORDER BY teacher_id ASC, id ASC")?;
-    let assignment_rows = assignment_stmt.query_map([], |row| {
-        Ok((
-            row.get::<_, i64>(0)?,
-            row.get::<_, String>(1)?,
-            row.get::<_, String>(2)?,
-        ))
-    })?;
-    for row in assignment_rows {
-        let (teacher_id, subject_key, class_name) = row?;
-        if let Some(entry) = map.get_mut(&teacher_id) {
-            if let Some(subject) = Subject::from_key(&subject_key) {
+    for row in exam_staff_repo::load_teacher_assignment_rows(db).await? {
+        if let Some(entry) = map.get_mut(&row.teacher_id) {
+            if let Some(subject) = Subject::from_key(&row.subject) {
                 entry.subjects.insert(subject);
             }
-            entry.class_names.insert(class_name);
+            entry.class_names.insert(row.class_name);
         }
     }
 
-    let mut homeroom_stmt =
-        conn.prepare("SELECT teacher_id, class_name FROM latest_teacher_homerooms_v2 ORDER BY teacher_id ASC, id ASC")?;
-    let homeroom_rows = homeroom_stmt.query_map([], |row| {
-        Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?))
-    })?;
-    for row in homeroom_rows {
-        let (teacher_id, class_name) = row?;
-        if let Some(entry) = map.get_mut(&teacher_id) {
-            entry.homeroom_classes.insert(class_name);
+    for row in exam_staff_repo::load_teacher_homeroom_rows(db).await? {
+        if let Some(entry) = map.get_mut(&row.teacher_id) {
+            entry.homeroom_classes.insert(row.class_name);
         }
     }
 
@@ -1320,74 +1185,37 @@ fn infer_grade_name_from_class_name(class_name: &str) -> Option<String> {
     None
 }
 
-fn load_teacher_grade_subject_pairs(
-    conn: &Connection,
+async fn load_teacher_grade_subject_pairs(
+    db: &sea_orm::DatabaseConnection,
 ) -> Result<HashMap<i64, HashSet<(String, Subject)>>, AppError> {
-    let mut stmt = conn.prepare(
-        r#"
-        SELECT ta.teacher_id, ta.subject, ta.class_name, c.grade_name
-        FROM latest_teacher_assignments_v2 ta
-        LEFT JOIN class_configs c
-          ON c.config_type = 'teaching_class'
-         AND c.class_name = ta.class_name
-        ORDER BY ta.teacher_id ASC, ta.id ASC
-        "#,
-    )?;
-    let rows = stmt.query_map([], |row| {
-        Ok((
-            row.get::<_, i64>(0)?,
-            row.get::<_, String>(1)?,
-            row.get::<_, String>(2)?,
-            row.get::<_, Option<String>>(3)?,
-        ))
-    })?;
-
     let mut out = HashMap::<i64, HashSet<(String, Subject)>>::new();
-    for row in rows {
-        let (teacher_id, subject_key, class_name, grade_name_from_config) = row?;
-        let Some(subject) = Subject::from_key(&subject_key) else {
+    for row in exam_staff_repo::load_teacher_grade_subject_rows(db).await? {
+        let Some(subject) = Subject::from_key(&row.subject) else {
             continue;
         };
-        let Some(grade_name) = grade_name_from_config
+        let Some(grade_name) = row.grade_name
             .and_then(|value| {
                 let trimmed = value.trim().to_string();
                 (!trimmed.is_empty()).then_some(trimmed)
             })
-            .or_else(|| infer_grade_name_from_class_name(&class_name))
+            .or_else(|| infer_grade_name_from_class_name(&row.class_name))
         else {
             continue;
         };
-        out.entry(teacher_id)
+        out.entry(row.teacher_id)
             .or_default()
             .insert((grade_name, subject));
     }
     Ok(out)
 }
 
-fn load_class_subject_map(
-    conn: &Connection,
+async fn load_class_subject_map(
+    db: &sea_orm::DatabaseConnection,
 ) -> Result<HashMap<(String, String), HashSet<Subject>>, AppError> {
-    let mut stmt = conn.prepare(
-        r#"
-        SELECT c.grade_name, c.class_name, s.subject
-        FROM class_configs c
-        JOIN class_config_subjects s ON s.config_id = c.id
-        WHERE c.config_type = 'teaching_class'
-        ORDER BY c.grade_name ASC, c.class_name ASC, s.id ASC
-        "#,
-    )?;
-    let rows = stmt.query_map([], |row| {
-        Ok((
-            row.get::<_, String>(0)?,
-            row.get::<_, String>(1)?,
-            row.get::<_, String>(2)?,
-        ))
-    })?;
     let mut map: HashMap<(String, String), HashSet<Subject>> = HashMap::new();
-    for row in rows {
-        let (grade_name, class_name, subject_key) = row?;
-        if let Some(subject) = Subject::from_key(&subject_key) {
-            map.entry((grade_name, class_name))
+    for row in exam_staff_repo::load_class_subject_rows(db).await? {
+        if let Some(subject) = Subject::from_key(&row.subject) {
+            map.entry((row.grade_name, row.class_name))
                 .or_default()
                 .insert(subject);
         }
@@ -1403,14 +1231,13 @@ struct TeachingClassRuntime {
     floor: String,
 }
 
-fn load_self_study_class_subjects(conn: &Connection) -> Result<HashMap<i64, Subject>, AppError> {
-    let json_text: String = conn
-        .query_row(
-            "SELECT COALESCE(self_study_class_subjects_json, '[]') FROM invigilation_config_settings WHERE id = 1",
-            [],
-            |row| row.get(0),
-        )
-        .unwrap_or_else(|_| "[]".to_string());
+async fn load_self_study_class_subjects(
+    db: &sea_orm::DatabaseConnection,
+) -> Result<HashMap<i64, Subject>, AppError> {
+    let json_text = exam_staff_repo::get_config(db)
+        .await?
+        .map(|row| row.self_study_class_subjects_json)
+        .unwrap_or_else(|| "[]".to_string());
     let items =
         serde_json::from_str::<Vec<PersistedSelfStudyClassSubject>>(&json_text).unwrap_or_default();
     let mut map = HashMap::new();
@@ -1424,28 +1251,19 @@ fn load_self_study_class_subjects(conn: &Connection) -> Result<HashMap<i64, Subj
     Ok(map)
 }
 
-fn load_teaching_classes(conn: &Connection) -> Result<Vec<TeachingClassRuntime>, AppError> {
-    let mut stmt = conn.prepare(
-        r#"
-        SELECT id, grade_name, class_name, floor
-        FROM class_configs
-        WHERE config_type = 'teaching_class'
-        ORDER BY grade_name ASC, class_name ASC, id ASC
-        "#,
-    )?;
-    let rows = stmt.query_map([], |row| {
-        Ok(TeachingClassRuntime {
-            id: row.get(0)?,
-            grade_name: row.get(1)?,
-            class_name: row.get(2)?,
-            floor: row.get(3)?,
+async fn load_teaching_classes(
+    db: &sea_orm::DatabaseConnection,
+) -> Result<Vec<TeachingClassRuntime>, AppError> {
+    Ok(exam_staff_repo::load_teaching_class_rows(db)
+        .await?
+        .into_iter()
+        .map(|row| TeachingClassRuntime {
+            id: row.id,
+            grade_name: row.grade_name,
+            class_name: row.class_name,
+            floor: row.floor,
         })
-    })?;
-    let mut items = Vec::new();
-    for row in rows {
-        items.push(row?);
-    }
-    Ok(items)
+        .collect())
 }
 
 fn load_exam_room_requirement(default_count: i64) -> Result<i64, AppError> {
@@ -1463,14 +1281,6 @@ fn rule_task_scope_for_task(task: &TaskBuild) -> &'static str {
         }
         (_, StaffRole::FloorRover) => RULE_TASK_SCOPE_FLOOR_ROVER,
         _ => RULE_TASK_SCOPE_EXAM_ROOM,
-    }
-}
-
-fn rule_time_scope_for_task(task: &TaskBuild) -> &'static str {
-    if task.task_source == StaffTaskSource::FullSelfStudy {
-        RULE_TIME_SCOPE_FULL_SELF_STUDY
-    } else {
-        RULE_TIME_SCOPE_EXAM_SESSION
     }
 }
 
@@ -1715,18 +1525,8 @@ fn build_teacher_symmetry_groups(
     groups
 }
 
-pub(crate) fn clear_latest_staff_plan_snapshot(
-    tx: &rusqlite::Transaction<'_>,
-) -> Result<(), AppError> {
-    tx.execute("DELETE FROM latest_exam_staff_assignments", [])?;
-    tx.execute("DELETE FROM latest_exam_staff_tasks", [])?;
-    tx.execute("DELETE FROM latest_teacher_duty_stats", [])?;
-    tx.execute("DELETE FROM latest_exam_staff_plan_meta", [])?;
-    Ok(())
-}
-
-fn load_spaces_for_session(
-    conn: &Connection,
+async fn load_spaces_for_session(
+    db: &sea_orm::DatabaseConnection,
     session_id: i64,
 ) -> Result<
     Vec<(
@@ -1739,49 +1539,26 @@ fn load_spaces_for_session(
     )>,
     AppError,
 > {
-    let mut stmt = conn.prepare(
-        "SELECT id, space_type, space_name, original_class_name, self_study_topic_kind, self_study_topic_subjects_json, self_study_topic_label, floor FROM latest_exam_plan_spaces WHERE session_id = ?1 ORDER BY sort_index ASC, id ASC",
-    )?;
-    let rows = stmt.query_map(params![session_id], |row| {
-        let space_type_key: String = row.get(1)?;
-        let space_type = match space_type_key.as_str() {
+    let mut out = Vec::new();
+    for row in exam_staff_repo::load_spaces_for_session(db, session_id).await? {
+        let space_type = match row.space_type.as_str() {
             "exam_room" => SpaceType::ExamRoom,
             "self_study_room" => SpaceType::SelfStudyRoom,
-            _ => {
-                return Err(rusqlite::Error::InvalidColumnType(
-                    1,
-                    "space_type".to_string(),
-                    rusqlite::types::Type::Text,
-                ))
-            }
+            _ => return Err(AppError::new(format!("无效的空间类型: {}", row.space_type))),
         };
         let self_study_topic = self_study_topic_from_parts(
-            row.get::<_, Option<String>>(4)?,
-            row.get::<_, Option<String>>(5)?,
-            row.get::<_, Option<String>>(6)?,
-        )
-        .map_err(|e| {
-            rusqlite::Error::FromSqlConversionFailure(
-                4,
-                rusqlite::types::Type::Text,
-                Box::new(std::io::Error::new(
-                    std::io::ErrorKind::InvalidData,
-                    e.to_string(),
-                )),
-            )
-        })?;
-        Ok((
-            row.get::<_, i64>(0)?,
+            row.self_study_topic_kind,
+            row.self_study_topic_subjects_json,
+            row.self_study_topic_label,
+        )?;
+        out.push((
+            row.id,
             space_type,
-            row.get::<_, String>(2)?,
-            row.get::<_, Option<String>>(3)?,
+            row.space_name,
+            row.original_class_name,
             self_study_topic,
-            row.get::<_, String>(7)?,
-        ))
-    })?;
-    let mut out = Vec::new();
-    for row in rows {
-        out.push(row?);
+            row.floor,
+        ));
     }
     Ok(out)
 }
@@ -1925,8 +1702,8 @@ fn build_floor_rover_subjects_by_slot(
     subjects_by_slot
 }
 
-fn build_staff_tasks(
-    conn: &Connection,
+async fn build_staff_tasks(
+    db: &sea_orm::DatabaseConnection,
     session_times: &[SessionTimeRuntime],
     invigilation_config: &RuntimeInvigilationConfig,
     class_subject_map: &HashMap<(String, String), HashSet<Subject>>,
@@ -1966,7 +1743,7 @@ fn build_staff_tasks(
     // 这样外语场次即使拆成英语/日语/俄语多个 session，也仍然是一层一个老师。
     let mut generated_floor_rovers = HashSet::<(FloorRoverSlotKey, String)>::new();
     for session in session_times {
-        let spaces = load_spaces_for_session(conn, session.session_id)?;
+        let spaces = load_spaces_for_session(db, session.session_id).await?;
         if spaces.is_empty() {
             return Err(AppError::new(format!(
                 "场次 {} 无可用空间",
@@ -3339,20 +3116,18 @@ fn solve_with_cp_sat(
     }
 }
 
-fn persist_solved_plan(
-    conn: &mut Connection,
+async fn persist_solved_plan(
+    db: &sea_orm::DatabaseConnection,
     session_count: i64,
     teachers: &[TeacherInfo],
     plan: &SolvedPlan,
 ) -> Result<GenerateLatestExamStaffPlanResult, AppError> {
-    let tx = conn.transaction()?;
-    clear_latest_staff_plan_snapshot(&tx)?;
-
     let teacher_by_id: HashMap<i64, &TeacherInfo> = teachers
         .iter()
         .map(|teacher| (teacher.id, teacher))
         .collect();
     let generated_at = Utc::now().to_rfc3339();
+    let mut task_rows = Vec::new();
 
     for record in &plan.records {
         let status = if record.teacher_id.is_some() {
@@ -3360,99 +3135,90 @@ fn persist_solved_plan(
         } else {
             TaskStatus::Unassigned
         };
-        tx.execute(
-            r#"
-            INSERT INTO latest_exam_staff_tasks
-            (session_id, space_id, task_source, role, grade_name, subject, space_name, floor, start_at, end_at, duration_minutes, recommended_self_study_topic_kind, recommended_self_study_topic_subjects_json, recommended_self_study_topic_label, priority_self_study_chain_json, assignment_tier, status, reason, allowance_amount)
-            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19)
-            "#,
-            params![
-                record.task.session_id,
-                record.task.space_id,
-                record.task.task_source.as_key(),
-                record.task.role.as_key(),
-                record.task.grade_name,
-                record.task.subject.as_key(),
-                record.task.space_name,
-                record.task.floor,
-                record.task.start_at,
-                record.task.end_at,
-                record.task.duration_minutes,
-                record
-                    .task
-                    .recommended_self_study_topic
-                    .as_ref()
-                    .map(|topic| topic.kind.as_key().to_string()),
-                record
-                    .task
-                    .recommended_self_study_topic
-                    .as_ref()
-                    .map(|topic| serde_json::to_string(&topic.subjects))
-                    .transpose()
-                    .map_err(|e| AppError::new(format!("推荐自习主题科目序列化失败: {e}")))?,
-                record
-                    .task
-                    .recommended_self_study_topic
-                    .as_ref()
-                    .map(|topic| topic.label.clone()),
-                self_study_topic_chain_to_text(&record.task.priority_self_study_chain)?,
-                record.assignment_tier.map(|tier| tier.as_key().to_string()),
-                status.as_key(),
-                record.reason,
-                record.allowance_amount
-            ],
-        )?;
-        let task_id = tx.last_insert_rowid();
-        if let Some(teacher_id) = record.teacher_id {
-            if let Some(teacher) = teacher_by_id.get(&teacher_id) {
-                tx.execute(
-                    "INSERT INTO latest_exam_staff_assignments (task_id, teacher_id, teacher_name, assigned_at) VALUES (?1, ?2, ?3, ?4)",
-                    params![task_id, teacher_id, teacher.name, generated_at],
-                )?;
-            }
-        }
+        let teacher = record
+            .teacher_id
+            .and_then(|teacher_id| teacher_by_id.get(&teacher_id).copied());
+        task_rows.push(exam_staff_repo::PersistedTaskRow {
+            session_id: record.task.session_id,
+            space_id: record.task.space_id,
+            task_source: record.task.task_source.as_key().to_string(),
+            role: record.task.role.as_key().to_string(),
+            grade_name: record.task.grade_name.clone(),
+            subject: record.task.subject.as_key().to_string(),
+            space_name: record.task.space_name.clone(),
+            floor: record.task.floor.clone(),
+            start_at: record.task.start_at.clone(),
+            end_at: record.task.end_at.clone(),
+            duration_minutes: record.task.duration_minutes,
+            recommended_self_study_topic_kind: record
+                .task
+                .recommended_self_study_topic
+                .as_ref()
+                .map(|topic| topic.kind.as_key().to_string()),
+            recommended_self_study_topic_subjects_json: record
+                .task
+                .recommended_self_study_topic
+                .as_ref()
+                .map(|topic| serde_json::to_string(&topic.subjects))
+                .transpose()
+                .map_err(|e| AppError::new(format!("推荐自习主题科目序列化失败: {e}")))?,
+            recommended_self_study_topic_label: record
+                .task
+                .recommended_self_study_topic
+                .as_ref()
+                .map(|topic| topic.label.clone()),
+            priority_self_study_chain_json: self_study_topic_chain_to_text(
+                &record.task.priority_self_study_chain,
+            )?,
+            assignment_tier: record.assignment_tier.map(|tier| tier.as_key().to_string()),
+            status: status.as_key().to_string(),
+            reason: record.reason.clone(),
+            allowance_amount: record.allowance_amount,
+            teacher_id: teacher.map(|item| item.id),
+            teacher_name: teacher.map(|item| item.name.clone()),
+        });
     }
 
+    let mut duty_rows = Vec::new();
     for teacher in teachers {
         let state = plan.runtime.get(&teacher.id).cloned().unwrap_or_default();
-        tx.execute(
-            "INSERT INTO latest_teacher_duty_stats (teacher_id, teacher_name, indoor_minutes, outdoor_minutes, total_minutes, task_count, exam_room_task_count, self_study_task_count, floor_rover_task_count, allowance_total, indoor_allowance_total, outdoor_allowance_total, is_middle_manager) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
-            params![
-                teacher.id,
-                teacher.name,
-                state.indoor_minutes,
-                state.outdoor_minutes,
-                state.total_minutes,
-                state.task_count,
-                state.exam_room_task_count,
-                state.self_study_task_count,
-                state.floor_rover_task_count,
-                round_to_two(state.allowance_total),
-                round_to_two(state.indoor_allowance_total),
-                round_to_two(state.outdoor_allowance_total),
-                if teacher.is_middle_manager { 1_i64 } else { 0_i64 }
-            ],
-        )?;
+        duty_rows.push(exam_staff_repo::PersistedDutyStatRow {
+            teacher_id: teacher.id,
+            teacher_name: teacher.name.clone(),
+            indoor_minutes: state.indoor_minutes,
+            outdoor_minutes: state.outdoor_minutes,
+            total_minutes: state.total_minutes,
+            task_count: state.task_count,
+            exam_room_task_count: state.exam_room_task_count,
+            self_study_task_count: state.self_study_task_count,
+            floor_rover_task_count: state.floor_rover_task_count,
+            allowance_total: round_to_two(state.allowance_total),
+            indoor_allowance_total: round_to_two(state.indoor_allowance_total),
+            outdoor_allowance_total: round_to_two(state.outdoor_allowance_total),
+            is_middle_manager: teacher.is_middle_manager,
+        });
     }
 
-    tx.execute(
-        "INSERT INTO latest_exam_staff_plan_meta (id, generated_at, session_count, task_count, assigned_count, unassigned_count, warning_count, imbalance_minutes, solver_engine, optimality_status, solve_duration_ms, fallback_reason, fallback_pool_assignments) VALUES (1, ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
-        params![
-            generated_at,
+    exam_staff_repo::persist_plan_snapshot(
+        db,
+        exam_staff_repo::PersistedPlanMetaRow {
+            generated_at: generated_at.clone(),
             session_count,
-            plan.records.len() as i64,
-            plan.metrics.assigned_count,
-            plan.metrics.unassigned_count,
-            plan.metrics.warning_count,
-            plan.metrics.imbalance_minutes,
-            plan.solver_engine.as_key(),
-            plan.optimality_status.as_key(),
-            plan.solve_duration_ms,
-            plan.fallback_reason.map(|reason| reason.as_key().to_string()),
-            plan.metrics.fallback_pool_assignments
-        ],
-    )?;
-    tx.commit()?;
+            task_count: plan.records.len() as i64,
+            assigned_count: plan.metrics.assigned_count,
+            unassigned_count: plan.metrics.unassigned_count,
+            warning_count: plan.metrics.warning_count,
+            imbalance_minutes: plan.metrics.imbalance_minutes,
+            solver_engine: plan.solver_engine.as_key().to_string(),
+            optimality_status: plan.optimality_status.as_key().to_string(),
+            solve_duration_ms: plan.solve_duration_ms,
+            fallback_reason: plan.fallback_reason.map(|reason| reason.as_key().to_string()),
+            fallback_pool_assignments: plan.metrics.fallback_pool_assignments,
+        },
+        task_rows,
+        duty_rows,
+    )
+    .await?;
 
     let unassigned_details: Vec<String> = plan
         .records
@@ -3563,8 +3329,8 @@ fn log_solver_outcome(
     let _ = app_log::append_log_to_path(log_path, level, scope, &message);
 }
 
-fn generate_latest_exam_staff_plan_internal(
-    conn: &mut Connection,
+async fn generate_latest_exam_staff_plan_internal(
+    db: &sea_orm::DatabaseConnection,
     invigilation_config: RuntimeInvigilationConfig,
     custom_rules: Vec<GenerateExamStaffPlanCustomRule>,
     log_path: Option<&Path>,
@@ -3581,7 +3347,7 @@ fn generate_latest_exam_staff_plan_internal(
             ),
         );
     }
-    let session_times = load_session_times_runtime(conn)?;
+    let session_times = load_session_times_runtime(db).await?;
     if let Some(progress) = progress {
         progress.emit_running(
             2,
@@ -3593,8 +3359,8 @@ fn generate_latest_exam_staff_plan_internal(
             ),
         );
     }
-    let teachers = load_teacher_pool(conn)?;
-    let teacher_grade_subject_pairs = load_teacher_grade_subject_pairs(conn)?;
+    let teachers = load_teacher_pool(db).await?;
+    let teacher_grade_subject_pairs = load_teacher_grade_subject_pairs(db).await?;
     if let Some(progress) = progress {
         progress.emit_running(
             3,
@@ -3606,7 +3372,7 @@ fn generate_latest_exam_staff_plan_internal(
             ),
         );
     }
-    let class_subject_map = load_class_subject_map(conn)?;
+    let class_subject_map = load_class_subject_map(db).await?;
     if let Some(progress) = progress {
         progress.emit_running(
             4,
@@ -3618,7 +3384,7 @@ fn generate_latest_exam_staff_plan_internal(
             ),
         );
     }
-    let teaching_classes = load_teaching_classes(conn)?;
+    let teaching_classes = load_teaching_classes(db).await?;
     if let Some(progress) = progress {
         progress.emit_running(
             5,
@@ -3631,12 +3397,13 @@ fn generate_latest_exam_staff_plan_internal(
         );
     }
     let tasks = build_staff_tasks(
-        conn,
+        db,
         &session_times,
         &invigilation_config,
         &class_subject_map,
         &teaching_classes,
-    )?;
+    )
+    .await?;
     let persisted_rules = persisted_rules_from_payload(&custom_rules);
     validate_custom_rules_against_tasks(&persisted_rules, &tasks)?;
 
@@ -3679,7 +3446,7 @@ fn generate_latest_exam_staff_plan_internal(
             ),
         );
     }
-    let result = persist_solved_plan(conn, session_times.len() as i64, &teachers, &final_plan)?;
+    let result = persist_solved_plan(db, session_times.len() as i64, &teachers, &final_plan).await?;
     if let Some(progress) = progress {
         progress.emit_completed(format!(
             "监考分配完成：已分配 {} 项，未分配 {} 项。",
@@ -3689,23 +3456,22 @@ fn generate_latest_exam_staff_plan_internal(
     Ok(result)
 }
 
-pub fn list_exam_session_time_grade_options(app: AppHandle) -> Result<Vec<String>, String> {
-    let result = (|| -> Result<Vec<String>, AppError> {
-        let conn = score::open_connection(&app)?;
-        exam_allocation::ensure_schema(&conn)?;
-        Ok(load_effective_session_time_grade_options(&conn)?)
-    })();
-    result.map_err(|error| error.to_string())
+pub async fn list_exam_session_time_grade_options(app: AppHandle) -> Result<Vec<String>, String> {
+    let result = async {
+        let db = crate::db::connect(&app).await?;
+        load_effective_session_time_grade_options(&db).await
+    }
+    .await;
+    result.map_err(|error: AppError| error.to_string())
 }
 
-pub fn list_exam_session_times(
+pub async fn list_exam_session_times(
     app: AppHandle,
     params: Option<ListExamSessionTimesParams>,
 ) -> Result<Vec<ExamSessionTime>, String> {
-    let result = (|| -> Result<Vec<ExamSessionTime>, AppError> {
-        let conn = score::open_connection(&app)?;
-        exam_allocation::ensure_schema(&conn)?;
-        let grade_options = load_effective_session_time_grade_options(&conn)?;
+    let result = async {
+        let db = crate::db::connect(&app).await?;
+        let grade_options = load_effective_session_time_grade_options(&db).await?;
         let selected_grade = params
             .as_ref()
             .and_then(|value| value.grade_name.as_ref())
@@ -3716,20 +3482,19 @@ pub fn list_exam_session_times(
         let Some(selected_grade) = selected_grade else {
             return Ok(Vec::new());
         };
-        load_session_time_template_rows(&conn, &selected_grade)
-    })();
-    result.map_err(|error| error.to_string())
+        load_session_time_template_rows(&db, &selected_grade).await
+    }
+    .await;
+    result.map_err(|error: AppError| error.to_string())
 }
 
-pub fn upsert_exam_session_times(
+pub async fn upsert_exam_session_times(
     app: AppHandle,
     items: Vec<ExamSessionTimeUpsert>,
 ) -> Result<SuccessResponse, String> {
-    let result = (|| -> Result<SuccessResponse, AppError> {
-        let mut conn = score::open_connection(&app)?;
-        exam_allocation::ensure_schema(&conn)?;
-        let tx = conn.transaction()?;
+    let result = async {
         let now = Utc::now().to_rfc3339();
+        let mut rows = Vec::new();
         for item in items {
             let grade_name = item.grade_name.trim().to_string();
             if grade_name.is_empty() {
@@ -3740,92 +3505,63 @@ pub fn upsert_exam_session_times(
             let start_ts = parse_datetime_to_ts(&start_at)?;
             let end_ts = parse_datetime_to_ts(&end_at)?;
             duration_minutes(start_ts, end_ts)?;
-            tx.execute(
-                r#"
-                INSERT INTO exam_grade_subject_time_templates (grade_name, subject, start_at, end_at, updated_at)
-                VALUES (?1, ?2, ?3, ?4, ?5)
-                ON CONFLICT(grade_name, subject) DO UPDATE SET
-                    start_at = excluded.start_at,
-                    end_at = excluded.end_at,
-                    updated_at = excluded.updated_at
-                "#,
-                params![grade_name, item.subject.as_key(), &start_at, &end_at, &now],
-            )?;
-            let session_exists = item.session_id > 0
-                && tx
-                    .query_row(
-                        "SELECT 1 FROM latest_exam_plan_sessions WHERE id = ?1",
-                        params![item.session_id],
-                        |row| row.get::<_, i64>(0),
-                    )
-                    .ok()
-                    .is_some();
-            if session_exists {
-                tx.execute(
-                    r#"
-                    INSERT INTO exam_session_times (session_id, subject, start_at, end_at, updated_at)
-                    VALUES (?1, ?2, ?3, ?4, ?5)
-                    ON CONFLICT(session_id) DO UPDATE SET
-                        subject = excluded.subject,
-                        start_at = excluded.start_at,
-                        end_at = excluded.end_at,
-                        updated_at = excluded.updated_at
-                    "#,
-                    params![item.session_id, item.subject.as_key(), &start_at, &end_at, &now],
-                )?;
-            }
+            rows.push(exam_staff_repo::UpsertSessionTimeRow {
+                session_id: item.session_id,
+                grade_name,
+                subject: item.subject.as_key().to_string(),
+                start_at,
+                end_at,
+            });
         }
-        tx.commit()?;
+        let db = crate::db::connect(&app).await?;
+        exam_staff_repo::upsert_session_times(&db, &rows, &now).await?;
         Ok(SuccessResponse::ok())
-    })();
-    result.map_err(|error| error.to_string())
+    }
+    .await;
+    result.map_err(|error: AppError| error.to_string())
 }
 
-pub fn delete_exam_session_time(
+pub async fn delete_exam_session_time(
     app: AppHandle,
     grade_name: String,
     subject: Subject,
 ) -> Result<SuccessResponse, String> {
-    let result = (|| -> Result<SuccessResponse, AppError> {
-        let mut conn = score::open_connection(&app)?;
-        exam_allocation::ensure_schema(&conn)?;
-        let tx = conn.transaction()?;
+    let result = async {
         let trimmed_grade_name = grade_name.trim();
         if trimmed_grade_name.is_empty() {
             return Err(AppError::new("年级不能为空"));
         }
-        tx.execute(
-            "DELETE FROM exam_grade_subject_time_templates WHERE grade_name = ?1 AND subject = ?2",
-            params![trimmed_grade_name, subject.as_key()],
-        )?;
-        tx.commit()?;
+        let db = crate::db::connect(&app).await?;
+        exam_staff_repo::delete_session_time_template(&db, trimmed_grade_name, subject.as_key())
+            .await?;
         Ok(SuccessResponse::ok())
-    })();
-    result.map_err(|error| error.to_string())
+    }
+    .await;
+    result.map_err(|error: AppError| error.to_string())
 }
 
-pub fn generate_latest_exam_staff_plan(
+pub async fn generate_latest_exam_staff_plan(
     app: AppHandle,
     payload: GenerateExamStaffPlanPayload,
 ) -> Result<GenerateLatestExamStaffPlanResult, String> {
     let progress = StaffAssignmentProgressReporter::new(app.clone());
-    let result = (|| -> Result<GenerateLatestExamStaffPlanResult, AppError> {
-        let mut conn = score::open_connection(&app)?;
-        exam_allocation::ensure_schema(&conn)?;
+    let result = async {
+        let db = crate::db::connect(&app).await?;
         let log_path = app_log::log_path(&app).ok();
-        ensure_invigilation_custom_rule_schema(&conn)?;
         let mut config = build_config_from_payload(&payload);
-        hydrate_runtime_middle_manager_config(&conn, &mut config)?;
-        config.self_study_class_subjects = load_self_study_class_subjects(&conn)?;
+        hydrate_runtime_middle_manager_config(&db, &mut config).await?;
+        config.self_study_class_subjects = load_self_study_class_subjects(&db).await?;
         let custom_rules = payload.custom_rules;
         generate_latest_exam_staff_plan_internal(
-            &mut conn,
+            &db,
             config,
             custom_rules,
             log_path.as_deref(),
             Some(&progress),
         )
-    })();
+        .await
+    }
+    .await;
     match result {
         Ok(result) => Ok(result),
         Err(error) => {
@@ -3835,13 +3571,12 @@ pub fn generate_latest_exam_staff_plan(
     }
 }
 
-pub fn list_invigilation_exclusion_session_options(
+pub async fn list_invigilation_exclusion_session_options(
     app: AppHandle,
 ) -> Result<Vec<InvigilationExclusionSessionOption>, String> {
-    let result = (|| -> Result<Vec<InvigilationExclusionSessionOption>, AppError> {
-        let conn = score::open_connection(&app)?;
-        exam_allocation::ensure_schema(&conn)?;
-        let rows = load_session_times_runtime(&conn)?;
+    let result = async {
+        let db = crate::db::connect(&app).await?;
+        let rows = load_configured_session_times_runtime(&db).await?;
         let mut items = Vec::new();
         for row in rows {
             let start_at = row.start_at.clone();
@@ -3875,20 +3610,17 @@ pub fn list_invigilation_exclusion_session_options(
             });
         }
         Ok(items)
-    })();
-    result.map_err(|error| error.to_string())
+    }
+    .await;
+    result.map_err(|error: AppError| error.to_string())
 }
 
-pub fn list_invigilation_custom_rule_options(
+pub async fn list_invigilation_custom_rule_options(
     app: AppHandle,
 ) -> Result<InvigilationRuleOptions, String> {
-    let result = (|| -> Result<InvigilationRuleOptions, AppError> {
-        let conn = score::open_connection(&app)?;
-        exam_allocation::ensure_schema(&conn)?;
-        remove_legacy_monitor_draw_fixed_pairs_column(&conn)?;
-        ensure_invigilation_custom_rule_schema(&conn)?;
-
-        let session_times = load_session_times_runtime(&conn)?;
+    let result = async {
+        let db = crate::db::connect(&app).await?;
+        let session_times = load_configured_session_times_runtime(&db).await?;
         let exam_session_options = session_times
             .iter()
             .map(|session| InvigilationRuleTimeScopeOption {
@@ -3904,17 +3636,8 @@ pub fn list_invigilation_custom_rule_options(
             })
             .collect::<Vec<_>>();
 
-        let config = load_runtime_invigilation_config(&conn)?;
-        let class_subject_map = load_class_subject_map(&conn)?;
-        let teaching_classes = load_teaching_classes(&conn)?;
-        let tasks = build_staff_tasks(
-            &conn,
-            &session_times,
-            &config,
-            &class_subject_map,
-            &teaching_classes,
-        )
-        .unwrap_or_default();
+        let config = load_runtime_invigilation_config(&db).await?;
+        let teaching_classes = load_teaching_classes(&db).await?;
 
         let full_self_study_option = if !config.self_study_date.trim().is_empty()
             && !config.self_study_start_time.trim().is_empty()
@@ -3938,64 +3661,18 @@ pub fn list_invigilation_custom_rule_options(
             None
         };
 
-        let mut seen = HashSet::<(String, String, Option<i64>, String)>::new();
-        let mut target_options = Vec::<InvigilationRuleTargetOption>::new();
-        for task in tasks {
-            let task_scope_type = rule_task_scope_for_task(&task).to_string();
-            let time_scope_type = rule_time_scope_for_task(&task).to_string();
-            let time_scope_id = task.session_id;
-            let subtitle = Some(match task.task_source {
-                StaffTaskSource::ExamLinkedSelfStudy => self_study_topic_subtitle(&task)
-                    .unwrap_or_else(|| {
-                        build_session_label(
-                            &task.grade_name,
-                            task.subject,
-                            &task.start_at,
-                            &task.end_at,
-                        )
-                    }),
-                StaffTaskSource::FullSelfStudy => format!("{} {}", task.start_at, task.end_at),
-                _ => build_session_label(
-                    &task.grade_name,
-                    task.subject,
-                    &task.start_at,
-                    &task.end_at,
-                ),
-            });
-            let key = (
-                task_scope_type.clone(),
-                time_scope_type.clone(),
-                time_scope_id,
-                task.rule_target_id.clone(),
-            );
-            if !seen.insert(key) {
-                continue;
-            }
-            target_options.push(InvigilationRuleTargetOption {
-                id: task.rule_target_id.clone(),
-                label: task.space_name.clone(),
-                subtitle,
-                time_scope_type,
-                time_scope_id,
-                task_scope_type,
-            });
-        }
-
-        target_options.sort_by(|a, b| {
-            a.task_scope_type
-                .cmp(&b.task_scope_type)
-                .then(a.time_scope_type.cmp(&b.time_scope_type))
-                .then(a.time_scope_id.cmp(&b.time_scope_id))
-                .then(a.label.cmp(&b.label))
-        });
+        let target_options =
+            build_rule_target_options_from_spaces(&db, &session_times, &config, &teaching_classes)
+                .await?;
 
         Ok(InvigilationRuleOptions {
             exam_session_options,
             full_self_study_option,
             target_options,
         })
-    })();
-    result.map_err(|error| error.to_string())
+    }
+    .await;
+    result.map_err(|error: AppError| error.to_string())
 }
 
 fn default_persisted_invigilation_config() -> PersistedInvigilationConfig {
@@ -4009,149 +3686,6 @@ fn default_persisted_invigilation_config() -> PersistedInvigilationConfig {
         self_study_start_time: "12:10".to_string(),
         self_study_end_time: "13:40".to_string(),
     }
-}
-
-fn remove_legacy_monitor_draw_fixed_pairs_column(conn: &Connection) -> Result<(), AppError> {
-    let mut stmt = conn.prepare("PRAGMA table_info(invigilation_config_settings)")?;
-    let rows = stmt.query_map([], |row| row.get::<_, String>(1))?;
-    let mut has_legacy_column = false;
-    for row in rows {
-        if row?.eq("monitor_draw_fixed_pairs_json") {
-            has_legacy_column = true;
-            break;
-        }
-    }
-    if !has_legacy_column {
-        return Ok(());
-    }
-
-    conn.execute_batch(
-        r#"
-        BEGIN IMMEDIATE;
-        CREATE TABLE IF NOT EXISTS invigilation_config_settings_new (
-            id INTEGER PRIMARY KEY,
-            default_exam_room_required_count INTEGER NOT NULL DEFAULT 1,
-            indoor_allowance_per_minute REAL NOT NULL DEFAULT 0.5,
-            outdoor_allowance_per_minute REAL NOT NULL DEFAULT 0.3,
-            middle_manager_default_enabled INTEGER NOT NULL DEFAULT 0,
-            middle_manager_exception_teacher_ids_json TEXT NOT NULL DEFAULT '[]',
-            self_study_date TEXT NOT NULL DEFAULT '',
-            self_study_start_time TEXT NOT NULL DEFAULT '12:10',
-            self_study_end_time TEXT NOT NULL DEFAULT '13:40',
-            self_study_class_subjects_json TEXT NOT NULL DEFAULT '[]',
-            updated_at TEXT NOT NULL
-        );
-        INSERT INTO invigilation_config_settings_new
-        (id, default_exam_room_required_count, indoor_allowance_per_minute, outdoor_allowance_per_minute, middle_manager_default_enabled, middle_manager_exception_teacher_ids_json, self_study_date, self_study_start_time, self_study_end_time, self_study_class_subjects_json, updated_at)
-        SELECT
-            id,
-            default_exam_room_required_count,
-            indoor_allowance_per_minute,
-            outdoor_allowance_per_minute,
-            middle_manager_default_enabled,
-            middle_manager_exception_teacher_ids_json,
-            self_study_date,
-            self_study_start_time,
-            self_study_end_time,
-            self_study_class_subjects_json,
-            updated_at
-        FROM invigilation_config_settings;
-        DROP TABLE invigilation_config_settings;
-        ALTER TABLE invigilation_config_settings_new RENAME TO invigilation_config_settings;
-        COMMIT;
-        "#,
-    )?;
-    Ok(())
-}
-
-fn ensure_invigilation_custom_rule_schema(conn: &Connection) -> Result<(), AppError> {
-    let mut stmt = conn.prepare("PRAGMA table_info(invigilation_custom_rules)")?;
-    let rows = stmt.query_map([], |row| row.get::<_, String>(1))?;
-    let mut columns = HashSet::<String>::new();
-    for row in rows {
-        columns.insert(row?);
-    }
-    if columns.is_empty() {
-        return Ok(());
-    }
-    let has_new_schema = columns.contains("action_type")
-        && columns.contains("time_scope_ids_json")
-        && columns.contains("task_scope_type")
-        && columns.contains("target_ids_json");
-    if has_new_schema {
-        return Ok(());
-    }
-
-    conn.execute_batch(
-        r#"
-        BEGIN IMMEDIATE;
-        CREATE TABLE IF NOT EXISTS invigilation_custom_rules_new (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            action_type TEXT NOT NULL DEFAULT 'exclude',
-            teacher_id INTEGER NOT NULL,
-            teacher_name TEXT NOT NULL,
-            time_scope_type TEXT NOT NULL DEFAULT 'exam_session',
-            time_scope_ids_json TEXT NOT NULL DEFAULT '[]',
-            time_scope_labels_json TEXT NOT NULL DEFAULT '[]',
-            task_scope_type TEXT NOT NULL,
-            target_scope_type TEXT NOT NULL DEFAULT 'all',
-            target_ids_json TEXT NOT NULL DEFAULT '[]',
-            target_labels_json TEXT NOT NULL DEFAULT '[]',
-            created_at TEXT NOT NULL
-        );
-        INSERT INTO invigilation_custom_rules_new
-        (
-            id,
-            action_type,
-            teacher_id,
-            teacher_name,
-            time_scope_type,
-            time_scope_ids_json,
-            time_scope_labels_json,
-            task_scope_type,
-            target_scope_type,
-            target_ids_json,
-            target_labels_json,
-            created_at
-        )
-        SELECT
-            id,
-            CASE UPPER(COALESCE(rule_type, 'EXCLUDE'))
-                WHEN 'REQUIRE' THEN 'require'
-                ELSE 'exclude'
-            END,
-            teacher_id,
-            teacher_name,
-            CASE WHEN session_id IS NULL THEN 'full_self_study' ELSE 'exam_session' END,
-            CASE
-                WHEN session_id IS NULL THEN '[]'
-                ELSE json_array(session_id)
-            END,
-            CASE
-                WHEN session_label IS NULL OR TRIM(session_label) = '' THEN '[]'
-                ELSE json_array(session_label)
-            END,
-            CASE
-                WHEN task_role = 'floor_rover' THEN 'floor_rover'
-                WHEN task_role = 'self_study_supervisor' AND session_id IS NULL THEN 'full_self_study'
-                WHEN task_role = 'self_study_supervisor' THEN 'exam_linked_self_study'
-                ELSE 'exam_room'
-            END,
-            CASE WHEN space_name IS NULL OR TRIM(space_name) = '' THEN 'all' ELSE 'selected_targets' END,
-            '[]',
-            CASE
-                WHEN space_name IS NULL OR TRIM(space_name) = '' THEN '[]'
-                ELSE json_array(space_name)
-            END,
-            created_at
-        FROM invigilation_custom_rules;
-        DROP TABLE invigilation_custom_rules;
-        ALTER TABLE invigilation_custom_rules_new RENAME TO invigilation_custom_rules;
-        CREATE INDEX IF NOT EXISTS idx_invigilation_custom_rules_teacher ON invigilation_custom_rules(teacher_id);
-        COMMIT;
-        "#,
-    )?;
-    Ok(())
 }
 
 fn monitor_draw_cell_to_string(cell: Option<&Data>) -> String {
@@ -4189,8 +3723,6 @@ pub fn import_monitor_draw_pairs_from_excel(
     let result = (|| -> Result<MonitorDrawImportResult, AppError> {
         let conn = score::open_connection(&app)?;
         exam_allocation::ensure_schema(&conn)?;
-        remove_legacy_monitor_draw_fixed_pairs_column(&conn)?;
-
         let path_text = file_path.trim();
         if path_text.is_empty() {
             return Err(AppError::new("未提供可导入的 Excel 文件路径"));
@@ -4334,555 +3866,476 @@ fn build_session_label(grade_name: &str, subject: Subject, start_at: &str, end_a
     )
 }
 
-pub fn get_persisted_invigilation_state(
+async fn build_rule_target_options_from_spaces(
+    db: &sea_orm::DatabaseConnection,
+    session_times: &[SessionTimeRuntime],
+    config: &RuntimeInvigilationConfig,
+    teaching_classes: &[TeachingClassRuntime],
+) -> Result<Vec<InvigilationRuleTargetOption>, AppError> {
+    let mut seen = HashSet::<(String, String, Option<i64>, String)>::new();
+    let mut target_options = Vec::<InvigilationRuleTargetOption>::new();
+
+    for session in session_times {
+        let subtitle = build_session_label(
+            &session.grade_name,
+            session.subject,
+            &session.start_at,
+            &session.end_at,
+        );
+        let mut floors = HashSet::<String>::new();
+        for (space_id, space_type, space_name, original_class_name, self_study_topic, floor) in
+            load_spaces_for_session(db, session.session_id).await?
+        {
+            if !floor.trim().is_empty() {
+                floors.insert(floor);
+            }
+            let task_scope_type = match space_type {
+                SpaceType::ExamRoom => RULE_TASK_SCOPE_EXAM_ROOM,
+                SpaceType::SelfStudyRoom => RULE_TASK_SCOPE_EXAM_LINKED_SELF_STUDY,
+            }
+            .to_string();
+            let label = match space_type {
+                SpaceType::ExamRoom => space_name,
+                SpaceType::SelfStudyRoom => original_class_name.unwrap_or(space_name),
+            };
+            let item_subtitle = match space_type {
+                SpaceType::ExamRoom => Some(subtitle.clone()),
+                SpaceType::SelfStudyRoom => self_study_topic
+                    .as_ref()
+                    .map(|topic| topic.label.clone())
+                    .or_else(|| Some(subtitle.clone())),
+            };
+            let id = format!("space:{space_id}");
+            let key = (
+                task_scope_type.clone(),
+                RULE_TIME_SCOPE_EXAM_SESSION.to_string(),
+                Some(session.session_id),
+                id.clone(),
+            );
+            if seen.insert(key) {
+                target_options.push(InvigilationRuleTargetOption {
+                    id,
+                    label,
+                    subtitle: item_subtitle,
+                    time_scope_type: RULE_TIME_SCOPE_EXAM_SESSION.to_string(),
+                    time_scope_id: Some(session.session_id),
+                    task_scope_type,
+                });
+            }
+        }
+
+        for floor in floors {
+            let id = format!("floor:{}:{}", session.session_id, floor);
+            let key = (
+                RULE_TASK_SCOPE_FLOOR_ROVER.to_string(),
+                RULE_TIME_SCOPE_EXAM_SESSION.to_string(),
+                Some(session.session_id),
+                id.clone(),
+            );
+            if seen.insert(key) {
+                target_options.push(InvigilationRuleTargetOption {
+                    id,
+                    label: format!("{} 楼层流动", floor),
+                    subtitle: Some(subtitle.clone()),
+                    time_scope_type: RULE_TIME_SCOPE_EXAM_SESSION.to_string(),
+                    time_scope_id: Some(session.session_id),
+                    task_scope_type: RULE_TASK_SCOPE_FLOOR_ROVER.to_string(),
+                });
+            }
+        }
+    }
+
+    if !config.self_study_date.trim().is_empty()
+        && !config.self_study_start_time.trim().is_empty()
+        && !config.self_study_end_time.trim().is_empty()
+    {
+        let start_at = build_self_study_datetime(
+            &config.self_study_date,
+            &config.self_study_start_time,
+        )?;
+        let end_at =
+            build_self_study_datetime(&config.self_study_date, &config.self_study_end_time)?;
+        let subtitle = Some(format!("{} {}", start_at, end_at));
+        for teaching_class in teaching_classes {
+            if !config
+                .self_study_class_subjects
+                .contains_key(&teaching_class.id)
+            {
+                continue;
+            }
+            let id = format!("class:{}", teaching_class.id);
+            let key = (
+                RULE_TASK_SCOPE_FULL_SELF_STUDY.to_string(),
+                RULE_TIME_SCOPE_FULL_SELF_STUDY.to_string(),
+                None,
+                id.clone(),
+            );
+            if seen.insert(key) {
+                target_options.push(InvigilationRuleTargetOption {
+                    id,
+                    label: teaching_class.class_name.clone(),
+                    subtitle: subtitle.clone(),
+                    time_scope_type: RULE_TIME_SCOPE_FULL_SELF_STUDY.to_string(),
+                    time_scope_id: None,
+                    task_scope_type: RULE_TASK_SCOPE_FULL_SELF_STUDY.to_string(),
+                });
+            }
+        }
+    }
+
+    target_options.sort_by(|a, b| {
+        a.task_scope_type
+            .cmp(&b.task_scope_type)
+            .then(a.time_scope_type.cmp(&b.time_scope_type))
+            .then(a.time_scope_id.cmp(&b.time_scope_id))
+            .then(a.label.cmp(&b.label))
+    });
+    Ok(target_options)
+}
+
+pub async fn get_persisted_invigilation_state(
     app: AppHandle,
 ) -> Result<PersistedInvigilationState, String> {
-    let result = (|| -> Result<PersistedInvigilationState, AppError> {
-        let mut conn = score::open_connection(&app)?;
-        exam_allocation::ensure_schema(&conn)?;
-        remove_legacy_monitor_draw_fixed_pairs_column(&conn)?;
-        ensure_invigilation_custom_rule_schema(&conn)?;
-
-        let config = conn
-            .query_row(
-                r#"
-                SELECT
-                    default_exam_room_required_count,
-                    indoor_allowance_per_minute,
-                    outdoor_allowance_per_minute,
-                    middle_manager_default_enabled,
-                    middle_manager_exception_teacher_ids_json,
-                    self_study_date,
-                    self_study_start_time,
-                    self_study_end_time
-                FROM invigilation_config_settings
-                WHERE id = 1
-                "#,
-                [],
-                |row| {
-                    let self_study_date = row
-                        .get::<_, String>(5)
-                        .unwrap_or_default()
-                        .trim()
-                        .to_string();
-                    let middle_manager_exception_teacher_ids = row
-                        .get::<_, String>(4)
-                        .ok()
-                        .and_then(|text| serde_json::from_str::<Vec<i64>>(&text).ok())
+    let result = async {
+        let db = crate::db::connect(&app).await?;
+        let config_row = exam_staff_repo::get_config(&db).await?;
+        let config = config_row
+            .as_ref()
+            .map(|row| {
+                let self_study_date = row.self_study_date.trim().to_string();
+                let middle_manager_exception_teacher_ids =
+                    serde_json::from_str::<Vec<i64>>(&row.middle_manager_exception_teacher_ids_json)
                         .map(normalize_teacher_id_list)
                         .unwrap_or_default();
-                    Ok(PersistedInvigilationConfig {
-                        default_exam_room_required_count: row.get::<_, i64>(0)?.max(1),
-                        indoor_allowance_per_minute: row.get::<_, f64>(1)?.max(0.0),
-                        outdoor_allowance_per_minute: row.get::<_, f64>(2)?.max(0.0),
-                        middle_manager_default_enabled: row.get::<_, i64>(3)? == 1,
-                        middle_manager_exception_teacher_ids,
-                        self_study_date: if self_study_date.is_empty() {
-                            Utc::now().format("%Y-%m-%d").to_string()
-                        } else {
-                            self_study_date
-                        },
-                        self_study_start_time: row.get(6)?,
-                        self_study_end_time: row.get(7)?,
-                    })
-                },
-            )
-            .unwrap_or_else(|_| default_persisted_invigilation_config());
+                PersistedInvigilationConfig {
+                    default_exam_room_required_count: row.default_exam_room_required_count.max(1),
+                    indoor_allowance_per_minute: row.indoor_allowance_per_minute.max(0.0),
+                    outdoor_allowance_per_minute: row.outdoor_allowance_per_minute.max(0.0),
+                    middle_manager_default_enabled: row.middle_manager_default_enabled == 1,
+                    middle_manager_exception_teacher_ids,
+                    self_study_date: if self_study_date.is_empty() {
+                        Utc::now().format("%Y-%m-%d").to_string()
+                    } else {
+                        self_study_date
+                    },
+                    self_study_start_time: row.self_study_start_time.clone(),
+                    self_study_end_time: row.self_study_end_time.clone(),
+                }
+            })
+            .unwrap_or_else(default_persisted_invigilation_config);
 
-        let self_study_class_subjects = conn
-            .query_row(
-                "SELECT self_study_class_subjects_json FROM invigilation_config_settings WHERE id = 1",
-                [],
-                |row| row.get::<_, String>(0),
-            )
-            .ok()
+        let self_study_class_subjects = config_row
+            .map(|row| row.self_study_class_subjects_json)
             .and_then(|text| serde_json::from_str::<Vec<PersistedSelfStudyClassSubject>>(&text).ok())
             .unwrap_or_default();
 
-        let mut stmt = conn.prepare(
-            r#"
-            SELECT
-                action_type,
-                teacher_id,
-                teacher_name,
-                time_scope_type,
-                time_scope_ids_json,
-                time_scope_labels_json,
-                task_scope_type,
-                target_scope_type,
-                target_ids_json,
-                target_labels_json
-            FROM invigilation_custom_rules
-            ORDER BY id DESC
-            "#,
-        )?;
-        let rows = stmt.query_map([], |row| {
-            Ok(PersistedInvigilationCustomRule {
-                action_type: row.get(0)?,
-                teacher_id: row.get(1)?,
-                teacher_name: row.get(2)?,
-                time_scope_type: row.get(3)?,
-                time_scope_ids: parse_json_i64_list(&row.get::<_, String>(4)?),
-                time_scope_labels: parse_json_string_list(&row.get::<_, String>(5)?),
-                task_scope_type: row.get(6)?,
-                target_scope_type: row.get(7)?,
-                target_ids: parse_json_string_list(&row.get::<_, String>(8)?),
-                target_labels: parse_json_string_list(&row.get::<_, String>(9)?),
+        let custom_rules = exam_staff_repo::list_custom_rules(&db)
+            .await?
+            .into_iter()
+            .map(|row| PersistedInvigilationCustomRule {
+                action_type: row.action_type,
+                teacher_id: row.teacher_id,
+                teacher_name: row.teacher_name,
+                time_scope_type: row.time_scope_type,
+                time_scope_ids: parse_json_i64_list(&row.time_scope_ids_json),
+                time_scope_labels: parse_json_string_list(&row.time_scope_labels_json),
+                task_scope_type: row.task_scope_type,
+                target_scope_type: row.target_scope_type,
+                target_ids: parse_json_string_list(&row.target_ids_json),
+                target_labels: parse_json_string_list(&row.target_labels_json),
             })
-        })?;
-        let mut custom_rules = Vec::new();
-        for row in rows {
-            custom_rules.push(row?);
-        }
-        drop(stmt);
+            .collect();
 
         Ok(PersistedInvigilationState {
             config,
             custom_rules,
             self_study_class_subjects,
         })
-    })();
-    result.map_err(|e| e.to_string())
+    }
+    .await;
+    result.map_err(|e: AppError| e.to_string())
 }
 
-pub fn save_persisted_invigilation_config(
+pub async fn save_persisted_invigilation_config(
     app: AppHandle,
     payload: PersistedInvigilationConfig,
 ) -> Result<SuccessResponse, String> {
-    let result = (|| -> Result<SuccessResponse, AppError> {
-        let conn = score::open_connection(&app)?;
-        exam_allocation::ensure_schema(&conn)?;
-        remove_legacy_monitor_draw_fixed_pairs_column(&conn)?;
-        ensure_invigilation_custom_rule_schema(&conn)?;
+    let result = async {
+        let db = crate::db::connect(&app).await?;
         let now = Utc::now().to_rfc3339();
         let middle_manager_exception_teacher_ids_json = serde_json::to_string(
             &normalize_teacher_id_list(payload.middle_manager_exception_teacher_ids.clone()),
         )
         .map_err(|e| AppError::new(format!("中层监考例外序列化失败: {e}")))?;
-        conn.execute(
-            r#"
-            INSERT INTO invigilation_config_settings
-            (id, default_exam_room_required_count, indoor_allowance_per_minute, outdoor_allowance_per_minute, middle_manager_default_enabled, middle_manager_exception_teacher_ids_json, self_study_date, self_study_start_time, self_study_end_time, updated_at)
-            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
-            ON CONFLICT(id) DO UPDATE SET
-                default_exam_room_required_count = excluded.default_exam_room_required_count,
-                indoor_allowance_per_minute = excluded.indoor_allowance_per_minute,
-                outdoor_allowance_per_minute = excluded.outdoor_allowance_per_minute,
-                middle_manager_default_enabled = excluded.middle_manager_default_enabled,
-                middle_manager_exception_teacher_ids_json = excluded.middle_manager_exception_teacher_ids_json,
-                self_study_date = excluded.self_study_date,
-                self_study_start_time = excluded.self_study_start_time,
-                self_study_end_time = excluded.self_study_end_time,
-                updated_at = excluded.updated_at
-            "#,
-            params![
-                1_i64,
-                payload.default_exam_room_required_count.max(1),
-                payload.indoor_allowance_per_minute.max(0.0),
-                payload.outdoor_allowance_per_minute.max(0.0),
-                if payload.middle_manager_default_enabled { 1_i64 } else { 0_i64 },
-                middle_manager_exception_teacher_ids_json,
-                payload.self_study_date.trim(),
-                payload.self_study_start_time.trim(),
-                payload.self_study_end_time.trim(),
-                now
-            ],
-        )?;
+        exam_staff_repo::upsert_config(
+            &db,
+            invigilation_config_settings::ActiveModel {
+                id: sea_orm::ActiveValue::Set(1),
+                default_exam_room_required_count: sea_orm::ActiveValue::Set(
+                    payload.default_exam_room_required_count.max(1),
+                ),
+                indoor_allowance_per_minute: sea_orm::ActiveValue::Set(
+                    payload.indoor_allowance_per_minute.max(0.0),
+                ),
+                outdoor_allowance_per_minute: sea_orm::ActiveValue::Set(
+                    payload.outdoor_allowance_per_minute.max(0.0),
+                ),
+                middle_manager_default_enabled: sea_orm::ActiveValue::Set(
+                    if payload.middle_manager_default_enabled { 1 } else { 0 },
+                ),
+                middle_manager_exception_teacher_ids_json: sea_orm::ActiveValue::Set(
+                    middle_manager_exception_teacher_ids_json,
+                ),
+                self_study_date: sea_orm::ActiveValue::Set(
+                    payload.self_study_date.trim().to_string(),
+                ),
+                self_study_start_time: sea_orm::ActiveValue::Set(
+                    payload.self_study_start_time.trim().to_string(),
+                ),
+                self_study_end_time: sea_orm::ActiveValue::Set(
+                    payload.self_study_end_time.trim().to_string(),
+                ),
+                self_study_class_subjects_json: sea_orm::ActiveValue::Set("[]".to_string()),
+                updated_at: sea_orm::ActiveValue::Set(now),
+            },
+        )
+        .await?;
         Ok(SuccessResponse::ok())
-    })();
-    result.map_err(|e| e.to_string())
+    }
+    .await;
+    result.map_err(|e: AppError| e.to_string())
 }
 
-pub fn save_persisted_self_study_class_subjects(
+pub async fn save_persisted_self_study_class_subjects(
     app: AppHandle,
     items: Vec<PersistedSelfStudyClassSubject>,
 ) -> Result<SuccessResponse, String> {
-    let result = (|| -> Result<SuccessResponse, AppError> {
-        let conn = score::open_connection(&app)?;
-        exam_allocation::ensure_schema(&conn)?;
-        remove_legacy_monitor_draw_fixed_pairs_column(&conn)?;
+    let result = async {
+        let db = crate::db::connect(&app).await?;
         let now = Utc::now().to_rfc3339();
         let json_text = serde_json::to_string(&items)
             .map_err(|e| AppError::new(format!("自习科目配置序列化失败: {e}")))?;
-        conn.execute(
-            r#"
-            INSERT INTO invigilation_config_settings
-            (id, default_exam_room_required_count, indoor_allowance_per_minute, outdoor_allowance_per_minute, middle_manager_default_enabled, middle_manager_exception_teacher_ids_json, self_study_date, self_study_start_time, self_study_end_time, self_study_class_subjects_json, updated_at)
-            VALUES (
-                1,
-                COALESCE((SELECT default_exam_room_required_count FROM invigilation_config_settings WHERE id = 1), 1),
-                COALESCE((SELECT indoor_allowance_per_minute FROM invigilation_config_settings WHERE id = 1), 0.5),
-                COALESCE((SELECT outdoor_allowance_per_minute FROM invigilation_config_settings WHERE id = 1), 0.3),
-                COALESCE((SELECT middle_manager_default_enabled FROM invigilation_config_settings WHERE id = 1), 0),
-                COALESCE((SELECT middle_manager_exception_teacher_ids_json FROM invigilation_config_settings WHERE id = 1), '[]'),
-                COALESCE((SELECT self_study_date FROM invigilation_config_settings WHERE id = 1), ''),
-                COALESCE((SELECT self_study_start_time FROM invigilation_config_settings WHERE id = 1), '12:10'),
-                COALESCE((SELECT self_study_end_time FROM invigilation_config_settings WHERE id = 1), '13:40'),
-                ?1,
-                ?2
-            )
-            ON CONFLICT(id) DO UPDATE SET
-                self_study_class_subjects_json = excluded.self_study_class_subjects_json,
-                updated_at = excluded.updated_at
-            "#,
-            params![json_text, now],
-        )?;
+        exam_staff_repo::update_self_study_class_subjects_json(&db, &json_text, &now).await?;
         Ok(SuccessResponse::ok())
-    })();
-    result.map_err(|e| e.to_string())
+    }
+    .await;
+    result.map_err(|e: AppError| e.to_string())
 }
 
-pub fn replace_persisted_invigilation_custom_rules(
+pub async fn replace_persisted_invigilation_custom_rules(
     app: AppHandle,
     items: Vec<PersistedInvigilationCustomRule>,
 ) -> Result<SuccessResponse, String> {
-    let result = (|| -> Result<SuccessResponse, AppError> {
-        let mut conn = score::open_connection(&app)?;
-        exam_allocation::ensure_schema(&conn)?;
-        remove_legacy_monitor_draw_fixed_pairs_column(&conn)?;
-        ensure_invigilation_custom_rule_schema(&conn)?;
-        let session_times = load_session_times_runtime(&conn)?;
-        let config = load_runtime_invigilation_config(&conn)?;
-        let class_subject_map = load_class_subject_map(&conn)?;
-        let teaching_classes = load_teaching_classes(&conn)?;
+    let result = async {
+        let db = crate::db::connect(&app).await?;
+        let session_times = load_session_times_runtime(&db).await?;
+        let config = load_runtime_invigilation_config(&db).await?;
+        let class_subject_map = load_class_subject_map(&db).await?;
+        let teaching_classes = load_teaching_classes(&db).await?;
         let tasks = build_staff_tasks(
-            &conn,
+            &db,
             &session_times,
             &config,
             &class_subject_map,
             &teaching_classes,
-        )?;
+        )
+        .await?;
         validate_custom_rules_against_tasks(&items, &tasks)?;
-        let tx = conn.transaction()?;
-        tx.execute("DELETE FROM invigilation_custom_rules", [])?;
         let now = Utc::now().to_rfc3339();
+        let mut rows = Vec::new();
         for item in items {
             let time_scope_ids_json = to_json_i64_list(&item.time_scope_ids)?;
             let time_scope_labels_json = to_json_string_list(&item.time_scope_labels, "时段标签")?;
             let target_ids_json = to_json_string_list(&item.target_ids, "对象 ID")?;
             let target_labels_json = to_json_string_list(&item.target_labels, "对象标签")?;
-            tx.execute(
-                r#"
-                INSERT INTO invigilation_custom_rules
-                (
-                    action_type,
-                    teacher_id,
-                    teacher_name,
-                    time_scope_type,
-                    time_scope_ids_json,
-                    time_scope_labels_json,
-                    task_scope_type,
-                    target_scope_type,
-                    target_ids_json,
-                    target_labels_json,
-                    created_at
-                )
-                VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
-                "#,
-                params![
-                    item.action_type,
-                    item.teacher_id,
-                    item.teacher_name.trim(),
-                    item.time_scope_type,
-                    time_scope_ids_json,
-                    time_scope_labels_json,
-                    item.task_scope_type,
-                    item.target_scope_type,
-                    target_ids_json,
-                    target_labels_json,
-                    now
-                ],
-            )?;
+            rows.push(crate::entity::invigilation_custom_rules::ActiveModel {
+                action_type: sea_orm::ActiveValue::Set(item.action_type),
+                teacher_id: sea_orm::ActiveValue::Set(item.teacher_id),
+                teacher_name: sea_orm::ActiveValue::Set(item.teacher_name.trim().to_string()),
+                time_scope_type: sea_orm::ActiveValue::Set(item.time_scope_type),
+                time_scope_ids_json: sea_orm::ActiveValue::Set(time_scope_ids_json),
+                time_scope_labels_json: sea_orm::ActiveValue::Set(time_scope_labels_json),
+                task_scope_type: sea_orm::ActiveValue::Set(item.task_scope_type),
+                target_scope_type: sea_orm::ActiveValue::Set(item.target_scope_type),
+                target_ids_json: sea_orm::ActiveValue::Set(target_ids_json),
+                target_labels_json: sea_orm::ActiveValue::Set(target_labels_json),
+                created_at: sea_orm::ActiveValue::Set(now.clone()),
+                ..Default::default()
+            });
         }
-        tx.commit()?;
+        exam_staff_repo::replace_custom_rules(&db, rows).await?;
         Ok(SuccessResponse::ok())
-    })();
-    result.map_err(|e| e.to_string())
+    }
+    .await;
+    result.map_err(|e: AppError| e.to_string())
 }
 
-pub fn get_latest_exam_staff_plan_overview(
+pub async fn get_latest_exam_staff_plan_overview(
     app: AppHandle,
 ) -> Result<ExamStaffPlanOverview, String> {
-    let result = (|| -> Result<ExamStaffPlanOverview, AppError> {
-        let conn = score::open_connection(&app)?;
-        exam_allocation::ensure_schema(&conn)?;
-        let meta: Option<(
-            String,
-            i64,
-            i64,
-            i64,
-            i64,
-            i64,
-            i64,
-            String,
-            String,
-            i64,
-            Option<String>,
-            i64,
-        )> = conn
-            .query_row(
-                "SELECT generated_at, session_count, task_count, assigned_count, unassigned_count, warning_count, imbalance_minutes, solver_engine, optimality_status, solve_duration_ms, fallback_reason, fallback_pool_assignments FROM latest_exam_staff_plan_meta WHERE id = 1",
-                [],
-                |row| {
-                    Ok((
-                        row.get(0)?,
-                        row.get(1)?,
-                        row.get(2)?,
-                        row.get(3)?,
-                        row.get(4)?,
-                        row.get(5)?,
-                        row.get(6)?,
-                        row.get(7)?,
-                        row.get(8)?,
-                        row.get(9)?,
-                        row.get(10)?,
-                        row.get(11)?,
-                    ))
-                },
-            )
-            .ok();
+    let result = async {
+        let db = crate::db::connect(&app).await?;
+        let meta = exam_staff_repo::latest_plan_meta(&db).await?;
         Ok(ExamStaffPlanOverview {
-            generated_at: meta.as_ref().map(|value| value.0.clone()),
-            session_count: meta.as_ref().map(|value| value.1).unwrap_or(0),
-            task_count: meta.as_ref().map(|value| value.2).unwrap_or(0),
-            assigned_count: meta.as_ref().map(|value| value.3).unwrap_or(0),
-            unassigned_count: meta.as_ref().map(|value| value.4).unwrap_or(0),
-            warning_count: meta.as_ref().map(|value| value.5).unwrap_or(0),
-            imbalance_minutes: meta.as_ref().map(|value| value.6).unwrap_or(0),
+            generated_at: meta.as_ref().map(|value| value.generated_at.clone()),
+            session_count: meta.as_ref().map(|value| value.session_count).unwrap_or(0),
+            task_count: meta.as_ref().map(|value| value.task_count).unwrap_or(0),
+            assigned_count: meta.as_ref().map(|value| value.assigned_count).unwrap_or(0),
+            unassigned_count: meta.as_ref().map(|value| value.unassigned_count).unwrap_or(0),
+            warning_count: meta.as_ref().map(|value| value.warning_count).unwrap_or(0),
+            imbalance_minutes: meta.as_ref().map(|value| value.imbalance_minutes).unwrap_or(0),
             solver_engine: meta
                 .as_ref()
-                .and_then(|value| SolverEngine::from_key(&value.7))
+                .and_then(|value| SolverEngine::from_key(&value.solver_engine))
                 .unwrap_or(SolverEngine::CpSat),
             optimality_status: meta
                 .as_ref()
-                .and_then(|value| OptimalityStatus::from_key(&value.8))
+                .and_then(|value| OptimalityStatus::from_key(&value.optimality_status))
                 .unwrap_or(OptimalityStatus::Feasible),
-            solve_duration_ms: meta.as_ref().map(|value| value.9).unwrap_or(0),
+            solve_duration_ms: meta.as_ref().map(|value| value.solve_duration_ms).unwrap_or(0),
             fallback_reason: meta
                 .as_ref()
-                .and_then(|value| value.10.as_deref().and_then(FallbackReason::from_key)),
-            fallback_pool_assignments: meta.as_ref().map(|value| value.11).unwrap_or(0),
+                .and_then(|value| value.fallback_reason.as_deref().and_then(FallbackReason::from_key)),
+            fallback_pool_assignments: meta
+                .as_ref()
+                .map(|value| value.fallback_pool_assignments)
+                .unwrap_or(0),
         })
-    })();
-    result.map_err(|error| error.to_string())
+    }
+    .await;
+    result.map_err(|error: AppError| error.to_string())
 }
 
-pub fn list_latest_exam_staff_tasks(
+pub async fn list_latest_exam_staff_tasks(
     app: AppHandle,
     params: ListExamStaffTasksParams,
 ) -> Result<ListResult<ExamStaffTask>, String> {
-    let result = (|| -> Result<ListResult<ExamStaffTask>, AppError> {
-        let conn = score::open_connection(&app)?;
-        exam_allocation::ensure_schema(&conn)?;
-        let mut where_parts = Vec::new();
-        let mut bind_values = Vec::<Value>::new();
-        if let Some(session_id) = params.session_id {
-            where_parts.push("t.session_id = ?".to_string());
-            bind_values.push(Value::Integer(session_id));
-        }
-        if let Some(role) = params.role {
-            where_parts.push("t.role = ?".to_string());
-            bind_values.push(Value::Text(role.as_key().to_string()));
-        }
-        if let Some(status) = params.status {
-            where_parts.push("t.status = ?".to_string());
-            bind_values.push(Value::Text(status.as_key().to_string()));
-        }
-        let where_sql = if where_parts.is_empty() {
-            String::new()
-        } else {
-            format!(" WHERE {}", where_parts.join(" AND "))
-        };
-        let total_sql = format!("SELECT COUNT(*) FROM latest_exam_staff_tasks t{where_sql}");
-        let total: i64 =
-            conn.query_row(&total_sql, params_from_iter(bind_values.iter()), |row| {
-                row.get(0)
-            })?;
-
+    let result = async {
+        let db = crate::db::connect(&app).await?;
         let page = params.page.unwrap_or(1).max(1);
         let page_size = params.page_size.unwrap_or(200).clamp(1, 1000);
-        let offset = (page - 1) * page_size;
-        let mut query_values = bind_values;
-        query_values.push(Value::Integer(page_size));
-        query_values.push(Value::Integer(offset));
-
-        let list_sql = format!(
-            r#"
-            SELECT
-              t.id, t.session_id, t.space_id, t.task_source, t.role, t.grade_name, t.subject, t.space_name, t.floor,
-              t.start_at, t.end_at, t.duration_minutes, t.recommended_self_study_topic_kind, t.recommended_self_study_topic_subjects_json, t.recommended_self_study_topic_label, t.priority_self_study_chain_json, t.assignment_tier, t.status, t.reason, t.allowance_amount,
-              a.teacher_id, a.teacher_name
-            FROM latest_exam_staff_tasks t
-            LEFT JOIN latest_exam_staff_assignments a ON a.task_id = t.id
-            {where_sql}
-            ORDER BY t.start_at ASC, CASE WHEN t.session_id IS NULL THEN 1 ELSE 0 END ASC, t.session_id ASC, t.id ASC
-            LIMIT ? OFFSET ?
-            "#
-        );
-        let mut stmt = conn.prepare(&list_sql)?;
-        let rows = stmt.query_map(params_from_iter(query_values.iter()), |row| {
-            let task_source_key: String = row.get(3)?;
-            let role_key: String = row.get(4)?;
-            let subject_key: String = row.get(6)?;
-            let status_key: String = row.get(17)?;
-            let task_source = StaffTaskSource::from_key(&task_source_key).ok_or_else(|| {
-                rusqlite::Error::InvalidColumnType(
-                    3,
-                    "task_source".to_string(),
-                    rusqlite::types::Type::Text,
-                )
-            })?;
-            let role = StaffRole::from_key(&role_key).ok_or_else(|| {
-                rusqlite::Error::InvalidColumnType(
-                    4,
-                    "role".to_string(),
-                    rusqlite::types::Type::Text,
-                )
-            })?;
-            let subject = Subject::from_key(&subject_key).ok_or_else(|| {
-                rusqlite::Error::InvalidColumnType(
-                    6,
-                    "subject".to_string(),
-                    rusqlite::types::Type::Text,
-                )
-            })?;
-            let status = TaskStatus::from_key(&status_key).ok_or_else(|| {
-                rusqlite::Error::InvalidColumnType(
-                    17,
-                    "status".to_string(),
-                    rusqlite::types::Type::Text,
-                )
-            })?;
+        let rows = exam_staff_repo::list_tasks(
+            &db,
+            exam_staff_repo::TaskListFilters {
+                session_id: params.session_id,
+                role: params.role.map(|role| role.as_key().to_string()),
+                status: params.status.map(|status| status.as_key().to_string()),
+                page,
+                page_size,
+            },
+        )
+        .await?;
+        let mut items = Vec::new();
+        for row in rows.items {
+            let task = row.task;
+            let task_source = StaffTaskSource::from_key(&task.task_source)
+                .ok_or_else(|| AppError::new(format!("无效的任务来源: {}", task.task_source)))?;
+            let role = StaffRole::from_key(&task.role)
+                .ok_or_else(|| AppError::new(format!("无效的岗位: {}", task.role)))?;
+            let subject = Subject::from_key(&task.subject)
+                .ok_or_else(|| AppError::new(format!("无效的科目: {}", task.subject)))?;
+            let status = TaskStatus::from_key(&task.status)
+                .ok_or_else(|| AppError::new(format!("无效的任务状态: {}", task.status)))?;
             let recommended_self_study_topic = self_study_topic_from_parts(
-                row.get::<_, Option<String>>(12)?,
-                row.get::<_, Option<String>>(13)?,
-                row.get::<_, Option<String>>(14)?,
-            )
-            .map_err(|e| {
-                rusqlite::Error::FromSqlConversionFailure(
-                    12,
-                    rusqlite::types::Type::Text,
-                    Box::new(std::io::Error::new(
-                        std::io::ErrorKind::InvalidData,
-                        e.to_string(),
-                    )),
-                )
-            })?;
-            let chain_text: String = row.get(15)?;
-            let assignment_tier = row
-                .get::<_, Option<String>>(16)?
+                task.recommended_self_study_topic_kind.clone(),
+                task.recommended_self_study_topic_subjects_json.clone(),
+                task.recommended_self_study_topic_label.clone(),
+            )?;
+            let assignment_tier = task
+                .assignment_tier
                 .as_deref()
                 .and_then(AssignmentTier::from_key);
-            Ok(ExamStaffTask {
-                id: row.get(0)?,
-                session_id: row.get(1)?,
-                space_id: row.get(2)?,
+            items.push(ExamStaffTask {
+                id: task.id,
+                session_id: task.session_id,
+                space_id: task.space_id,
                 task_source,
                 role,
-                grade_name: row.get(5)?,
+                grade_name: task.grade_name,
                 subject,
-                space_name: row.get(7)?,
-                floor: row.get(8)?,
-                start_at: row.get(9)?,
-                end_at: row.get(10)?,
-                duration_minutes: row.get(11)?,
+                space_name: task.space_name,
+                floor: task.floor,
+                start_at: task.start_at,
+                end_at: task.end_at,
+                duration_minutes: task.duration_minutes,
                 recommended_self_study_topic,
-                priority_self_study_chain: self_study_topic_chain_from_text(&chain_text).map_err(
-                    |e| {
-                        rusqlite::Error::FromSqlConversionFailure(
-                            15,
-                            rusqlite::types::Type::Text,
-                            Box::new(std::io::Error::new(
-                                std::io::ErrorKind::InvalidData,
-                                e.to_string(),
-                            )),
-                        )
-                    },
+                priority_self_study_chain: self_study_topic_chain_from_text(
+                    &task.priority_self_study_chain_json,
                 )?,
                 assignment_tier,
                 status,
-                reason: row.get(18)?,
-                allowance_amount: row.get(19)?,
-                teacher_id: row.get(20)?,
-                teacher_name: row.get(21)?,
-            })
-        })?;
-        let mut items = Vec::new();
-        for row in rows {
-            items.push(row?);
+                reason: task.reason,
+                allowance_amount: task.allowance_amount,
+                teacher_id: row.assignment.as_ref().map(|item| item.teacher_id),
+                teacher_name: row.assignment.map(|item| item.teacher_name),
+            });
         }
-        Ok(ListResult { items, total })
-    })();
-    result.map_err(|error| error.to_string())
+        Ok(ListResult {
+            total: rows.total,
+            items,
+        })
+    }
+    .await;
+    result.map_err(|error: AppError| error.to_string())
 }
 
-pub fn list_latest_teacher_duty_stats(
+pub async fn list_latest_teacher_duty_stats(
     app: AppHandle,
     params: ListTeacherDutyStatsParams,
 ) -> Result<ListResult<TeacherDutyStat>, String> {
-    let result = (|| -> Result<ListResult<TeacherDutyStat>, AppError> {
-        let conn = score::open_connection(&app)?;
-        exam_allocation::ensure_schema(&conn)?;
-        let mut where_parts = Vec::new();
-        let mut bind_values = Vec::<Value>::new();
-        if let Some(keyword) = params
+    let result = async {
+        let db = crate::db::connect(&app).await?;
+        let keyword = params
             .keyword
             .as_ref()
             .map(|value| value.trim())
             .filter(|value| !value.is_empty())
-        {
-            where_parts.push("teacher_name LIKE ?".to_string());
-            bind_values.push(Value::Text(format!("%{}%", keyword)));
-        }
-        let where_sql = if where_parts.is_empty() {
-            String::new()
-        } else {
-            format!(" WHERE {}", where_parts.join(" AND "))
-        };
-        let total_sql = format!("SELECT COUNT(*) FROM latest_teacher_duty_stats{where_sql}");
-        let total: i64 =
-            conn.query_row(&total_sql, params_from_iter(bind_values.iter()), |row| {
-                row.get(0)
-            })?;
+            .map(ToString::to_string);
         let page = params.page.unwrap_or(1).max(1);
         let page_size = params.page_size.unwrap_or(200).clamp(1, 1000);
-        let offset = (page - 1) * page_size;
-        let mut query_values = bind_values;
-        query_values.push(Value::Integer(page_size));
-        query_values.push(Value::Integer(offset));
-        let list_sql = format!(
-            "SELECT teacher_id, teacher_name, indoor_minutes, outdoor_minutes, total_minutes, task_count, exam_room_task_count, self_study_task_count, floor_rover_task_count, allowance_total, indoor_allowance_total, outdoor_allowance_total, is_middle_manager FROM latest_teacher_duty_stats{where_sql} ORDER BY total_minutes ASC, teacher_id ASC LIMIT ? OFFSET ?"
-        );
-        let mut stmt = conn.prepare(&list_sql)?;
-        let rows = stmt.query_map(params_from_iter(query_values.iter()), |row| {
-            Ok(TeacherDutyStat {
-                teacher_id: row.get(0)?,
-                teacher_name: row.get(1)?,
-                indoor_minutes: row.get(2)?,
-                outdoor_minutes: row.get(3)?,
-                total_minutes: row.get(4)?,
-                task_count: row.get(5)?,
-                exam_room_task_count: row.get(6)?,
-                self_study_task_count: row.get(7)?,
-                floor_rover_task_count: row.get(8)?,
-                allowance_total: row.get(9)?,
-                indoor_allowance_total: row.get(10)?,
-                outdoor_allowance_total: row.get(11)?,
-                is_middle_manager: row.get::<_, i64>(12)? == 1,
-            })
-        })?;
-        let mut items = Vec::new();
-        for row in rows {
-            items.push(row?);
-        }
-        Ok(ListResult { items, total })
-    })();
-    result.map_err(|error| error.to_string())
+        let rows = exam_staff_repo::list_duty_stats(
+            &db,
+            exam_staff_repo::DutyStatFilters {
+                keyword,
+                page,
+                page_size,
+            },
+        )
+        .await?;
+        Ok(ListResult {
+            total: rows.total,
+            items: rows
+                .items
+                .into_iter()
+                .map(|row| TeacherDutyStat {
+                    teacher_id: row.teacher_id,
+                    teacher_name: row.teacher_name,
+                    indoor_minutes: row.indoor_minutes,
+                    outdoor_minutes: row.outdoor_minutes,
+                    total_minutes: row.total_minutes,
+                    task_count: row.task_count,
+                    exam_room_task_count: row.exam_room_task_count,
+                    self_study_task_count: row.self_study_task_count,
+                    floor_rover_task_count: row.floor_rover_task_count,
+                    allowance_total: row.allowance_total,
+                    indoor_allowance_total: row.indoor_allowance_total,
+                    outdoor_allowance_total: row.outdoor_allowance_total,
+                    is_middle_manager: row.is_middle_manager == 1,
+                })
+                .collect(),
+        })
+    }
+    .await;
+    result.map_err(|error: AppError| error.to_string())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::db::migration::Migrator;
+    use crate::entity::{latest_exam_plan_sessions, latest_exam_plan_spaces};
+    use sea_orm::{ActiveModelTrait, ActiveValue::Set, Database};
+    use sea_orm_migration::MigratorTrait;
 
     fn topic_subject(subject: Subject) -> exam_allocation::SelfStudyTopic {
         exam_allocation::build_subject_self_study_topic(subject)
@@ -4927,26 +4380,74 @@ mod tests {
         result
     }
 
-    fn setup_build_staff_tasks_test_db() -> Connection {
-        let conn = Connection::open_in_memory().expect("in-memory sqlite should open");
-        conn.execute_batch(
-            r#"
-            CREATE TABLE latest_exam_plan_spaces (
-                id INTEGER PRIMARY KEY,
-                session_id INTEGER NOT NULL,
-                space_type TEXT NOT NULL,
-                space_name TEXT NOT NULL,
-                original_class_name TEXT,
-                self_study_topic_kind TEXT,
-                self_study_topic_subjects_json TEXT,
-                self_study_topic_label TEXT,
-                floor TEXT NOT NULL,
-                sort_index INTEGER NOT NULL
-            );
-            "#,
-        )
-        .expect("test spaces schema should be created");
-        conn
+    fn setup_build_staff_tasks_test_db() -> sea_orm::DatabaseConnection {
+        tauri::async_runtime::block_on(async {
+            let db = Database::connect("sqlite::memory:")
+                .await
+                .expect("in-memory sqlite should open");
+            Migrator::up(&db, None)
+                .await
+                .expect("test schema should be migrated");
+            db
+        })
+    }
+
+    fn insert_test_plan_space(
+        db: &sea_orm::DatabaseConnection,
+        id: i64,
+        session_id: i64,
+        space_name: &str,
+        floor: &str,
+        sort_index: i64,
+    ) {
+        tauri::async_runtime::block_on(async {
+            latest_exam_plan_spaces::ActiveModel {
+                id: Set(id),
+                session_id: Set(session_id),
+                space_type: Set("exam_room".to_string()),
+                space_source: Set("test".to_string()),
+                grade_name: Set("高二".to_string()),
+                subject: Set("英语".to_string()),
+                space_name: Set(space_name.to_string()),
+                original_class_name: Set(None),
+                self_study_topic_kind: Set(None),
+                self_study_topic_subjects_json: Set(None),
+                self_study_topic_label: Set(None),
+                building: Set(String::new()),
+                floor: Set(floor.to_string()),
+                capacity: Set(None),
+                sort_index: Set(sort_index),
+            }
+            .insert(db)
+            .await
+            .expect("test space should be inserted");
+        });
+    }
+
+    fn insert_test_plan_session(
+        db: &sea_orm::DatabaseConnection,
+        id: i64,
+        subject: Subject,
+    ) {
+        tauri::async_runtime::block_on(async {
+            latest_exam_plan_sessions::ActiveModel {
+                id: Set(id),
+                grade_name: Set("高二".to_string()),
+                subject: Set(subject_label(subject).to_string()),
+                is_foreign_group: Set(if exam_allocation::is_foreign_subject(subject) {
+                    1
+                } else {
+                    0
+                }),
+                foreign_order: Set(None),
+                participant_count: Set(0),
+                exam_room_count: Set(0),
+                self_study_room_count: Set(0),
+            }
+            .insert(db)
+            .await
+            .expect("test session should be inserted");
+        });
     }
 
     fn sample_exam_task(subject: Subject) -> TaskBuild {
@@ -5010,31 +4511,13 @@ mod tests {
 
     #[test]
     fn test_build_staff_tasks_deduplicates_foreign_group_floor_rovers_per_floor() {
-        let conn = setup_build_staff_tasks_test_db();
-        conn.execute(
-            "INSERT INTO latest_exam_plan_spaces (id, session_id, space_type, space_name, original_class_name, self_study_topic_kind, self_study_topic_subjects_json, self_study_topic_label, floor, sort_index)
-             VALUES (?1, ?2, 'exam_room', ?3, NULL, NULL, NULL, NULL, ?4, ?5)",
-            params![1_i64, 101_i64, "高二1考场", "3层", 1_i64],
-        )
-        .unwrap();
-        conn.execute(
-            "INSERT INTO latest_exam_plan_spaces (id, session_id, space_type, space_name, original_class_name, self_study_topic_kind, self_study_topic_subjects_json, self_study_topic_label, floor, sort_index)
-             VALUES (?1, ?2, 'exam_room', ?3, NULL, NULL, NULL, NULL, ?4, ?5)",
-            params![2_i64, 101_i64, "高二2考场", "4层", 2_i64],
-        )
-        .unwrap();
-        conn.execute(
-            "INSERT INTO latest_exam_plan_spaces (id, session_id, space_type, space_name, original_class_name, self_study_topic_kind, self_study_topic_subjects_json, self_study_topic_label, floor, sort_index)
-             VALUES (?1, ?2, 'exam_room', ?3, NULL, NULL, NULL, NULL, ?4, ?5)",
-            params![3_i64, 102_i64, "高二3考场", "3层", 1_i64],
-        )
-        .unwrap();
-        conn.execute(
-            "INSERT INTO latest_exam_plan_spaces (id, session_id, space_type, space_name, original_class_name, self_study_topic_kind, self_study_topic_subjects_json, self_study_topic_label, floor, sort_index)
-             VALUES (?1, ?2, 'exam_room', ?3, NULL, NULL, NULL, NULL, ?4, ?5)",
-            params![4_i64, 102_i64, "高二4考场", "4层", 2_i64],
-        )
-        .unwrap();
+        let db = setup_build_staff_tasks_test_db();
+        insert_test_plan_session(&db, 101, Subject::English);
+        insert_test_plan_session(&db, 102, Subject::Russian);
+        insert_test_plan_space(&db, 1, 101, "高二1考场", "3层", 1);
+        insert_test_plan_space(&db, 2, 101, "高二2考场", "4层", 2);
+        insert_test_plan_space(&db, 3, 102, "高二3考场", "3层", 1);
+        insert_test_plan_space(&db, 4, 102, "高二4考场", "4层", 2);
 
         let session_times = vec![
             SessionTimeRuntime {
@@ -5057,13 +4540,13 @@ mod tests {
             },
         ];
 
-        let tasks = build_staff_tasks(
-            &conn,
+        let tasks = tauri::async_runtime::block_on(build_staff_tasks(
+            &db,
             &session_times,
             &test_runtime_config(),
             &HashMap::new(),
             &[],
-        )
+        ))
         .expect("foreign-group tasks should build");
 
         let floor_rovers = tasks
@@ -6151,88 +5634,73 @@ mod tests {
         let db_path = std::env::var("ACADEMIC_REAL_DB_PATH")
             .expect("ACADEMIC_REAL_DB_PATH must point to scores.sqlite3");
         let db_path = std::path::PathBuf::from(db_path);
-        let mut conn = Connection::open(&db_path).expect("open real sqlite db");
-        crate::schema::ensure_schema(&conn).expect("ensure schema");
+        let db_url = format!(
+            "sqlite://{}?mode=rwc",
+            db_path.to_string_lossy().replace('\\', "/")
+        );
+        let db = tauri::async_runtime::block_on(async {
+            let db = Database::connect(db_url).await.expect("open real sqlite db");
+            Migrator::up(&db, None).await.expect("ensure schema");
+            db
+        });
 
-        let persisted_settings: (i64, f64, f64) = conn
-            .query_row(
-                "SELECT default_exam_room_required_count, indoor_allowance_per_minute, outdoor_allowance_per_minute FROM invigilation_config_settings WHERE id = 1",
-                [],
-                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
-            )
-            .unwrap_or((1, 0.5, 0.3));
+        let config_row =
+            tauri::async_runtime::block_on(exam_staff_repo::get_config(&db)).expect("load config");
         let mut config = build_config_from_payload(&GenerateExamStaffPlanPayload {
-            default_exam_room_required_count: persisted_settings.0,
-            indoor_allowance_per_minute: persisted_settings.1,
-            outdoor_allowance_per_minute: persisted_settings.2,
+            default_exam_room_required_count: config_row
+                .as_ref()
+                .map(|row| row.default_exam_room_required_count)
+                .unwrap_or(1),
+            indoor_allowance_per_minute: config_row
+                .as_ref()
+                .map(|row| row.indoor_allowance_per_minute)
+                .unwrap_or(0.5),
+            outdoor_allowance_per_minute: config_row
+                .as_ref()
+                .map(|row| row.outdoor_allowance_per_minute)
+                .unwrap_or(0.3),
             custom_rules: Vec::new(),
         });
-        hydrate_runtime_middle_manager_config(&conn, &mut config).expect("hydrate config");
+        tauri::async_runtime::block_on(hydrate_runtime_middle_manager_config(&db, &mut config))
+            .expect("hydrate config");
         config.self_study_class_subjects =
-            load_self_study_class_subjects(&conn).expect("load self study subjects");
+            tauri::async_runtime::block_on(load_self_study_class_subjects(&db))
+                .expect("load self study subjects");
 
-        let mut custom_rules = Vec::new();
-        let mut stmt = conn
-            .prepare("SELECT teacher_id, session_id FROM invigilation_staff_exclusions")
-            .expect("prepare exclusions");
-        let rows = stmt
-            .query_map([], |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?)))
-            .expect("query exclusions");
-        for row in rows {
-            let (teacher_id, session_id) = row.expect("read exclusion row");
-            if teacher_id > 0 && session_id > 0 {
-                custom_rules.push(GenerateExamStaffPlanCustomRule {
-                    action_type: RULE_ACTION_EXCLUDE.to_string(),
-                    teacher_id,
-                    teacher_name: None,
-                    time_scope_type: RULE_TIME_SCOPE_EXAM_SESSION.to_string(),
-                    time_scope_ids: vec![session_id],
-                    time_scope_labels: Vec::new(),
-                    task_scope_type: RULE_TASK_SCOPE_EXAM_ROOM.to_string(),
-                    target_scope_type: RULE_TARGET_SCOPE_ALL.to_string(),
-                    target_ids: Vec::new(),
-                    target_labels: Vec::new(),
-                });
-            }
-        }
-        drop(stmt);
+        let custom_rules = tauri::async_runtime::block_on(exam_staff_repo::list_custom_rules(&db))
+            .expect("load custom rules")
+            .into_iter()
+            .map(|row| GenerateExamStaffPlanCustomRule {
+                action_type: row.action_type,
+                teacher_id: row.teacher_id,
+                teacher_name: Some(row.teacher_name),
+                time_scope_type: row.time_scope_type,
+                time_scope_ids: parse_json_i64_list(&row.time_scope_ids_json),
+                time_scope_labels: parse_json_string_list(&row.time_scope_labels_json),
+                task_scope_type: row.task_scope_type,
+                target_scope_type: row.target_scope_type,
+                target_ids: parse_json_string_list(&row.target_ids_json),
+                target_labels: parse_json_string_list(&row.target_labels_json),
+            })
+            .collect::<Vec<_>>();
 
         let log_path = db_path
             .parent()
             .expect("db parent")
             .join("logs")
             .join("app.log");
-        let result = generate_latest_exam_staff_plan_internal(
-            &mut conn,
+        let result = tauri::async_runtime::block_on(generate_latest_exam_staff_plan_internal(
+            &db,
             config,
             custom_rules,
             Some(log_path.as_path()),
             None,
-        )
+        ))
         .expect("generate staff plan on real db");
-
-        let mut reason_stmt = conn
-            .prepare(
-                "SELECT COALESCE(reason, '<empty>') AS reason, COUNT(*) FROM latest_exam_staff_tasks WHERE status = 'unassigned' GROUP BY COALESCE(reason, '<empty>') ORDER BY COUNT(*) DESC, reason ASC",
-            )
-            .expect("prepare reason query");
-        let reason_rows = reason_stmt
-            .query_map([], |row| {
-                Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
-            })
-            .expect("query reason rows");
-        let mut reason_counts = Vec::<(String, i64)>::new();
-        for row in reason_rows {
-            reason_counts.push(row.expect("read reason row"));
-        }
 
         println!(
             "REAL_DB_STAFF_PLAN {}",
             serde_json::to_string(&result).expect("serialize result")
-        );
-        println!(
-            "REAL_DB_UNASSIGNED_REASONS {}",
-            serde_json::to_string(&reason_counts).expect("serialize reason counts")
         );
         println!("REAL_DB_APP_LOG {}", log_path.display());
         assert!(result.task_count > 0);

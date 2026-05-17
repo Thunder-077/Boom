@@ -6,9 +6,39 @@ pub struct Migrator;
 impl MigratorTrait for Migrator {
     fn migrations() -> Vec<Box<dyn MigrationTrait>> {
         vec![
+            Box::new(m20260517_000000_legacy_baseline_name::Migration),
             Box::new(m20260517_000001_baseline::Migration),
             Box::new(m20260517_000002_course_import_settings::Migration),
         ]
+    }
+}
+
+mod m20260517_000000_legacy_baseline_name {
+    use sea_orm_migration::prelude::*;
+
+    const SCHEMA_SQL: &str = include_str!("../schema.sql");
+
+    pub struct Migration;
+
+    impl MigrationName for Migration {
+        fn name(&self) -> &str {
+            "migration"
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl MigrationTrait for Migration {
+        async fn up(&self, manager: &SchemaManager) -> Result<(), DbErr> {
+            manager
+                .get_connection()
+                .execute_unprepared(SCHEMA_SQL)
+                .await?;
+            Ok(())
+        }
+
+        async fn down(&self, _manager: &SchemaManager) -> Result<(), DbErr> {
+            Ok(())
+        }
     }
 }
 
