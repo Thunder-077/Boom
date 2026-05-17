@@ -71,6 +71,12 @@ impl From<rusqlite::Error> for AppError {
     }
 }
 
+impl From<sea_orm::DbErr> for AppError {
+    fn from(value: sea_orm::DbErr) -> Self {
+        Self::new(format!("数据库操作失败: {value}"))
+    }
+}
+
 impl From<calamine::Error> for AppError {
     fn from(value: calamine::Error) -> Self {
         Self::new(format!("Excel 解析失败: {value}"))

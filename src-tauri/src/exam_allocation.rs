@@ -10,7 +10,6 @@ use serde::{Deserialize, Serialize};
 use tauri::AppHandle;
 
 use crate::app_log;
-use crate::class_config;
 use crate::export_bundle;
 use crate::score::{self, AppError, ListResult, Subject};
 use crate::teacher;
@@ -359,7 +358,6 @@ struct SpaceCandidate {
 
 pub(crate) fn ensure_schema(conn: &Connection) -> Result<(), AppError> {
     crate::schema::ensure_schema(conn)?;
-    class_config::ensure_schema(conn)?;
     teacher::ensure_schema(conn)?;
 
     let now = Utc::now().to_rfc3339();
