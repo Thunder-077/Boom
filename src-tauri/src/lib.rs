@@ -1,6 +1,8 @@
 mod app_log;
 mod class_config;
 mod course_management;
+mod db;
+mod entity;
 mod exam_allocation;
 mod exam_plan;
 mod exam_staff;
