@@ -3,13 +3,11 @@ use std::collections::{HashMap, HashSet};
 use calamine::{open_workbook_auto, Data, Reader};
 use chrono::Utc;
 use regex::Regex;
-use rusqlite::types::Value;
-use rusqlite::{params, params_from_iter, Connection};
 use serde::{Deserialize, Serialize};
 use tauri::AppHandle;
 
 use crate::app_log;
-use crate::score::{self, AppError, ListResult};
+use crate::score::{AppError, ListResult};
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
 #[serde(rename_all = "snake_case")]
@@ -33,7 +31,7 @@ pub enum TeacherSubject {
 }
 
 impl TeacherSubject {
-    fn as_key(self) -> &'static str {
+    pub(crate) fn as_key(self) -> &'static str {
         match self {
             TeacherSubject::Chinese => "chinese",
             TeacherSubject::Math => "math",
@@ -54,7 +52,7 @@ impl TeacherSubject {
         }
     }
 
-    fn from_key(key: &str) -> Option<Self> {
+    pub(crate) fn from_key(key: &str) -> Option<Self> {
         match key {
             "chinese" => Some(TeacherSubject::Chinese),
             "math" => Some(TeacherSubject::Math),
@@ -88,19 +86,19 @@ pub struct TeacherImportResult {
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TeacherSummary {
-    imported_at: Option<String>,
-    teacher_count: i64,
+    pub(crate) imported_at: Option<String>,
+    pub(crate) teacher_count: i64,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TeacherRow {
-    id: i64,
-    teacher_name: String,
-    subjects: Vec<TeacherSubject>,
-    class_names: Vec<String>,
-    remark: Option<String>,
-    is_middle_manager: bool,
+    pub(crate) id: i64,
+    pub(crate) teacher_name: String,
+    pub(crate) subjects: Vec<TeacherSubject>,
+    pub(crate) class_names: Vec<String>,
+    pub(crate) remark: Option<String>,
+    pub(crate) is_middle_manager: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -120,17 +118,12 @@ struct ParsedTeacherRow {
 }
 
 #[derive(Debug, Default)]
-struct AggregatedTeacher {
-    teacher_name: String,
-    assignments: HashSet<(TeacherSubject, String)>,
-    remark: Option<String>,
-    is_middle_manager: bool,
-    homeroom_classes: HashSet<String>,
-}
-
-pub fn ensure_schema(conn: &Connection) -> Result<(), AppError> {
-    crate::schema::ensure_schema(conn)?;
-    Ok(())
+pub(crate) struct AggregatedTeacher {
+    pub(crate) teacher_name: String,
+    pub(crate) assignments: HashSet<(TeacherSubject, String)>,
+    pub(crate) remark: Option<String>,
+    pub(crate) is_middle_manager: bool,
+    pub(crate) homeroom_classes: HashSet<String>,
 }
 
 fn cell_to_string(cell: Option<&Data>) -> String {
@@ -437,68 +430,25 @@ fn aggregate_rows(rows: Vec<ParsedTeacherRow>) -> Vec<AggregatedTeacher> {
     items
 }
 
-fn persist_teachers(
-    conn: &mut Connection,
-    imported_at: &str,
-    source_file: &str,
-    teachers: &[AggregatedTeacher],
-) -> Result<(), AppError> {
-    let tx = conn.transaction()?;
-    tx.execute("DELETE FROM latest_teacher_assignments_v2", [])?;
-    tx.execute("DELETE FROM latest_teacher_homerooms_v2", [])?;
-    tx.execute("DELETE FROM latest_teachers_v2", [])?;
-    tx.execute("DELETE FROM latest_teacher_import_meta", [])?;
-    tx.execute(
-        "INSERT INTO latest_teacher_import_meta (id, imported_at, source_file, row_count) VALUES (1, ?1, ?2, ?3)",
-        params![imported_at, source_file, teachers.len() as i64],
-    )?;
-
-    for teacher in teachers {
-        tx.execute(
-            "INSERT INTO latest_teachers_v2 (teacher_name, remark, is_middle_manager) VALUES (?1, ?2, ?3)",
-            params![
-                teacher.teacher_name,
-                teacher.remark,
-                if teacher.is_middle_manager { 1_i64 } else { 0_i64 }
-            ],
-        )?;
-        let teacher_id = tx.last_insert_rowid();
-        for (subject, class_name) in &teacher.assignments {
-            tx.execute(
-                "INSERT INTO latest_teacher_assignments_v2 (teacher_id, subject, class_name) VALUES (?1, ?2, ?3)",
-                params![teacher_id, subject.as_key(), class_name],
-            )?;
-        }
-        for class_name in &teacher.homeroom_classes {
-            tx.execute(
-                "INSERT INTO latest_teacher_homerooms_v2 (teacher_id, class_name) VALUES (?1, ?2)",
-                params![teacher_id, class_name],
-            )?;
-        }
-    }
-    tx.commit()?;
-    Ok(())
-}
-
 #[tauri::command]
-pub fn import_teachers_from_excel(
+pub async fn import_teachers_from_excel(
     app: AppHandle,
     file_path: String,
 ) -> Result<TeacherImportResult, String> {
     let start = Utc::now();
-    let result = (|| -> Result<TeacherImportResult, AppError> {
-        let mut conn = score::open_connection(&app)?;
-        ensure_schema(&conn)?;
+    let result: Result<TeacherImportResult, AppError> = async {
+        let db = crate::db::connect(&app).await?;
         let rows = parse_teacher_excel(&file_path)?;
         let teachers = aggregate_rows(rows);
         let imported_at = Utc::now().to_rfc3339();
-        persist_teachers(&mut conn, &imported_at, &file_path, &teachers)?;
+        crate::db::repos::teacher::replace_all(&db, &imported_at, &file_path, &teachers).await?;
         Ok(TeacherImportResult {
             imported_at,
             row_count: teachers.len() as i64,
             duration_ms: (Utc::now() - start).num_milliseconds(),
         })
-    })();
+    }
+    .await;
     result.map_err(|e| {
         app_log::log_error(
             &app,
@@ -510,120 +460,25 @@ pub fn import_teachers_from_excel(
 }
 
 #[tauri::command]
-pub fn list_latest_teachers(
+pub async fn list_latest_teachers(
     app: AppHandle,
     params: TeacherListParams,
 ) -> Result<ListResult<TeacherRow>, String> {
-    let result = (|| -> Result<ListResult<TeacherRow>, AppError> {
-        let conn = score::open_connection(&app)?;
-        ensure_schema(&conn)?;
-
-        let mut where_sql = String::from(" WHERE 1=1 ");
-        let mut values: Vec<Value> = Vec::new();
-
-        if let Some(name_keyword) = params
-            .name_keyword
-            .as_ref()
-            .map(|s| s.trim())
-            .filter(|s| !s.is_empty())
-        {
-            where_sql.push_str(" AND t.teacher_name LIKE ? ");
-            values.push(Value::Text(format!("%{name_keyword}%")));
-        }
-        if let Some(class_name) = params
-            .class_name
-            .as_ref()
-            .map(|s| s.trim())
-            .filter(|s| !s.is_empty())
-        {
-            where_sql.push_str(" AND EXISTS (SELECT 1 FROM latest_teacher_assignments_v2 ta WHERE ta.teacher_id = t.id AND ta.class_name LIKE ?) ");
-            values.push(Value::Text(format!("%{class_name}%")));
-        }
-        if let Some(subject) = params.subject {
-            where_sql.push_str(" AND EXISTS (SELECT 1 FROM latest_teacher_assignments_v2 ta WHERE ta.teacher_id = t.id AND ta.subject = ?) ");
-            values.push(Value::Text(subject.as_key().to_string()));
-        }
-
-        let total_sql = format!("SELECT COUNT(*) FROM latest_teachers_v2 t {where_sql}");
-        let total: i64 = conn.query_row(&total_sql, params_from_iter(values.iter()), |row| {
-            row.get(0)
-        })?;
-
-        let list_sql = format!("SELECT t.id, t.teacher_name, t.remark, COALESCE(t.is_middle_manager, 0) FROM latest_teachers_v2 t {where_sql} ORDER BY t.id ASC");
-        let mut stmt = conn.prepare(&list_sql)?;
-        let rows = stmt.query_map(params_from_iter(values.iter()), |row| {
-            Ok((
-                row.get::<_, i64>(0)?,
-                row.get::<_, String>(1)?,
-                row.get::<_, Option<String>>(2)?,
-                row.get::<_, i64>(3)? == 1,
-            ))
-        })?;
-
-        let mut items = Vec::new();
-        for row in rows {
-            let (id, teacher_name, remark, is_middle_manager) = row?;
-
-            let mut assignment_stmt = conn.prepare(
-                "SELECT subject, class_name FROM latest_teacher_assignments_v2 WHERE teacher_id = ?1 ORDER BY id ASC",
-            )?;
-            let assignment_rows = assignment_stmt.query_map(params![id], |r| {
-                Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))
-            })?;
-
-            let mut subjects = Vec::new();
-            let mut subject_keys = HashSet::new();
-            let mut class_names = Vec::new();
-            let mut class_keys = HashSet::new();
-
-            for assignment in assignment_rows {
-                let (subject_key, class_name) = assignment?;
-                if let Some(subject) = TeacherSubject::from_key(&subject_key) {
-                    if subject_keys.insert(subject.as_key()) {
-                        subjects.push(subject);
-                    }
-                }
-                if class_keys.insert(class_name.clone()) {
-                    class_names.push(class_name);
-                }
-            }
-
-            items.push(TeacherRow {
-                id,
-                teacher_name,
-                subjects,
-                class_names,
-                remark,
-                is_middle_manager,
-            });
-        }
-
-        Ok(ListResult { items, total })
-    })();
+    let result = async {
+        let db = crate::db::connect(&app).await?;
+        crate::db::repos::teacher::list(&db, params).await
+    }
+    .await;
     result.map_err(|e| e.to_string())
 }
 
 #[tauri::command]
-pub fn get_latest_teacher_summary(app: AppHandle) -> Result<TeacherSummary, String> {
-    let result = (|| -> Result<TeacherSummary, AppError> {
-        let conn = score::open_connection(&app)?;
-        ensure_schema(&conn)?;
-        let imported_at = conn
-            .query_row(
-                "SELECT imported_at FROM latest_teacher_import_meta WHERE id = 1",
-                [],
-                |row| row.get::<_, String>(0),
-            )
-            .ok();
-        let teacher_count: i64 =
-            conn.query_row("SELECT COUNT(*) FROM latest_teachers_v2", [], |row| {
-                row.get(0)
-            })?;
-        Ok(TeacherSummary {
-            imported_at,
-            teacher_count,
-        })
-    })();
+pub async fn get_latest_teacher_summary(app: AppHandle) -> Result<TeacherSummary, String> {
+    let result = async {
+        let db = crate::db::connect(&app).await?;
+        crate::db::repos::teacher::summary(&db).await
+    }
+    .await;
     result.map_err(|e| e.to_string())
 }
 

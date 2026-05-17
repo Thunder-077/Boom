@@ -1,249 +1,250 @@
-use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::fs;
 use std::path::PathBuf;
 
 use calamine::{open_workbook_auto, Data, Range, Reader};
 use chrono::{Datelike, Duration, NaiveDate, Utc};
 use regex::Regex;
-use rusqlite::{params, params_from_iter, Connection, OptionalExtension};
 use rust_xlsxwriter::{Color, Format, FormatAlign, FormatBorder, Workbook, Worksheet, XlsxError};
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Manager};
 
 use crate::app_log;
-use crate::score::{self, AppError};
+use crate::db::repos::course_management as course_repo;
+use crate::db::repos::teacher::ScheduleTeacherAssignment;
+use crate::score::AppError;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CourseImportResult {
-    imported_at: String,
-    entry_count: i64,
-    teacher_count: i64,
-    admin_class_count: i64,
-    foreign_class_count: i64,
-    duration_ms: i64,
+    pub(crate) imported_at: String,
+    pub(crate) entry_count: i64,
+    pub(crate) teacher_count: i64,
+    pub(crate) admin_class_count: i64,
+    pub(crate) foreign_class_count: i64,
+    pub(crate) duration_ms: i64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CourseSummary {
-    latest_import_id: Option<i64>,
-    imported_at: Option<String>,
-    entry_count: i64,
-    teacher_count: i64,
-    admin_class_count: i64,
-    foreign_class_count: i64,
-    effective_start_date: Option<String>,
-    effective_end_date: Option<String>,
-    start_week: i64,
+    pub(crate) latest_import_id: Option<i64>,
+    pub(crate) imported_at: Option<String>,
+    pub(crate) entry_count: i64,
+    pub(crate) teacher_count: i64,
+    pub(crate) admin_class_count: i64,
+    pub(crate) foreign_class_count: i64,
+    pub(crate) effective_start_date: Option<String>,
+    pub(crate) effective_end_date: Option<String>,
+    pub(crate) start_week: i64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CourseImportBatch {
-    id: i64,
-    imported_at: String,
-    source_file: String,
-    entry_count: i64,
-    teacher_count: i64,
-    admin_class_count: i64,
-    foreign_class_count: i64,
-    effective_start_date: Option<String>,
-    effective_end_date: Option<String>,
-    start_week: i64,
+    pub(crate) id: i64,
+    pub(crate) imported_at: String,
+    pub(crate) source_file: String,
+    pub(crate) entry_count: i64,
+    pub(crate) teacher_count: i64,
+    pub(crate) admin_class_count: i64,
+    pub(crate) foreign_class_count: i64,
+    pub(crate) effective_start_date: Option<String>,
+    pub(crate) effective_end_date: Option<String>,
+    pub(crate) start_week: i64,
 }
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CourseImportSettingsPayload {
-    import_id: i64,
-    effective_start_date: Option<String>,
-    effective_end_date: Option<String>,
-    start_week: i64,
+    pub(crate) import_id: i64,
+    pub(crate) effective_start_date: Option<String>,
+    pub(crate) effective_end_date: Option<String>,
+    pub(crate) start_week: i64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CourseClassOption {
-    class_name: String,
-    display_name: String,
-    class_type: String,
+    pub(crate) class_name: String,
+    pub(crate) display_name: String,
+    pub(crate) class_type: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CourseScheduleEntry {
-    week_index: i64,
-    day_of_week: i64,
-    day_label: String,
-    period_index: i64,
-    period_label: String,
-    section_label: String,
-    subject: String,
-    teacher_names: Vec<String>,
-    class_name: String,
-    display_class_name: String,
-    class_type: String,
+    pub(crate) week_index: i64,
+    pub(crate) day_of_week: i64,
+    pub(crate) day_label: String,
+    pub(crate) period_index: i64,
+    pub(crate) period_label: String,
+    pub(crate) section_label: String,
+    pub(crate) subject: String,
+    pub(crate) teacher_names: Vec<String>,
+    pub(crate) class_name: String,
+    pub(crate) display_class_name: String,
+    pub(crate) class_type: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CoursePeriodSlot {
-    week_index: i64,
-    day_of_week: i64,
-    day_label: String,
-    period_index: i64,
-    period_label: String,
-    section_label: String,
+    pub(crate) week_index: i64,
+    pub(crate) day_of_week: i64,
+    pub(crate) day_label: String,
+    pub(crate) period_index: i64,
+    pub(crate) period_label: String,
+    pub(crate) section_label: String,
 }
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CourseScheduleQuery {
-    view_type: String,
-    target: String,
-    import_id: Option<i64>,
+    pub(crate) view_type: String,
+    pub(crate) target: String,
+    pub(crate) import_id: Option<i64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CourseScheduleView {
-    import_id: i64,
-    target: String,
-    view_type: String,
-    entries: Vec<CourseScheduleEntry>,
-    periods: Vec<CoursePeriodSlot>,
+    pub(crate) import_id: i64,
+    pub(crate) target: String,
+    pub(crate) view_type: String,
+    pub(crate) entries: Vec<CourseScheduleEntry>,
+    pub(crate) periods: Vec<CoursePeriodSlot>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CourseSubstitutionCandidateQuery {
-    import_id: i64,
-    teacher_name: String,
-    start_date: String,
-    end_date: String,
-    period_indexes: Option<Vec<i64>>,
-    start_period_index: Option<i64>,
-    end_period_index: Option<i64>,
+    pub(crate) import_id: i64,
+    pub(crate) teacher_name: String,
+    pub(crate) start_date: String,
+    pub(crate) end_date: String,
+    pub(crate) period_indexes: Option<Vec<i64>>,
+    pub(crate) start_period_index: Option<i64>,
+    pub(crate) end_period_index: Option<i64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CourseScheduleChange {
-    id: i64,
-    import_id: i64,
-    source_entry_id: i64,
-    change_type: String,
-    status: String,
-    target_date: String,
-    source_teacher_name: String,
-    actual_teacher_name: String,
-    reason: String,
-    remark: String,
-    created_at: String,
-    updated_at: String,
-    revoked_at: Option<String>,
-    week_index: i64,
-    day_of_week: i64,
-    day_label: String,
-    period_index: i64,
-    period_label: String,
-    section_label: String,
-    subject: String,
-    class_name: String,
-    display_class_name: String,
-    class_type: String,
+    pub(crate) id: i64,
+    pub(crate) import_id: i64,
+    pub(crate) source_entry_id: i64,
+    pub(crate) change_type: String,
+    pub(crate) status: String,
+    pub(crate) target_date: String,
+    pub(crate) source_teacher_name: String,
+    pub(crate) actual_teacher_name: String,
+    pub(crate) reason: String,
+    pub(crate) remark: String,
+    pub(crate) created_at: String,
+    pub(crate) updated_at: String,
+    pub(crate) revoked_at: Option<String>,
+    pub(crate) week_index: i64,
+    pub(crate) day_of_week: i64,
+    pub(crate) day_label: String,
+    pub(crate) period_index: i64,
+    pub(crate) period_label: String,
+    pub(crate) section_label: String,
+    pub(crate) subject: String,
+    pub(crate) class_name: String,
+    pub(crate) display_class_name: String,
+    pub(crate) class_type: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CourseSubstitutionCandidate {
-    source_entry_id: i64,
-    import_id: i64,
-    target_date: String,
-    week_index: i64,
-    day_of_week: i64,
-    day_label: String,
-    period_index: i64,
-    period_label: String,
-    section_label: String,
-    subject: String,
-    teacher_names: Vec<String>,
-    source_teacher_name: String,
-    class_name: String,
-    display_class_name: String,
-    class_type: String,
-    existing_change: Option<CourseScheduleChange>,
+    pub(crate) source_entry_id: i64,
+    pub(crate) import_id: i64,
+    pub(crate) target_date: String,
+    pub(crate) week_index: i64,
+    pub(crate) day_of_week: i64,
+    pub(crate) day_label: String,
+    pub(crate) period_index: i64,
+    pub(crate) period_label: String,
+    pub(crate) section_label: String,
+    pub(crate) subject: String,
+    pub(crate) teacher_names: Vec<String>,
+    pub(crate) source_teacher_name: String,
+    pub(crate) class_name: String,
+    pub(crate) display_class_name: String,
+    pub(crate) class_type: String,
+    pub(crate) existing_change: Option<CourseScheduleChange>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SaveCourseSubstitutionsPayload {
-    import_id: i64,
-    reason: String,
-    remark: String,
-    items: Vec<SaveCourseSubstitutionItem>,
+    pub(crate) import_id: i64,
+    pub(crate) reason: String,
+    pub(crate) remark: String,
+    pub(crate) items: Vec<SaveCourseSubstitutionItem>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SaveCourseSubstitutionItem {
-    source_entry_id: i64,
-    target_date: String,
-    source_teacher_name: String,
-    actual_teacher_name: String,
-    remark: Option<String>,
+    pub(crate) source_entry_id: i64,
+    pub(crate) target_date: String,
+    pub(crate) source_teacher_name: String,
+    pub(crate) actual_teacher_name: String,
+    pub(crate) remark: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CourseWorkloadQuery {
-    import_id: i64,
-    start_date: String,
-    end_date: String,
-    start_period_index: Option<i64>,
-    end_period_index: Option<i64>,
+    pub(crate) import_id: i64,
+    pub(crate) start_date: String,
+    pub(crate) end_date: String,
+    pub(crate) start_period_index: Option<i64>,
+    pub(crate) end_period_index: Option<i64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CourseWorkloadDetail {
-    teacher_name: String,
-    target_date: String,
-    day_label: String,
-    period_index: i64,
-    period_label: String,
-    section_label: String,
-    category: String,
-    subject: String,
-    class_name: String,
-    display_class_name: String,
-    original_teacher_name: String,
-    actual_teacher_name: String,
-    is_substitution: bool,
-    remark: String,
+    pub(crate) teacher_name: String,
+    pub(crate) target_date: String,
+    pub(crate) day_label: String,
+    pub(crate) period_index: i64,
+    pub(crate) period_label: String,
+    pub(crate) section_label: String,
+    pub(crate) category: String,
+    pub(crate) subject: String,
+    pub(crate) class_name: String,
+    pub(crate) display_class_name: String,
+    pub(crate) original_teacher_name: String,
+    pub(crate) actual_teacher_name: String,
+    pub(crate) is_substitution: bool,
+    pub(crate) remark: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CourseWorkloadSummary {
-    teacher_name: String,
-    morning_reading_count: i64,
-    morning_count: i64,
-    afternoon_count: i64,
-    evening_count: i64,
-    substitution_count: i64,
-    total_count: i64,
+    pub(crate) teacher_name: String,
+    pub(crate) morning_reading_count: i64,
+    pub(crate) morning_count: i64,
+    pub(crate) afternoon_count: i64,
+    pub(crate) evening_count: i64,
+    pub(crate) substitution_count: i64,
+    pub(crate) total_count: i64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CourseWorkloadReport {
-    import_id: i64,
-    start_date: String,
-    end_date: String,
-    details: Vec<CourseWorkloadDetail>,
-    summaries: Vec<CourseWorkloadSummary>,
+    pub(crate) import_id: i64,
+    pub(crate) start_date: String,
+    pub(crate) end_date: String,
+    pub(crate) details: Vec<CourseWorkloadDetail>,
+    pub(crate) summaries: Vec<CourseWorkloadSummary>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -297,33 +298,43 @@ impl ParsedSubject {
 }
 
 #[derive(Debug, Clone)]
-struct ParsedEntry {
-    class_name: String,
-    display_class_name: String,
-    class_type: String,
-    week_index: i64,
-    day_of_week: i64,
-    day_label: String,
-    period_index: i64,
-    period_label: String,
-    section_label: String,
-    subject: String,
-    teacher_names: Vec<String>,
+pub(crate) struct ParsedEntry {
+    pub(crate) class_name: String,
+    pub(crate) display_class_name: String,
+    pub(crate) class_type: String,
+    pub(crate) week_index: i64,
+    pub(crate) day_of_week: i64,
+    pub(crate) day_label: String,
+    pub(crate) period_index: i64,
+    pub(crate) period_label: String,
+    pub(crate) section_label: String,
+    pub(crate) subject: String,
+    pub(crate) teacher_names: Vec<String>,
 }
 
 #[derive(Debug, Clone)]
-struct TeacherAssignment {
-    teacher_name: String,
+pub(crate) struct TeacherAssignment {
+    pub(crate) teacher_name: String,
     subject: ParsedSubject,
-    class_name: String,
+    pub(crate) class_name: String,
+}
+
+impl From<&TeacherAssignment> for ScheduleTeacherAssignment {
+    fn from(value: &TeacherAssignment) -> Self {
+        Self {
+            teacher_name: value.teacher_name.clone(),
+            subject_key: value.subject.as_key().to_string(),
+            class_name: value.class_name.clone(),
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
-struct ParsedWorkbook {
-    entries: Vec<ParsedEntry>,
-    periods: Vec<CoursePeriodSlot>,
-    classes: Vec<CourseClassOption>,
-    assignments: Vec<TeacherAssignment>,
+pub(crate) struct ParsedWorkbook {
+    pub(crate) entries: Vec<ParsedEntry>,
+    pub(crate) periods: Vec<CoursePeriodSlot>,
+    pub(crate) classes: Vec<CourseClassOption>,
+    pub(crate) assignments: Vec<TeacherAssignment>,
 }
 
 #[derive(Debug, Clone)]
@@ -333,43 +344,6 @@ struct DayBlock {
     week_index: i64,
     day_of_week: i64,
     day_label: String,
-}
-
-pub fn ensure_schema(conn: &Connection) -> Result<(), AppError> {
-    crate::schema::ensure_schema(conn)?;
-    ensure_import_setting_columns(conn)?;
-    Ok(())
-}
-
-fn ensure_import_setting_columns(conn: &Connection) -> Result<(), AppError> {
-    let mut stmt = conn.prepare("PRAGMA table_info(course_schedule_imports)")?;
-    let rows = stmt.query_map([], |row| row.get::<_, String>(1))?;
-    let mut columns = HashSet::new();
-    for row in rows {
-        columns.insert(row?);
-    }
-
-    // Existing user databases may already contain course imports, so these
-    // metadata columns are added lazily without rebuilding the import table.
-    if !columns.contains("effective_start_date") {
-        conn.execute(
-            "ALTER TABLE course_schedule_imports ADD COLUMN effective_start_date TEXT",
-            [],
-        )?;
-    }
-    if !columns.contains("effective_end_date") {
-        conn.execute(
-            "ALTER TABLE course_schedule_imports ADD COLUMN effective_end_date TEXT",
-            [],
-        )?;
-    }
-    if !columns.contains("start_week") {
-        conn.execute(
-            "ALTER TABLE course_schedule_imports ADD COLUMN start_week INTEGER NOT NULL DEFAULT 1",
-            [],
-        )?;
-    }
-    Ok(())
 }
 
 fn cell_to_string(cell: Option<&Data>) -> String {
@@ -477,7 +451,7 @@ fn class_type_for(class_name: &str) -> &'static str {
     }
 }
 
-fn split_teacher_names(text: &str) -> Vec<String> {
+pub(crate) fn split_teacher_names(text: &str) -> Vec<String> {
     text.replace('，', "/")
         .replace('、', "/")
         .replace(',', "/")
@@ -897,254 +871,10 @@ fn parse_course_workbook(file_path: &str) -> Result<ParsedWorkbook, AppError> {
     })
 }
 
-fn persist_course_import(
-    conn: &mut Connection,
-    imported_at: &str,
-    source_file: &str,
-    parsed: &ParsedWorkbook,
-) -> Result<i64, AppError> {
-    let tx = conn.transaction()?;
-    let teacher_count = parsed
-        .assignments
-        .iter()
-        .map(|item| item.teacher_name.clone())
-        .collect::<HashSet<_>>()
-        .len() as i64;
-    let admin_class_count = parsed
-        .classes
-        .iter()
-        .filter(|item| item.class_type == "admin")
-        .count() as i64;
-    let foreign_class_count = parsed
-        .classes
-        .iter()
-        .filter(|item| item.class_type == "foreign")
-        .count() as i64;
-
-    tx.execute(
-        "INSERT INTO course_schedule_imports (imported_at, source_file, entry_count, teacher_count, admin_class_count, foreign_class_count, start_week) VALUES (?1, ?2, ?3, ?4, ?5, ?6, 1)",
-        params![
-            imported_at,
-            source_file,
-            parsed.entries.len() as i64,
-            teacher_count,
-            admin_class_count,
-            foreign_class_count
-        ],
-    )?;
-    let import_id = tx.last_insert_rowid();
-
-    {
-        let mut class_stmt = tx.prepare(
-            "INSERT INTO course_schedule_classes (import_id, class_name, display_name, class_type, sort_index) VALUES (?1, ?2, ?3, ?4, ?5)",
-        )?;
-        for (sort_index, class_option) in parsed.classes.iter().enumerate() {
-            class_stmt.execute(params![
-                import_id,
-                class_option.class_name,
-                class_option.display_name,
-                class_option.class_type,
-                sort_index as i64
-            ])?;
-        }
-    }
-
-    {
-        let mut period_stmt = tx.prepare(
-            "INSERT INTO course_schedule_periods (import_id, week_index, day_of_week, day_label, period_index, period_label, section_label) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
-        )?;
-        for period in &parsed.periods {
-            period_stmt.execute(params![
-                import_id,
-                period.week_index,
-                period.day_of_week,
-                period.day_label,
-                period.period_index,
-                period.period_label,
-                period.section_label,
-            ])?;
-        }
-    }
-
-    {
-        let mut entry_stmt = tx.prepare(
-            "INSERT INTO course_schedule_entries (import_id, class_name, display_class_name, class_type, week_index, day_of_week, day_label, period_index, period_label, section_label, subject, teacher_names, teacher_search_text) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
-        )?;
-        for entry in &parsed.entries {
-            let teacher_text = entry.teacher_names.join("/");
-            entry_stmt.execute(params![
-                import_id,
-                entry.class_name,
-                entry.display_class_name,
-                entry.class_type,
-                entry.week_index,
-                entry.day_of_week,
-                entry.day_label,
-                entry.period_index,
-                entry.period_label,
-                entry.section_label,
-                entry.subject,
-                teacher_text,
-                teacher_text,
-            ])?;
-        }
-    }
-
-    replace_teacher_assignments_from_schedule(&tx, &parsed.assignments)?;
-    tx.commit()?;
-    Ok(import_id)
-}
-
-fn replace_teacher_assignments_from_schedule(
-    tx: &rusqlite::Transaction<'_>,
-    assignments: &[TeacherAssignment],
-) -> Result<(), AppError> {
-    tx.execute("DELETE FROM latest_teacher_assignments_v2", [])?;
-    let imported_at = Utc::now().to_rfc3339();
-    tx.execute(
-        "INSERT OR REPLACE INTO latest_teacher_import_meta (id, imported_at, source_file, row_count) VALUES (1, ?1, '课表导入同步', ?2)",
-        params![imported_at, assignments.iter().map(|item| item.teacher_name.clone()).collect::<HashSet<_>>().len() as i64],
-    )?;
-
-    let mut teacher_names = BTreeSet::new();
-    let mut seen = BTreeSet::<(String, &'static str, String)>::new();
-    for assignment in assignments {
-        teacher_names.insert(assignment.teacher_name.clone());
-        seen.insert((
-            assignment.teacher_name.clone(),
-            assignment.subject.as_key(),
-            assignment.class_name.clone(),
-        ));
-    }
-
-    remove_teachers_not_in_schedule(tx, &teacher_names)?;
-
-    {
-        let mut teacher_stmt = tx.prepare(
-            "INSERT OR IGNORE INTO latest_teachers_v2 (teacher_name, remark, is_middle_manager) VALUES (?1, NULL, 0)",
-        )?;
-        for teacher_name in &teacher_names {
-            teacher_stmt.execute(params![teacher_name])?;
-        }
-    }
-
-    let mut teacher_ids = HashMap::new();
-    {
-        let mut teacher_query = tx.prepare("SELECT id, teacher_name FROM latest_teachers_v2")?;
-        let rows = teacher_query.query_map([], |row| {
-            Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?))
-        })?;
-        for row in rows {
-            let (id, name) = row?;
-            teacher_ids.insert(name, id);
-        }
-    }
-
-    {
-        let mut assignment_stmt = tx.prepare(
-            "INSERT OR IGNORE INTO latest_teacher_assignments_v2 (teacher_id, subject, class_name) VALUES (?1, ?2, ?3)",
-        )?;
-        for (teacher_name, subject, class_name) in seen {
-            let teacher_id = teacher_ids
-                .get(&teacher_name)
-                .copied()
-                .ok_or_else(|| AppError::new(format!("未找到教师: {teacher_name}")))?;
-            assignment_stmt.execute(params![teacher_id, subject, class_name])?;
-        }
-    }
-    Ok(())
-}
-
-fn remove_teachers_not_in_schedule(
-    tx: &rusqlite::Transaction<'_>,
-    teacher_names: &BTreeSet<String>,
-) -> Result<(), AppError> {
-    if teacher_names.is_empty() {
-        tx.execute("DELETE FROM latest_teacher_homerooms_v2", [])?;
-        tx.execute("DELETE FROM latest_teachers_v2", [])?;
-        return Ok(());
-    }
-
-    let placeholders = std::iter::repeat("?")
-        .take(teacher_names.len())
-        .collect::<Vec<_>>()
-        .join(", ");
-    let names = teacher_names.iter().map(String::as_str).collect::<Vec<_>>();
-
-    // Teacher import is a snapshot sync: teachers missing from the imported
-    // timetable are removed so the system list stays aligned with the course file.
-    tx.execute(
-        &format!(
-            "DELETE FROM latest_teacher_homerooms_v2 WHERE teacher_id IN (SELECT id FROM latest_teachers_v2 WHERE teacher_name NOT IN ({placeholders}))"
-        ),
-        params_from_iter(names.iter().copied()),
-    )?;
-    tx.execute(
-        &format!("DELETE FROM latest_teachers_v2 WHERE teacher_name NOT IN ({placeholders})"),
-        params_from_iter(names.iter().copied()),
-    )?;
-    Ok(())
-}
-
-fn latest_import_id(conn: &Connection) -> Result<Option<i64>, AppError> {
-    conn.query_row(
-        "SELECT id FROM course_schedule_imports ORDER BY id DESC LIMIT 1",
-        [],
-        |row| row.get(0),
-    )
-    .optional()
-    .map_err(AppError::from)
-}
-
 fn normalize_optional_date(value: Option<String>) -> Option<String> {
     value
         .map(|item| item.trim().to_string())
         .filter(|item| !item.is_empty())
-}
-
-fn map_import_batch(row: &rusqlite::Row<'_>) -> rusqlite::Result<CourseImportBatch> {
-    Ok(CourseImportBatch {
-        id: row.get(0)?,
-        imported_at: row.get(1)?,
-        source_file: row.get(2)?,
-        entry_count: row.get(3)?,
-        teacher_count: row.get(4)?,
-        admin_class_count: row.get(5)?,
-        foreign_class_count: row.get(6)?,
-        effective_start_date: row.get(7)?,
-        effective_end_date: row.get(8)?,
-        start_week: row.get(9)?,
-    })
-}
-
-fn get_import_batch(conn: &Connection, import_id: i64) -> Result<CourseImportBatch, AppError> {
-    conn.query_row(
-        "SELECT id, imported_at, source_file, entry_count, teacher_count, admin_class_count, foreign_class_count, effective_start_date, effective_end_date, start_week FROM course_schedule_imports WHERE id = ?1",
-        params![import_id],
-        map_import_batch,
-    )
-    .map_err(AppError::from)
-}
-
-fn list_period_slots(conn: &Connection, import_id: i64) -> Result<Vec<CoursePeriodSlot>, AppError> {
-    let mut stmt = conn.prepare(
-        "SELECT week_index, day_of_week, day_label, period_index, period_label, section_label FROM course_schedule_periods WHERE import_id = ?1 ORDER BY week_index, day_of_week, period_index",
-    )?;
-    let rows = stmt.query_map(params![import_id], |row| {
-        Ok(CoursePeriodSlot {
-            week_index: row.get(0)?,
-            day_of_week: row.get(1)?,
-            day_label: row.get(2)?,
-            period_index: row.get(3)?,
-            period_label: row.get(4)?,
-            section_label: row.get(5)?,
-        })
-    })?;
-    let mut periods = Vec::new();
-    for row in rows {
-        periods.push(row?);
-    }
-    Ok(periods)
 }
 
 fn parse_iso_date(value: &str, field_name: &str) -> Result<NaiveDate, AppError> {
@@ -1163,12 +893,11 @@ fn date_range_inclusive(start: NaiveDate, end: NaiveDate) -> Result<Vec<NaiveDat
     Ok((0..=days).map(|offset| start + Duration::days(offset)).collect())
 }
 
-fn get_import_anchor(conn: &Connection, import_id: i64) -> Result<(NaiveDate, i64), AppError> {
-    let (effective_start_date, start_week): (Option<String>, i64) = conn.query_row(
-        "SELECT effective_start_date, start_week FROM course_schedule_imports WHERE id = ?1",
-        params![import_id],
-        |row| Ok((row.get(0)?, row.get(1)?)),
-    )?;
+async fn get_import_anchor(
+    db: &sea_orm::DatabaseConnection,
+    import_id: i64,
+) -> Result<(NaiveDate, i64), AppError> {
+    let (effective_start_date, start_week) = course_repo::import_anchor(db, import_id).await?;
     let Some(start_date_text) = effective_start_date else {
         return Err(AppError::new("请先在课务管理中设置该课表批次的生效开始日期"));
     };
@@ -1176,16 +905,11 @@ fn get_import_anchor(conn: &Connection, import_id: i64) -> Result<(NaiveDate, i6
     Ok((start_date, start_week.max(1)))
 }
 
-fn get_schedule_week_count(conn: &Connection, import_id: i64) -> Result<i64, AppError> {
-    let week_count = conn
-        .query_row(
-            "SELECT COALESCE(MAX(week_index), 1) FROM course_schedule_periods WHERE import_id = ?1",
-            params![import_id],
-            |row| row.get::<_, i64>(0),
-        )
-        .unwrap_or(1)
-        .max(1);
-    Ok(week_count)
+async fn get_schedule_week_count(
+    db: &sea_orm::DatabaseConnection,
+    import_id: i64,
+) -> Result<i64, AppError> {
+    course_repo::schedule_week_count(db, import_id).await
 }
 
 fn schedule_slot_for_date(
@@ -1240,83 +964,8 @@ fn workload_category(section_label: &str, period_label: &str) -> &'static str {
     }
 }
 
-fn map_course_change_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<CourseScheduleChange> {
-    Ok(CourseScheduleChange {
-        id: row.get(0)?,
-        import_id: row.get(1)?,
-        source_entry_id: row.get(2)?,
-        change_type: row.get(3)?,
-        status: row.get(4)?,
-        target_date: row.get(5)?,
-        source_teacher_name: row.get(6)?,
-        actual_teacher_name: row.get(7)?,
-        reason: row.get(8)?,
-        remark: row.get(9)?,
-        created_at: row.get(10)?,
-        updated_at: row.get(11)?,
-        revoked_at: row.get(12)?,
-        week_index: row.get(13)?,
-        day_of_week: row.get(14)?,
-        day_label: row.get(15)?,
-        period_index: row.get(16)?,
-        period_label: row.get(17)?,
-        section_label: row.get(18)?,
-        subject: row.get(19)?,
-        class_name: row.get(20)?,
-        display_class_name: row.get(21)?,
-        class_type: row.get(22)?,
-    })
-}
-
-fn get_active_change_for_slot(
-    conn: &Connection,
-    source_entry_id: i64,
-    target_date: &str,
-    source_teacher_name: &str,
-) -> Result<Option<CourseScheduleChange>, AppError> {
-    conn.query_row(
-        "SELECT c.id, c.import_id, c.source_entry_id, c.change_type, c.status, c.target_date, c.source_teacher_name, c.actual_teacher_name, c.reason, c.remark, c.created_at, c.updated_at, c.revoked_at, e.week_index, e.day_of_week, e.day_label, e.period_index, e.period_label, e.section_label, e.subject, e.class_name, e.display_class_name, e.class_type FROM course_schedule_changes c INNER JOIN course_schedule_entries e ON e.id = c.source_entry_id WHERE c.source_entry_id = ?1 AND c.target_date = ?2 AND c.source_teacher_name = ?3 AND c.status = 'active' ORDER BY c.id DESC LIMIT 1",
-        params![source_entry_id, target_date, source_teacher_name],
-        map_course_change_row,
-    )
-    .optional()
-    .map_err(AppError::from)
-}
-
-fn list_changes_for_import(conn: &Connection, import_id: i64) -> Result<Vec<CourseScheduleChange>, AppError> {
-    let mut stmt = conn.prepare(
-        "SELECT c.id, c.import_id, c.source_entry_id, c.change_type, c.status, c.target_date, c.source_teacher_name, c.actual_teacher_name, c.reason, c.remark, c.created_at, c.updated_at, c.revoked_at, e.week_index, e.day_of_week, e.day_label, e.period_index, e.period_label, e.section_label, e.subject, e.class_name, e.display_class_name, e.class_type FROM course_schedule_changes c INNER JOIN course_schedule_entries e ON e.id = c.source_entry_id WHERE c.import_id = ?1 ORDER BY c.target_date DESC, e.period_index ASC, c.id DESC",
-    )?;
-    let rows = stmt.query_map(params![import_id], map_course_change_row)?;
-    let mut items = Vec::new();
-    for row in rows {
-        items.push(row?);
-    }
-    Ok(items)
-}
-
-fn active_changes_for_date(
-    conn: &Connection,
-    import_id: i64,
-    target_date: &str,
-) -> Result<HashMap<(i64, String), CourseScheduleChange>, AppError> {
-    let mut stmt = conn.prepare(
-        "SELECT c.id, c.import_id, c.source_entry_id, c.change_type, c.status, c.target_date, c.source_teacher_name, c.actual_teacher_name, c.reason, c.remark, c.created_at, c.updated_at, c.revoked_at, e.week_index, e.day_of_week, e.day_label, e.period_index, e.period_label, e.section_label, e.subject, e.class_name, e.display_class_name, e.class_type FROM course_schedule_changes c INNER JOIN course_schedule_entries e ON e.id = c.source_entry_id WHERE c.import_id = ?1 AND c.target_date = ?2 AND c.status = 'active'",
-    )?;
-    let rows = stmt.query_map(params![import_id, target_date], map_course_change_row)?;
-    let mut changes = HashMap::new();
-    for row in rows {
-        let change = row?;
-        changes.insert(
-            (change.source_entry_id, change.source_teacher_name.clone()),
-            change,
-        );
-    }
-    Ok(changes)
-}
-
-fn build_course_workload_report(
-    conn: &Connection,
+async fn build_course_workload_report(
+    db: &sea_orm::DatabaseConnection,
     query: &CourseWorkloadQuery,
 ) -> Result<CourseWorkloadReport, AppError> {
     if query.import_id <= 0 {
@@ -1325,13 +974,10 @@ fn build_course_workload_report(
     let start_date = parse_iso_date(&query.start_date, "开始日期")?;
     let end_date = parse_iso_date(&query.end_date, "结束日期")?;
     let dates = date_range_inclusive(start_date, end_date)?;
-    let (anchor_date, start_week) = get_import_anchor(conn, query.import_id)?;
-    let week_count = get_schedule_week_count(conn, query.import_id)?;
+    let (anchor_date, start_week) = get_import_anchor(db, query.import_id).await?;
+    let week_count = get_schedule_week_count(db, query.import_id).await?;
 
     let mut details = Vec::new();
-    let mut stmt = conn.prepare(
-        "SELECT id, week_index, day_of_week, day_label, period_index, period_label, section_label, subject, teacher_names, class_name, display_class_name, class_type FROM course_schedule_entries WHERE import_id = ?1 AND week_index = ?2 AND day_of_week = ?3 AND period_index BETWEEN ?4 AND ?5 ORDER BY day_of_week, period_index, class_name",
-    )?;
 
     for date in dates {
         let (week_index, day_of_week) =
@@ -1344,53 +990,23 @@ fn build_course_workload_report(
             query.end_period_index,
         );
         let date_text = date.format("%Y-%m-%d").to_string();
-        let changes = active_changes_for_date(conn, query.import_id, &date_text)?;
-        let rows = stmt.query_map(
-            params![
-                query.import_id,
-                week_index,
-                day_of_week,
-                start_period,
-                end_period
-            ],
-            |row| {
-                Ok((
-                    row.get::<_, i64>(0)?,
-                    row.get::<_, i64>(1)?,
-                    row.get::<_, i64>(2)?,
-                    row.get::<_, String>(3)?,
-                    row.get::<_, i64>(4)?,
-                    row.get::<_, String>(5)?,
-                    row.get::<_, String>(6)?,
-                    row.get::<_, String>(7)?,
-                    row.get::<_, String>(8)?,
-                    row.get::<_, String>(9)?,
-                    row.get::<_, String>(10)?,
-                    row.get::<_, String>(11)?,
-                ))
-            },
-        )?;
+        let changes = course_repo::active_changes_for_date(db, query.import_id, &date_text).await?;
+        let rows = course_repo::list_entries_for_slot(
+            db,
+            query.import_id,
+            week_index,
+            day_of_week,
+            start_period,
+            end_period,
+        )
+        .await?;
         for row in rows {
-            let (
-                entry_id,
-                _week_index,
-                _day_of_week,
-                day_label,
-                period_index,
-                period_label,
-                section_label,
-                subject,
-                teacher_text,
-                class_name,
-                display_class_name,
-                _class_type,
-            ) = row?;
-            let category = workload_category(&section_label, &period_label).to_string();
-            for original_teacher_name in split_teacher_names(&teacher_text) {
+            let category = workload_category(&row.section_label, &row.period_label).to_string();
+            for original_teacher_name in row.teacher_names {
                 if !should_import_teacher_name(&original_teacher_name) {
                     continue;
                 }
-                let change = changes.get(&(entry_id, original_teacher_name.clone()));
+                let change = changes.get(&(row.id, original_teacher_name.clone()));
                 let actual_teacher_name = change
                     .map(|item| item.actual_teacher_name.clone())
                     .unwrap_or_else(|| original_teacher_name.clone());
@@ -1410,14 +1026,14 @@ fn build_course_workload_report(
                 details.push(CourseWorkloadDetail {
                     teacher_name: actual_teacher_name.clone(),
                     target_date: date_text.clone(),
-                    day_label: day_label.clone(),
-                    period_index,
-                    period_label: period_label.clone(),
-                    section_label: section_label.clone(),
+                    day_label: row.day_label.clone(),
+                    period_index: row.period_index,
+                    period_label: row.period_label.clone(),
+                    section_label: row.section_label.clone(),
                     category: category.clone(),
-                    subject: subject.clone(),
-                    class_name: class_name.clone(),
-                    display_class_name: display_class_name.clone(),
+                    subject: row.subject.clone(),
+                    class_name: row.class_name.clone(),
+                    display_class_name: row.display_class_name.clone(),
                     original_teacher_name: original_teacher_name.clone(),
                     actual_teacher_name,
                     is_substitution,
@@ -1652,247 +1268,210 @@ pub async fn import_course_schedule_from_excel(
     app: AppHandle,
     file_path: String,
 ) -> Result<CourseImportResult, String> {
-    tauri::async_runtime::spawn_blocking(move || {
-        let start = Utc::now();
-        let result = (|| -> Result<CourseImportResult, AppError> {
-            let mut conn = score::open_connection(&app)?;
-            ensure_schema(&conn)?;
-            let parsed = parse_course_workbook(&file_path)?;
-            let imported_at = Utc::now().to_rfc3339();
-            persist_course_import(&mut conn, &imported_at, &file_path, &parsed)?;
-            Ok(CourseImportResult {
-                imported_at,
-                entry_count: parsed.entries.len() as i64,
-                teacher_count: parsed
-                    .assignments
-                    .iter()
-                    .map(|item| item.teacher_name.clone())
-                    .collect::<HashSet<_>>()
-                    .len() as i64,
-                admin_class_count: parsed
-                    .classes
-                    .iter()
-                    .filter(|item| item.class_type == "admin")
-                    .count() as i64,
-                foreign_class_count: parsed
-                    .classes
-                    .iter()
-                    .filter(|item| item.class_type == "foreign")
-                    .count() as i64,
-                duration_ms: (Utc::now() - start).num_milliseconds(),
-            })
+    let start = Utc::now();
+    let app_for_blocking = app.clone();
+    let file_path_for_blocking = file_path.clone();
+    let parsed = tauri::async_runtime::spawn_blocking(move || {
+        let result = (|| -> Result<ParsedWorkbook, AppError> {
+            parse_course_workbook(&file_path_for_blocking)
         })();
         result.map_err(|e| {
             app_log::log_error(
-                &app,
+                &app_for_blocking,
                 "course_management.import_course_schedule_from_excel",
-                &format!("file_path={file_path} | {e}"),
+                &format!("file_path={file_path_for_blocking} | {e}"),
             );
             e.to_string()
         })
     })
     .await
-    .map_err(|error| format!("课表导入任务执行失败: {error}"))?
+    .map_err(|error| format!("课表导入任务执行失败: {error}"))??;
+
+    let imported_at = Utc::now().to_rfc3339();
+    let teacher_assignments = parsed
+        .assignments
+        .iter()
+        .map(ScheduleTeacherAssignment::from)
+        .collect::<Vec<_>>();
+    let result = CourseImportResult {
+        imported_at: imported_at.clone(),
+        entry_count: parsed.entries.len() as i64,
+        teacher_count: parsed
+            .assignments
+            .iter()
+            .map(|item| item.teacher_name.clone())
+            .collect::<HashSet<_>>()
+            .len() as i64,
+        admin_class_count: parsed
+            .classes
+            .iter()
+            .filter(|item| item.class_type == "admin")
+            .count() as i64,
+        foreign_class_count: parsed
+            .classes
+            .iter()
+            .filter(|item| item.class_type == "foreign")
+            .count() as i64,
+        duration_ms: (Utc::now() - start).num_milliseconds(),
+    };
+
+    let db = crate::db::connect(&app).await.map_err(|error| {
+        app_log::log_error(
+            &app,
+            "course_management.import_course_schedule_from_excel",
+            &format!("file_path={file_path} | {error}"),
+        );
+        error.to_string()
+    })?;
+    if let Err(error) =
+        course_repo::persist_course_import(&db, &imported_at, &file_path, &parsed).await
+    {
+        app_log::log_error(
+            &app,
+            "course_management.import_course_schedule_from_excel",
+            &format!("file_path={file_path} | {error}"),
+        );
+        return Err(error.to_string());
+    }
+
+    if let Err(error) = async {
+        crate::db::repos::teacher::sync_from_course_schedule(&db, &teacher_assignments).await
+    }
+    .await
+    {
+        app_log::log_error(
+            &app,
+            "course_management.import_course_schedule_from_excel.teacher_sync",
+            &format!("file_path={file_path} | {error}"),
+        );
+        return Err(error.to_string());
+    }
+
+    Ok(result)
 }
 
 #[tauri::command]
-pub fn get_course_schedule_summary(app: AppHandle) -> Result<CourseSummary, String> {
-    let result = (|| -> Result<CourseSummary, AppError> {
-        let conn = score::open_connection(&app)?;
-        ensure_schema(&conn)?;
-        let Some(import_id) = latest_import_id(&conn)? else {
-            return Ok(CourseSummary {
-                latest_import_id: None,
-                imported_at: None,
-                entry_count: 0,
-                teacher_count: 0,
-                admin_class_count: 0,
-                foreign_class_count: 0,
-                effective_start_date: None,
-                effective_end_date: None,
-                start_week: 1,
-            });
-        };
-        conn.query_row(
-            "SELECT imported_at, entry_count, teacher_count, admin_class_count, foreign_class_count, effective_start_date, effective_end_date, start_week FROM course_schedule_imports WHERE id = ?1",
-            params![import_id],
-            |row| {
-                Ok(CourseSummary {
-                    latest_import_id: Some(import_id),
-                    imported_at: Some(row.get(0)?),
-                    entry_count: row.get(1)?,
-                    teacher_count: row.get(2)?,
-                    admin_class_count: row.get(3)?,
-                    foreign_class_count: row.get(4)?,
-                    effective_start_date: row.get(5)?,
-                    effective_end_date: row.get(6)?,
-                    start_week: row.get(7)?,
-                })
-            },
-        )
-        .map_err(AppError::from)
-    })();
-    result.map_err(|e| e.to_string())
+pub async fn get_course_schedule_summary(app: AppHandle) -> Result<CourseSummary, String> {
+    let result = async {
+        let db = crate::db::connect(&app).await?;
+        course_repo::summary(&db).await
+    }
+    .await;
+    result.map_err(|e: AppError| e.to_string())
 }
 
 #[tauri::command]
-pub fn list_course_schedule_classes(
+pub async fn list_course_schedule_classes(
     app: AppHandle,
     class_type: String,
     import_id: Option<i64>,
 ) -> Result<Vec<CourseClassOption>, String> {
-    let result = (|| -> Result<Vec<CourseClassOption>, AppError> {
-        let conn = score::open_connection(&app)?;
-        ensure_schema(&conn)?;
+    let result = async {
+        let db = crate::db::connect(&app).await?;
         let selected_import_id = match import_id {
             Some(id) => id,
-            None => latest_import_id(&conn)?.unwrap_or(0),
+            None => course_repo::latest_import_id(&db).await?.unwrap_or(0),
         };
         if selected_import_id == 0 {
             return Ok(Vec::new());
         }
-        let mut stmt = conn.prepare(
-            "SELECT class_name, display_name, class_type FROM course_schedule_classes WHERE import_id = ?1 AND class_type = ?2 ORDER BY sort_index ASC",
-        )?;
-        let rows = stmt.query_map(params![selected_import_id, class_type], |row| {
-            Ok(CourseClassOption {
-                class_name: row.get(0)?,
-                display_name: row.get(1)?,
-                class_type: row.get(2)?,
-            })
-        })?;
-        let mut items = Vec::new();
-        for row in rows {
-            items.push(row?);
-        }
-        Ok(items)
-    })();
-    result.map_err(|e| e.to_string())
+        course_repo::list_classes(&db, selected_import_id, &class_type).await
+    }
+    .await;
+    result.map_err(|e: AppError| e.to_string())
 }
 
 #[tauri::command]
-pub fn list_course_schedule_imports(app: AppHandle) -> Result<Vec<CourseImportBatch>, String> {
-    let result = (|| -> Result<Vec<CourseImportBatch>, AppError> {
-        let conn = score::open_connection(&app)?;
-        ensure_schema(&conn)?;
-        let mut stmt = conn.prepare(
-            "SELECT id, imported_at, source_file, entry_count, teacher_count, admin_class_count, foreign_class_count, effective_start_date, effective_end_date, start_week FROM course_schedule_imports ORDER BY id DESC",
-        )?;
-        let rows = stmt.query_map([], map_import_batch)?;
-        let mut items = Vec::new();
-        for row in rows {
-            items.push(row?);
-        }
-        Ok(items)
-    })();
-    result.map_err(|e| e.to_string())
+pub async fn list_course_schedule_imports(app: AppHandle) -> Result<Vec<CourseImportBatch>, String> {
+    let result = async {
+        let db = crate::db::connect(&app).await?;
+        course_repo::list_imports(&db).await
+    }
+    .await;
+    result.map_err(|e: AppError| e.to_string())
 }
 
 #[tauri::command]
-pub fn update_course_schedule_import_settings(
+pub async fn update_course_schedule_import_settings(
     app: AppHandle,
     payload: CourseImportSettingsPayload,
 ) -> Result<CourseImportBatch, String> {
-    let result = (|| -> Result<CourseImportBatch, AppError> {
+    let result = async {
         if payload.import_id <= 0 {
             return Err(AppError::new("请选择要设置的课表批次"));
         }
         if payload.start_week < 1 {
             return Err(AppError::new("起始周不能小于 1"));
         }
-        let conn = score::open_connection(&app)?;
-        ensure_schema(&conn)?;
-        conn.execute(
-            "UPDATE course_schedule_imports SET effective_start_date = ?1, effective_end_date = ?2, start_week = ?3 WHERE id = ?4",
-            params![
-                normalize_optional_date(payload.effective_start_date),
-                normalize_optional_date(payload.effective_end_date),
-                payload.start_week,
-                payload.import_id,
-            ],
-        )?;
-        get_import_batch(&conn, payload.import_id)
-    })();
-    result.map_err(|e| e.to_string())
+        let db = crate::db::connect(&app).await?;
+        course_repo::update_import_settings(
+            &db,
+            payload.import_id,
+            normalize_optional_date(payload.effective_start_date),
+            normalize_optional_date(payload.effective_end_date),
+            payload.start_week,
+        )
+        .await
+    }
+    .await;
+    result.map_err(|e: AppError| e.to_string())
 }
 
 #[tauri::command]
-pub fn delete_course_schedule_import(app: AppHandle, import_id: i64) -> Result<(), String> {
-    let result = (|| -> Result<(), AppError> {
+pub async fn delete_course_schedule_import(app: AppHandle, import_id: i64) -> Result<(), String> {
+    let result = async {
         if import_id <= 0 {
             return Err(AppError::new("请选择要删除的课表批次"));
         }
-        let mut conn = score::open_connection(&app)?;
-        ensure_schema(&conn)?;
-        let tx = conn.transaction()?;
-        tx.execute(
-            "DELETE FROM course_schedule_entries WHERE import_id = ?1",
-            params![import_id],
-        )?;
-        tx.execute(
-            "DELETE FROM course_schedule_periods WHERE import_id = ?1",
-            params![import_id],
-        )?;
-        tx.execute(
-            "DELETE FROM course_schedule_classes WHERE import_id = ?1",
-            params![import_id],
-        )?;
-        tx.execute(
-            "DELETE FROM course_schedule_imports WHERE id = ?1",
-            params![import_id],
-        )?;
-        tx.commit()?;
-        Ok(())
-    })();
-    result.map_err(|e| e.to_string())
+        let db = crate::db::connect(&app).await?;
+        course_repo::delete_import(&db, import_id).await
+    }
+    .await;
+    result.map_err(|e: AppError| e.to_string())
 }
 
 #[tauri::command]
-pub fn list_course_schedule_teachers(
+pub async fn list_course_schedule_teachers(
     app: AppHandle,
     import_id: Option<i64>,
 ) -> Result<Vec<String>, String> {
-    let result = (|| -> Result<Vec<String>, AppError> {
-        let conn = score::open_connection(&app)?;
-        ensure_schema(&conn)?;
+    let result = async {
+        let db = crate::db::connect(&app).await?;
         let selected_import_id = match import_id {
             Some(id) => id,
-            None => latest_import_id(&conn)?.unwrap_or(0),
+            None => course_repo::latest_import_id(&db).await?.unwrap_or(0),
         };
         if selected_import_id == 0 {
             return Ok(Vec::new());
         }
-        let mut stmt = conn.prepare(
-            "SELECT DISTINCT teacher_names FROM course_schedule_entries WHERE import_id = ?1 AND teacher_names <> '' ORDER BY teacher_names ASC",
-        )?;
-        let rows = stmt.query_map(params![selected_import_id], |row| row.get::<_, String>(0))?;
+        let rows = course_repo::list_teacher_texts(&db, selected_import_id).await?;
         let mut names = BTreeSet::new();
         for row in rows {
-            for name in split_teacher_names(&row?) {
+            for name in split_teacher_names(&row) {
                 names.insert(name);
             }
         }
         Ok(names.into_iter().collect())
-    })();
-    result.map_err(|e| e.to_string())
+    }
+    .await;
+    result.map_err(|e: AppError| e.to_string())
 }
 
 #[tauri::command]
-pub fn list_course_schedule_periods(
+pub async fn list_course_schedule_periods(
     app: AppHandle,
     import_id: Option<i64>,
 ) -> Result<Vec<CoursePeriodSlot>, String> {
-    let result = (|| -> Result<Vec<CoursePeriodSlot>, AppError> {
-        let conn = score::open_connection(&app)?;
-        ensure_schema(&conn)?;
+    let result = async {
+        let db = crate::db::connect(&app).await?;
         let selected_import_id = match import_id {
             Some(id) => id,
-            None => latest_import_id(&conn)?.unwrap_or(0),
+            None => course_repo::latest_import_id(&db).await?.unwrap_or(0),
         };
         if selected_import_id == 0 {
             return Ok(Vec::new());
         }
-        let all_periods = list_period_slots(&conn, selected_import_id)?;
+        let all_periods = course_repo::list_period_slots(&db, selected_import_id).await?;
         let mut seen = BTreeSet::new();
         let mut unique_periods = Vec::new();
         for period in all_periods {
@@ -1901,16 +1480,17 @@ pub fn list_course_schedule_periods(
             }
         }
         Ok(unique_periods)
-    })();
-    result.map_err(|e| e.to_string())
+    }
+    .await;
+    result.map_err(|e: AppError| e.to_string())
 }
 
 #[tauri::command]
-pub fn list_course_substitution_candidates(
+pub async fn list_course_substitution_candidates(
     app: AppHandle,
     query: CourseSubstitutionCandidateQuery,
 ) -> Result<Vec<CourseSubstitutionCandidate>, String> {
-    let result = (|| -> Result<Vec<CourseSubstitutionCandidate>, AppError> {
+    let result = async {
         if query.import_id <= 0 {
             return Err(AppError::new("请选择课表批次"));
         }
@@ -1922,15 +1502,11 @@ pub fn list_course_substitution_candidates(
         let end_date = parse_iso_date(&query.end_date, "结束日期")?;
         let dates = date_range_inclusive(start_date, end_date)?;
 
-        let conn = score::open_connection(&app)?;
-        ensure_schema(&conn)?;
-        let (anchor_date, start_week) = get_import_anchor(&conn, query.import_id)?;
-        let week_count = get_schedule_week_count(&conn, query.import_id)?;
+        let db = crate::db::connect(&app).await?;
+        let (anchor_date, start_week) = get_import_anchor(&db, query.import_id).await?;
+        let week_count = get_schedule_week_count(&db, query.import_id).await?;
 
         let mut candidates = Vec::new();
-        let mut stmt = conn.prepare(
-            "SELECT id, import_id, week_index, day_of_week, day_label, period_index, period_label, section_label, subject, teacher_names, class_name, display_class_name, class_type FROM course_schedule_entries WHERE import_id = ?1 AND week_index = ?2 AND day_of_week = ?3 AND period_index BETWEEN ?4 AND ?5 AND teacher_search_text LIKE ?6 ORDER BY period_index, class_name",
-        )?;
         let selected_period_indexes = query
             .period_indexes
             .as_ref()
@@ -1959,104 +1535,73 @@ pub fn list_course_substitution_candidates(
                         query.start_period_index,
                         query.end_period_index,
                     )
-                };
+            };
             let date_text = date.format("%Y-%m-%d").to_string();
-            let rows = stmt.query_map(
-                params![
-                    query.import_id,
-                    week_index,
-                    day_of_week,
-                    start_period,
-                    end_period,
-                    format!("%{teacher_name}%")
-                ],
-                |row| {
-                    let teacher_text: String = row.get(9)?;
-                    Ok((
-                        row.get::<_, i64>(0)?,
-                        row.get::<_, i64>(1)?,
-                        row.get::<_, i64>(2)?,
-                        row.get::<_, i64>(3)?,
-                        row.get::<_, String>(4)?,
-                        row.get::<_, i64>(5)?,
-                        row.get::<_, String>(6)?,
-                        row.get::<_, String>(7)?,
-                        row.get::<_, String>(8)?,
-                        teacher_text,
-                        row.get::<_, String>(10)?,
-                        row.get::<_, String>(11)?,
-                        row.get::<_, String>(12)?,
-                    ))
-                },
-            )?;
+            let rows = course_repo::list_entries_for_teacher_slot(
+                &db,
+                query.import_id,
+                week_index,
+                day_of_week,
+                start_period,
+                end_period,
+                &teacher_name,
+            )
+            .await?;
             for row in rows {
-                let (
-                    source_entry_id,
-                    import_id,
-                    week_index,
-                    day_of_week,
-                    day_label,
-                    period_index,
-                    period_label,
-                    section_label,
-                    subject,
-                    teacher_text,
-                    class_name,
-                    display_class_name,
-                    class_type,
-                ) = row?;
-                let teacher_names = split_teacher_names(&teacher_text);
+                let teacher_names = row.teacher_names.clone();
                 if let Some(period_indexes) = selected_period_indexes.as_ref() {
-                    if !period_indexes.contains(&period_index) {
+                    if !period_indexes.contains(&row.period_index) {
                         continue;
                     }
                 }
                 if !teacher_names.iter().any(|name| name == &teacher_name) {
                     continue;
                 }
-                let existing_change =
-                    get_active_change_for_slot(&conn, source_entry_id, &date_text, &teacher_name)?;
+                let existing_change = course_repo::active_change_for_slot(
+                    &db,
+                    row.id,
+                    &date_text,
+                    &teacher_name,
+                )
+                .await?;
                 candidates.push(CourseSubstitutionCandidate {
-                    source_entry_id,
-                    import_id,
+                    source_entry_id: row.id,
+                    import_id: row.import_id,
                     target_date: date_text.clone(),
-                    week_index,
-                    day_of_week,
-                    day_label,
-                    period_index,
-                    period_label,
-                    section_label,
-                    subject,
+                    week_index: row.week_index,
+                    day_of_week: row.day_of_week,
+                    day_label: row.day_label,
+                    period_index: row.period_index,
+                    period_label: row.period_label,
+                    section_label: row.section_label,
+                    subject: row.subject,
                     teacher_names,
                     source_teacher_name: teacher_name.clone(),
-                    class_name,
-                    display_class_name,
-                    class_type,
+                    class_name: row.class_name,
+                    display_class_name: row.display_class_name,
+                    class_type: row.class_type,
                     existing_change,
                 });
             }
         }
         Ok(candidates)
-    })();
-    result.map_err(|e| e.to_string())
+    }
+    .await;
+    result.map_err(|e: AppError| e.to_string())
 }
 
 #[tauri::command]
-pub fn save_course_substitutions(
+pub async fn save_course_substitutions(
     app: AppHandle,
     payload: SaveCourseSubstitutionsPayload,
 ) -> Result<Vec<CourseScheduleChange>, String> {
-    let result = (|| -> Result<Vec<CourseScheduleChange>, AppError> {
+    let result = async {
         if payload.import_id <= 0 {
             return Err(AppError::new("请选择课表批次"));
         }
         if payload.items.is_empty() {
             return Err(AppError::new("请选择需要保存的换课记录"));
         }
-        let mut conn = score::open_connection(&app)?;
-        ensure_schema(&conn)?;
-        let tx = conn.transaction()?;
-        let now = Utc::now().to_rfc3339();
         for item in &payload.items {
             let source_teacher_name = item.source_teacher_name.trim();
             let actual_teacher_name = item.actual_teacher_name.trim();
@@ -2067,127 +1612,73 @@ pub fn save_course_substitutions(
                 return Err(AppError::new("代课教师不能与原任课教师相同"));
             }
             parse_iso_date(&item.target_date, "换课日期")?;
-            let teacher_text: String = tx.query_row(
-                "SELECT teacher_names FROM course_schedule_entries WHERE id = ?1 AND import_id = ?2",
-                params![item.source_entry_id, payload.import_id],
-                |row| row.get(0),
-            )?;
-            if !split_teacher_names(&teacher_text)
-                .iter()
-                .any(|name| name == source_teacher_name)
-            {
-                return Err(AppError::new(format!(
-                    "课次中未找到原任课教师: {source_teacher_name}"
-                )));
-            }
-            let existing_id = tx
-                .query_row(
-                    "SELECT id FROM course_schedule_changes WHERE import_id = ?1 AND source_entry_id = ?2 AND target_date = ?3 AND source_teacher_name = ?4 AND status = 'active' ORDER BY id DESC LIMIT 1",
-                    params![payload.import_id, item.source_entry_id, item.target_date, source_teacher_name],
-                    |row| row.get::<_, i64>(0),
-                )
-                .optional()?;
-            let item_remark = item
-                .remark
-                .as_ref()
-                .map(|value| value.trim().to_string())
-                .filter(|value| !value.is_empty())
-                .unwrap_or_else(|| payload.remark.trim().to_string());
-            if let Some(change_id) = existing_id {
-                tx.execute(
-                    "UPDATE course_schedule_changes SET actual_teacher_name = ?1, reason = ?2, remark = ?3, updated_at = ?4 WHERE id = ?5",
-                    params![
-                        actual_teacher_name,
-                        payload.reason.trim(),
-                        item_remark,
-                        now,
-                        change_id,
-                    ],
-                )?;
-            } else {
-                tx.execute(
-                    "INSERT INTO course_schedule_changes (import_id, source_entry_id, change_type, status, target_date, source_teacher_name, actual_teacher_name, reason, remark, created_at, updated_at) VALUES (?1, ?2, 'substitute', 'active', ?3, ?4, ?5, ?6, ?7, ?8, ?8)",
-                    params![
-                        payload.import_id,
-                        item.source_entry_id,
-                        item.target_date,
-                        source_teacher_name,
-                        actual_teacher_name,
-                        payload.reason.trim(),
-                        item_remark,
-                        now,
-                    ],
-                )?;
-            }
         }
-        tx.commit()?;
-        list_changes_for_import(&conn, payload.import_id)
-    })();
-    result.map_err(|e| e.to_string())
+        let db = crate::db::connect(&app).await?;
+        let now = Utc::now().to_rfc3339();
+        course_repo::save_substitutions(&db, &payload, &now).await
+    }
+    .await;
+    result.map_err(|e: AppError| e.to_string())
 }
 
 #[tauri::command]
-pub fn list_course_schedule_changes(
+pub async fn list_course_schedule_changes(
     app: AppHandle,
     import_id: Option<i64>,
 ) -> Result<Vec<CourseScheduleChange>, String> {
-    let result = (|| -> Result<Vec<CourseScheduleChange>, AppError> {
-        let conn = score::open_connection(&app)?;
-        ensure_schema(&conn)?;
+    let result = async {
+        let db = crate::db::connect(&app).await?;
         let selected_import_id = match import_id {
             Some(id) => id,
-            None => latest_import_id(&conn)?.unwrap_or(0),
+            None => course_repo::latest_import_id(&db).await?.unwrap_or(0),
         };
         if selected_import_id == 0 {
             return Ok(Vec::new());
         }
-        list_changes_for_import(&conn, selected_import_id)
-    })();
-    result.map_err(|e| e.to_string())
+        course_repo::list_changes_for_import(&db, selected_import_id).await
+    }
+    .await;
+    result.map_err(|e: AppError| e.to_string())
 }
 
 #[tauri::command]
-pub fn revoke_course_schedule_change(app: AppHandle, change_id: i64) -> Result<(), String> {
-    let result = (|| -> Result<(), AppError> {
+pub async fn revoke_course_schedule_change(app: AppHandle, change_id: i64) -> Result<(), String> {
+    let result = async {
         if change_id <= 0 {
             return Err(AppError::new("请选择要撤销的换课记录"));
         }
-        let conn = score::open_connection(&app)?;
-        ensure_schema(&conn)?;
+        let db = crate::db::connect(&app).await?;
         let now = Utc::now().to_rfc3339();
-        conn.execute(
-            "UPDATE course_schedule_changes SET status = 'revoked', revoked_at = ?1, updated_at = ?1 WHERE id = ?2 AND status = 'active'",
-            params![now, change_id],
-        )?;
-        Ok(())
-    })();
-    result.map_err(|e| e.to_string())
+        course_repo::revoke_change(&db, change_id, &now).await
+    }
+    .await;
+    result.map_err(|e: AppError| e.to_string())
 }
 
 #[tauri::command]
-pub fn get_course_workload_report(
+pub async fn get_course_workload_report(
     app: AppHandle,
     query: CourseWorkloadQuery,
 ) -> Result<CourseWorkloadReport, String> {
-    let result = (|| -> Result<CourseWorkloadReport, AppError> {
-        let conn = score::open_connection(&app)?;
-        ensure_schema(&conn)?;
-        build_course_workload_report(&conn, &query)
-    })();
-    result.map_err(|e| e.to_string())
+    let result = async {
+        let db = crate::db::connect(&app).await?;
+        build_course_workload_report(&db, &query).await
+    }
+    .await;
+    result.map_err(|e: AppError| e.to_string())
 }
 
 #[tauri::command]
-pub fn export_course_workload_report(
+pub async fn export_course_workload_report(
     app: AppHandle,
     query: CourseWorkloadQuery,
 ) -> Result<ExportCourseWorkloadResult, String> {
-    let result = (|| -> Result<ExportCourseWorkloadResult, AppError> {
-        let conn = score::open_connection(&app)?;
-        ensure_schema(&conn)?;
-        let report = build_course_workload_report(&conn, &query)?;
+    let result = async {
+        let db = crate::db::connect(&app).await?;
+        let report = build_course_workload_report(&db, &query).await?;
         save_workload_report(&app, &report)
-    })();
+    }
+    .await;
     result.map_err(|e| {
         app_log::log_error(
             &app,
@@ -2199,73 +1690,33 @@ pub fn export_course_workload_report(
 }
 
 #[tauri::command]
-pub fn get_course_schedule_view(
+pub async fn get_course_schedule_view(
     app: AppHandle,
     query: CourseScheduleQuery,
 ) -> Result<CourseScheduleView, String> {
-    let result = (|| -> Result<CourseScheduleView, AppError> {
-        let conn = score::open_connection(&app)?;
-        ensure_schema(&conn)?;
+    let result = async {
+        let db = crate::db::connect(&app).await?;
         let import_id = query
             .import_id
-            .or(latest_import_id(&conn)?)
+            .or(course_repo::latest_import_id(&db).await?)
             .ok_or_else(|| AppError::new("还没有导入课表"))?;
         let target = query.target.trim().to_string();
         if target.is_empty() {
             return Err(AppError::new("请选择要查看的教师或班级"));
         }
-
-        let (sql, params_values): (&str, Vec<String>) = match query.view_type.as_str() {
-            "teacher" => (
-                "SELECT week_index, day_of_week, day_label, period_index, period_label, section_label, subject, teacher_names, class_name, display_class_name, class_type FROM course_schedule_entries WHERE import_id = ?1 AND teacher_search_text LIKE ?2 ORDER BY week_index, day_of_week, period_index, class_name",
-                vec![import_id.to_string(), format!("%{target}%")],
-            ),
-            "foreign_class" => (
-                "SELECT week_index, day_of_week, day_label, period_index, period_label, section_label, subject, teacher_names, class_name, display_class_name, class_type FROM course_schedule_entries WHERE import_id = ?1 AND class_type = 'foreign' AND class_name = ?2 ORDER BY week_index, day_of_week, period_index",
-                vec![import_id.to_string(), target.clone()],
-            ),
-            _ => (
-                "SELECT week_index, day_of_week, day_label, period_index, period_label, section_label, subject, teacher_names, class_name, display_class_name, class_type FROM course_schedule_entries WHERE import_id = ?1 AND class_type = 'admin' AND class_name = ?2 ORDER BY week_index, day_of_week, period_index",
-                vec![import_id.to_string(), target.clone()],
-            ),
-        };
-        let mut stmt = conn.prepare(sql)?;
-        let rows = stmt.query_map(
-            params![
-                params_values[0].parse::<i64>().unwrap_or(import_id),
-                params_values[1]
-            ],
-            |row| {
-                let teacher_text: String = row.get(7)?;
-                Ok(CourseScheduleEntry {
-                    week_index: row.get(0)?,
-                    day_of_week: row.get(1)?,
-                    day_label: row.get(2)?,
-                    period_index: row.get(3)?,
-                    period_label: row.get(4)?,
-                    section_label: row.get(5)?,
-                    subject: row.get(6)?,
-                    teacher_names: split_teacher_names(&teacher_text),
-                    class_name: row.get(8)?,
-                    display_class_name: row.get(9)?,
-                    class_type: row.get(10)?,
-                })
-            },
-        )?;
-
-        let mut entries = Vec::new();
-        for row in rows {
-            entries.push(row?);
-        }
+        let entries =
+            course_repo::list_entries_for_view(&db, import_id, &query.view_type, &target).await?;
+        let periods = course_repo::list_period_slots(&db, import_id).await?;
         Ok(CourseScheduleView {
             import_id,
             target,
             view_type: query.view_type,
             entries,
-            periods: list_period_slots(&conn, import_id)?,
+            periods,
         })
-    })();
-    result.map_err(|e| e.to_string())
+    }
+    .await;
+    result.map_err(|e: AppError| e.to_string())
 }
 
 #[cfg(test)]
