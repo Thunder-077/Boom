@@ -12,7 +12,6 @@ use tauri::AppHandle;
 use crate::app_log;
 use crate::export_bundle;
 use crate::score::{self, AppError, ListResult, Subject};
-use crate::teacher;
 
 const DEFAULT_CAPACITY: i64 = 40;
 const DEFAULT_MAX_CAPACITY: i64 = 41;
@@ -358,7 +357,6 @@ struct SpaceCandidate {
 
 pub(crate) fn ensure_schema(conn: &Connection) -> Result<(), AppError> {
     crate::schema::ensure_schema(conn)?;
-    teacher::ensure_schema(conn)?;
 
     let now = Utc::now().to_rfc3339();
     let default_notices_json = default_exam_notices_json()?;

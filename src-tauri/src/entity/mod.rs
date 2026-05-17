@@ -1,2 +1,11 @@
+pub mod course_schedule_changes;
+pub mod course_schedule_classes;
+pub mod course_schedule_entries;
+pub mod course_schedule_imports;
+pub mod course_schedule_periods;
 pub mod class_config_subjects;
 pub mod class_configs;
+pub mod latest_teacher_assignments_v2;
+pub mod latest_teacher_homerooms_v2;
+pub mod latest_teacher_import_meta;
+pub mod latest_teachers_v2;
