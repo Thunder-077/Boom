@@ -3722,7 +3722,7 @@ pub fn import_monitor_draw_pairs_from_excel(
     let started = Instant::now();
     let result = (|| -> Result<MonitorDrawImportResult, AppError> {
         let conn = score::open_connection(&app)?;
-        exam_allocation::ensure_schema(&conn)?;
+        crate::schema::ensure_schema(&conn)?;
         let path_text = file_path.trim();
         if path_text.is_empty() {
             return Err(AppError::new("未提供可导入的 Excel 文件路径"));

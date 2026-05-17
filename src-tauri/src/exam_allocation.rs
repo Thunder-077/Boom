@@ -4,12 +4,12 @@ use std::thread;
 use std::time::Duration;
 
 use chrono::{DateTime, NaiveDateTime, Utc};
-use rusqlite::types::Value;
-use rusqlite::{params, params_from_iter, Connection};
+use sea_orm::{DatabaseConnection, DatabaseTransaction, TransactionTrait};
 use serde::{Deserialize, Serialize};
 use tauri::AppHandle;
 
 use crate::app_log;
+use crate::db::repos::exam_allocation as exam_allocation_repo;
 use crate::export_bundle;
 use crate::score::{self, AppError, ListResult, Subject};
 
@@ -355,41 +355,29 @@ struct SpaceCandidate {
     sort_index: i64,
 }
 
-pub(crate) fn ensure_schema(conn: &Connection) -> Result<(), AppError> {
-    crate::schema::ensure_schema(conn)?;
+fn open_exam_allocation_db(app: &AppHandle) -> Result<DatabaseConnection, AppError> {
+    tauri::async_runtime::block_on(crate::db::connect(app))
+}
 
+fn ensure_exam_allocation_defaults(db: &DatabaseConnection) -> Result<(), AppError> {
     let now = Utc::now().to_rfc3339();
     let default_notices_json = default_exam_notices_json()?;
-    conn.execute(
-        "INSERT OR IGNORE INTO exam_allocation_settings (id, default_capacity, max_capacity, exam_title, exam_notices_json, updated_at) VALUES (1, ?1, ?2, ?3, ?4, ?5)",
-        params![DEFAULT_CAPACITY, DEFAULT_MAX_CAPACITY, DEFAULT_EXAM_TITLE, default_notices_json, now],
-    )?;
-    conn.execute(
-        "INSERT OR IGNORE INTO exam_generation_progress (id, status, stage, stage_label, percent, message, current_grade, total_grades, completed_grades, updated_at) VALUES (1, 'idle', 'idle', '等待开始', 0, '等待开始分配考场', NULL, 0, 0, ?1)",
-        params![now],
-    )?;
-    conn.execute(
-        "INSERT OR IGNORE INTO invigilation_config_settings (id, default_exam_room_required_count, indoor_allowance_per_minute, outdoor_allowance_per_minute, middle_manager_default_enabled, middle_manager_exception_teacher_ids_json, self_study_date, self_study_start_time, self_study_end_time, self_study_class_subjects_json, updated_at) VALUES (1, 1, 0.5, 0.3, 0, '[]', '', '12:10', '13:40', '[]', ?1)",
-        params![now],
-    )?;
-    conn.execute(
-        "UPDATE exam_allocation_settings SET exam_title = ?1 WHERE id = 1 AND TRIM(COALESCE(exam_title, '')) = ''",
-        params![DEFAULT_EXAM_TITLE],
-    )?;
-    let current_notices_json: String = conn.query_row(
-        "SELECT COALESCE(exam_notices_json, '') FROM exam_allocation_settings WHERE id = 1",
-        [],
-        |row| row.get(0),
-    )?;
-    if should_replace_exam_notices(&current_notices_json) {
-        conn.execute(
-            "UPDATE exam_allocation_settings SET exam_notices_json = ?1 WHERE id = 1",
-            params![default_exam_notices_json()?],
-        )?;
+    tauri::async_runtime::block_on(exam_allocation_repo::ensure_defaults(
+        db,
+        DEFAULT_CAPACITY,
+        DEFAULT_MAX_CAPACITY,
+        DEFAULT_EXAM_TITLE,
+        &default_notices_json,
+        &now,
+    ))?;
+    let settings = tauri::async_runtime::block_on(exam_allocation_repo::get_settings(db))?;
+    if should_replace_exam_notices(&settings.exam_notices_json) {
+        tauri::async_runtime::block_on(exam_allocation_repo::replace_default_notices_if_needed(
+            db,
+            &default_exam_notices_json()?,
+        ))?;
     }
-    // Drop legacy global subject template table after switching to grade-level templates.
-    conn.execute("DROP TABLE IF EXISTS exam_subject_time_templates", [])?;
-    seed_preset_grade_subject_time_templates(conn)?;
+    seed_preset_grade_subject_time_templates(db)?;
     Ok(())
 }
 
@@ -407,28 +395,19 @@ fn parse_schedule_timestamp(value: &str) -> Option<i64> {
 }
 
 fn load_grade_subject_schedule_order(
-    conn: &Connection,
+    db: &DatabaseConnection,
 ) -> Result<HashMap<String, HashMap<Subject, i64>>, AppError> {
     let mut out = HashMap::<String, HashMap<Subject, i64>>::new();
-    let mut stmt = conn.prepare(
-        "SELECT grade_name, subject, start_at FROM exam_grade_subject_time_templates ORDER BY grade_name ASC, subject ASC",
-    )?;
-    let rows = stmt.query_map([], |row| {
-        Ok((
-            row.get::<_, String>(0)?,
-            row.get::<_, String>(1)?,
-            row.get::<_, String>(2)?,
-        ))
-    })?;
-    for row in rows {
-        let (grade_name, subject_key, start_at) = row?;
-        let Some(subject) = Subject::from_key(&subject_key) else {
+    for row in tauri::async_runtime::block_on(exam_allocation_repo::list_grade_subject_templates(
+        db,
+    ))? {
+        let Some(subject) = Subject::from_key(&row.subject) else {
             continue;
         };
-        let Some(ts) = parse_schedule_timestamp(&start_at) else {
+        let Some(ts) = parse_schedule_timestamp(&row.start_at) else {
             continue;
         };
-        out.entry(grade_name).or_default().insert(subject, ts);
+        out.entry(row.grade_name).or_default().insert(subject, ts);
     }
     Ok(out)
 }
@@ -442,42 +421,7 @@ pub(crate) fn grade_order_key(grade_name: &str) -> (i32, &str) {
     }
 }
 
-pub(crate) fn load_distinct_teaching_grades(conn: &Connection) -> Result<Vec<String>, AppError> {
-    let mut stmt = conn.prepare(
-        "SELECT DISTINCT grade_name FROM class_configs WHERE config_type = 'teaching_class'",
-    )?;
-    let rows = stmt.query_map([], |row| row.get::<_, String>(0))?;
-    let mut grades = Vec::<String>::new();
-    for row in rows {
-        let grade = row?;
-        let trimmed = grade.trim();
-        if !trimmed.is_empty() {
-            grades.push(trimmed.to_string());
-        }
-    }
-    grades.sort_by(|a, b| grade_order_key(a).cmp(&grade_order_key(b)).then(a.cmp(b)));
-    grades.dedup();
-    Ok(grades)
-}
-
-pub(crate) fn load_grade_time_template_grades(conn: &Connection) -> Result<Vec<String>, AppError> {
-    let mut stmt =
-        conn.prepare("SELECT DISTINCT grade_name FROM exam_grade_subject_time_templates")?;
-    let rows = stmt.query_map([], |row| row.get::<_, String>(0))?;
-    let mut grades = Vec::<String>::new();
-    for row in rows {
-        let grade = row?;
-        let trimmed = grade.trim();
-        if !trimmed.is_empty() {
-            grades.push(trimmed.to_string());
-        }
-    }
-    grades.sort_by(|a, b| grade_order_key(a).cmp(&grade_order_key(b)).then(a.cmp(b)));
-    grades.dedup();
-    Ok(grades)
-}
-
-fn seed_preset_grade_subject_time_templates(conn: &Connection) -> Result<(), AppError> {
+fn seed_preset_grade_subject_time_templates(db: &DatabaseConnection) -> Result<(), AppError> {
     let now = Utc::now().to_rfc3339();
     // 根据用户提供的考试安排图片，预置高一/高二科目时间。
     let presets: [(&str, Subject, &str, &str); 18] = [
@@ -590,15 +534,20 @@ fn seed_preset_grade_subject_time_templates(conn: &Connection) -> Result<(), App
             "2026-04-30T12:00",
         ),
     ];
-    for (grade_name, subject, start_at, end_at) in presets {
-        conn.execute(
-            r#"
-            INSERT OR IGNORE INTO exam_grade_subject_time_templates (grade_name, subject, start_at, end_at, updated_at)
-            VALUES (?1, ?2, ?3, ?4, ?5)
-            "#,
-            params![grade_name, subject.as_key(), start_at, end_at, now],
-        )?;
-    }
+    let rows = presets
+        .into_iter()
+        .map(|(grade_name, subject, start_at, end_at)| {
+            exam_allocation_repo::GradeSubjectTemplateSeedRow {
+                grade_name: grade_name.to_string(),
+                subject: subject.as_key().to_string(),
+                start_at: start_at.to_string(),
+                end_at: end_at.to_string(),
+            }
+        })
+        .collect::<Vec<_>>();
+    tauri::async_runtime::block_on(exam_allocation_repo::seed_grade_subject_templates(
+        db, &rows, &now,
+    ))?;
     Ok(())
 }
 
@@ -912,101 +861,60 @@ fn calculate_room_capacities(
     capacities
 }
 
-fn load_settings(conn: &Connection) -> Result<ExamAllocationSettings, AppError> {
-    conn.query_row(
-        "SELECT default_capacity, max_capacity, exam_title, exam_notices_json, updated_at FROM exam_allocation_settings WHERE id = 1",
-        [],
-        |r| {
-            let notices_json: String = r.get(3)?;
-            let exam_notices = serde_json::from_str::<Vec<String>>(&notices_json)
-                .unwrap_or_default()
-                .into_iter()
-                .map(|v| v.trim().to_string())
-                .filter(|v| !v.is_empty())
-                .collect::<Vec<_>>();
-            Ok(ExamAllocationSettings {
-                default_capacity: r.get(0)?,
-                max_capacity: r.get(1)?,
-                exam_title: r.get::<_, String>(2)?,
-                exam_notices,
-                updated_at: r.get::<_, String>(4).ok(),
-            })
-        },
-    )
-    .map_err(AppError::from)
+fn load_settings(db: &DatabaseConnection) -> Result<ExamAllocationSettings, AppError> {
+    let row = tauri::async_runtime::block_on(exam_allocation_repo::get_settings(db))?;
+    let exam_notices = serde_json::from_str::<Vec<String>>(&row.exam_notices_json)
+        .unwrap_or_default()
+        .into_iter()
+        .map(|v| v.trim().to_string())
+        .filter(|v| !v.is_empty())
+        .collect::<Vec<_>>();
+    Ok(ExamAllocationSettings {
+        default_capacity: row.default_capacity,
+        max_capacity: row.max_capacity,
+        exam_title: row.exam_title,
+        exam_notices,
+        updated_at: Some(row.updated_at),
+    })
 }
 
-fn load_grade_contexts(conn: &Connection) -> Result<HashMap<String, GradeContext>, AppError> {
+fn load_grade_contexts(db: &DatabaseConnection) -> Result<HashMap<String, GradeContext>, AppError> {
     let mut ctx_map: HashMap<String, GradeContext> = HashMap::new();
-
-    let mut teaching_stmt = conn.prepare(
-        r#"
-        SELECT c.grade_name, c.class_name, c.building, c.floor, s.subject
-        FROM class_configs c
-        LEFT JOIN class_config_subjects s ON s.config_id = c.id
-        WHERE c.config_type = 'teaching_class'
-        ORDER BY c.grade_name ASC, c.class_name ASC, c.id ASC, s.id ASC
-        "#,
-    )?;
-    let rows = teaching_stmt.query_map([], |row| {
-        Ok((
-            row.get::<_, String>(0)?,
-            row.get::<_, String>(1)?,
-            row.get::<_, String>(2)?,
-            row.get::<_, String>(3)?,
-            row.get::<_, Option<String>>(4)?,
-        ))
-    })?;
-    for row in rows {
-        let (grade_name, class_name, building, floor, subject_key) = row?;
+    for row in tauri::async_runtime::block_on(exam_allocation_repo::list_class_config_rows(db))? {
+        let grade_name = row.grade_name;
+        let class_name = row.class_name;
+        let building = row.building;
+        let floor = row.floor;
         let grade_ctx = ctx_map.entry(grade_name).or_default();
-        if !grade_ctx
-            .teaching_classes
-            .iter()
-            .any(|it| it.class_name == class_name)
-        {
-            grade_ctx.teaching_classes.push(Classroom {
-                class_name: class_name.clone(),
-                building: building.clone(),
-                floor: floor.clone(),
+        if row.config_type == "teaching_class" {
+            if !grade_ctx
+                .teaching_classes
+                .iter()
+                .any(|it| it.class_name == class_name)
+            {
+                grade_ctx.teaching_classes.push(Classroom {
+                    class_name: class_name.clone(),
+                    building: building.clone(),
+                    floor: floor.clone(),
+                });
+            }
+            if let Some(subject_key) = row.subject {
+                if let Some(subject) = Subject::from_key(&subject_key) {
+                    grade_ctx
+                        .class_subjects
+                        .entry(class_name)
+                        .or_default()
+                        .insert(subject);
+                }
+            }
+        } else if row.config_type == "exam_room" {
+            // Exam-room allocation now always uses the configured class_name as the exported room name.
+            grade_ctx.exam_rooms.push(ExamRoomResource {
+                room_name: class_name,
+                building,
+                floor,
             });
         }
-        if let Some(subject_key) = subject_key {
-            if let Some(subject) = Subject::from_key(&subject_key) {
-                grade_ctx
-                    .class_subjects
-                    .entry(class_name)
-                    .or_default()
-                    .insert(subject);
-            }
-        }
-    }
-
-    let mut exam_stmt = conn.prepare(
-        r#"
-        SELECT grade_name, class_name, building, floor
-        FROM class_configs
-        WHERE config_type = 'exam_room'
-        ORDER BY grade_name ASC, class_name ASC, id ASC
-        "#,
-    )?;
-    let exam_rows = exam_stmt.query_map([], |row| {
-        Ok((
-            row.get::<_, String>(0)?,
-            row.get::<_, String>(1)?,
-            row.get::<_, String>(2)?,
-            row.get::<_, String>(3)?,
-        ))
-    })?;
-    for row in exam_rows {
-        let (grade_name, class_name, building, floor) = row?;
-        let grade_ctx = ctx_map.entry(grade_name).or_default();
-        // Exam-room allocation now always uses the configured class_name as the exported room name.
-        grade_ctx.exam_rooms.push(ExamRoomResource {
-            room_name: class_name,
-            building,
-            floor,
-        });
     }
 
     for ctx in ctx_map.values_mut() {
@@ -1019,72 +927,52 @@ fn load_grade_contexts(conn: &Connection) -> Result<HashMap<String, GradeContext
 }
 
 fn load_selected_participants(
-    conn: &Connection,
+    db: &DatabaseConnection,
     grade_name: &str,
     subject: Subject,
 ) -> Result<Vec<Participant>, AppError> {
-    let mut stmt = conn.prepare(
-        r#"
-        SELECT s.admission_no, s.student_name, s.class_name, s.total_score, ss.score
-        FROM latest_student_scores s
-        JOIN latest_subject_scores ss ON ss.admission_no = s.admission_no
-        WHERE s.grade_name = ?1 AND ss.subject = ?2 AND ss.is_selected = 1
-        "#,
-    )?;
-    let rows = stmt.query_map(params![grade_name, subject.as_key()], |row| {
-        Ok(Participant {
-            admission_no: row.get(0)?,
-            student_name: row.get(1)?,
-            class_name: row.get(2)?,
-            total_score: row.get(3)?,
-            score: row.get(4)?,
-        })
-    })?;
-    let mut out = Vec::new();
-    for row in rows {
-        out.push(row?);
-    }
-    Ok(out)
+    Ok(tauri::async_runtime::block_on(
+        exam_allocation_repo::list_participants(db, grade_name, subject.as_key(), 1),
+    )?
+    .into_iter()
+    .map(|row| Participant {
+        admission_no: row.admission_no,
+        student_name: row.student_name,
+        class_name: row.class_name,
+        total_score: row.total_score,
+        score: row.score,
+    })
+    .collect())
 }
 
 fn load_not_selected_students(
-    conn: &Connection,
+    db: &DatabaseConnection,
     grade_name: &str,
     subject: Subject,
 ) -> Result<Vec<Participant>, AppError> {
-    let mut stmt = conn.prepare(
-        r#"
-        SELECT s.admission_no, s.student_name, s.class_name, s.total_score, ss.score
-        FROM latest_student_scores s
-        JOIN latest_subject_scores ss ON ss.admission_no = s.admission_no
-        WHERE s.grade_name = ?1 AND ss.subject = ?2 AND ss.is_selected = 0
-        "#,
-    )?;
-    let rows = stmt.query_map(params![grade_name, subject.as_key()], |row| {
-        Ok(Participant {
-            admission_no: row.get(0)?,
-            student_name: row.get(1)?,
-            class_name: row.get(2)?,
-            total_score: row.get(3)?,
-            score: row.get(4)?,
-        })
-    })?;
-    let mut out = Vec::new();
-    for row in rows {
-        out.push(row?);
-    }
-    Ok(out)
+    Ok(tauri::async_runtime::block_on(
+        exam_allocation_repo::list_participants(db, grade_name, subject.as_key(), 0),
+    )?
+    .into_iter()
+    .map(|row| Participant {
+        admission_no: row.admission_no,
+        student_name: row.student_name,
+        class_name: row.class_name,
+        total_score: row.total_score,
+        score: row.score,
+    })
+    .collect())
 }
 
 fn load_self_study_students_for_session(
-    conn: &Connection,
+    db: &DatabaseConnection,
     grade_name: &str,
     subject: Subject,
 ) -> Result<Vec<Participant>, AppError> {
     if is_foreign_subject(subject) {
         return Ok(Vec::new());
     }
-    load_not_selected_students(conn, grade_name, subject)
+    load_not_selected_students(db, grade_name, subject)
 }
 
 fn build_round_robin_order(participants: &[Participant]) -> Vec<Participant> {
@@ -1128,28 +1016,9 @@ fn build_round_robin_order(participants: &[Participant]) -> Vec<Participant> {
     ordered
 }
 
-pub(crate) fn clear_latest_plan_snapshot(tx: &rusqlite::Transaction<'_>) -> Result<(), AppError> {
-    tx.execute("DELETE FROM latest_exam_plan_staff_assignments", [])?;
-    tx.execute("DELETE FROM latest_exam_plan_student_allocations", [])?;
-    tx.execute("DELETE FROM latest_exam_plan_spaces", [])?;
-    tx.execute("DELETE FROM latest_exam_plan_sessions", [])?;
-    tx.execute("DELETE FROM latest_exam_plan_meta", [])?;
+pub(crate) fn clear_latest_plan_snapshot(tx: &DatabaseTransaction) -> Result<(), AppError> {
+    tauri::async_runtime::block_on(exam_allocation_repo::clear_latest_plan_snapshot(tx))?;
     Ok(())
-}
-
-pub(crate) fn reset_exam_generation_progress(conn: &Connection) -> Result<(), AppError> {
-    // 关闭应用后回到初始空闲态，避免下次启动仍显示旧进度或运行中状态。
-    update_exam_generation_progress(
-        conn,
-        "idle",
-        "idle",
-        "等待开始",
-        0,
-        "等待开始分配考场",
-        None,
-        0,
-        0,
-    )
 }
 
 fn fill_with_configured_exam_rooms(
@@ -1189,7 +1058,8 @@ fn fill_with_configured_exam_rooms(
 }
 
 fn build_session(
-    tx: &rusqlite::Transaction<'_>,
+    db: &DatabaseConnection,
+    tx: &DatabaseTransaction,
     grade_name: &str,
     subject: Subject,
     grade_ctx: &GradeContext,
@@ -1202,7 +1072,7 @@ fn build_session(
     let mut warnings = 0_i64;
     let is_foreign = is_foreign_subject(subject);
     let foreign_seq = foreign_order(subject);
-    let not_selected = load_self_study_students_for_session(tx, grade_name, subject)?;
+    let not_selected = load_self_study_students_for_session(db, grade_name, subject)?;
     let self_study_class_names: HashSet<String> = not_selected
         .iter()
         .map(|item| item.class_name.clone())
@@ -1226,7 +1096,7 @@ fn build_session(
         }
     }
 
-    let mut participants = load_selected_participants(tx, grade_name, subject)?;
+    let mut participants = load_selected_participants(db, grade_name, subject)?;
     for p in &participants {
         if !subject_classes.contains(&p.class_name) {
             warnings += 1;
@@ -1309,90 +1179,82 @@ fn build_session(
         });
     }
 
-    tx.execute(
-        r#"
-        INSERT INTO latest_exam_plan_sessions
-        (grade_name, subject, is_foreign_group, foreign_order, participant_count, exam_room_count, self_study_room_count)
-        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
-        "#,
-        params![
-            grade_name,
-            subject.as_key(),
-            if is_foreign { 1_i64 } else { 0_i64 },
-            foreign_seq,
-            participants.len() as i64,
-            chosen_spaces.len() as i64,
-            self_study_spaces.len() as i64
-        ],
-    )?;
-    let session_id = tx.last_insert_rowid();
+    let session_id = tauri::async_runtime::block_on(exam_allocation_repo::insert_session(
+        tx,
+        exam_allocation_repo::SessionInsertRow {
+            grade_name: grade_name.to_string(),
+            subject: subject.as_key().to_string(),
+            is_foreign_group: if is_foreign { 1 } else { 0 },
+            foreign_order: foreign_seq,
+            participant_count: participants.len() as i64,
+            exam_room_count: chosen_spaces.len() as i64,
+            self_study_room_count: self_study_spaces.len() as i64,
+        },
+    ))?;
 
     let mut exam_space_ids = Vec::new();
     for (index, space) in chosen_spaces.iter_mut().enumerate() {
         space.capacity = capacities.get(index).copied();
-        tx.execute(
-            r#"
-            INSERT INTO latest_exam_plan_spaces
-            (session_id, space_type, space_source, grade_name, subject, space_name, original_class_name, self_study_topic_kind, self_study_topic_subjects_json, self_study_topic_label, building, floor, capacity, sort_index)
-            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)
-            "#,
-            params![
+        let space_id = tauri::async_runtime::block_on(exam_allocation_repo::insert_space(
+            tx,
+            exam_allocation_repo::SpaceInsertRow {
                 session_id,
-                space.space_type.as_key(),
-                space.space_source.as_key(),
-                grade_name,
-                subject.as_key(),
-                space.space_name,
-                space.original_class_name,
-                space.self_study_topic.as_ref().map(|value| value.kind.as_key().to_string()),
-                space
+                space_type: space.space_type.as_key().to_string(),
+                space_source: space.space_source.as_key().to_string(),
+                grade_name: grade_name.to_string(),
+                subject: subject.as_key().to_string(),
+                space_name: space.space_name.clone(),
+                original_class_name: space.original_class_name.clone(),
+                self_study_topic_kind: space
+                    .self_study_topic
+                    .as_ref()
+                    .map(|value| value.kind.as_key().to_string()),
+                self_study_topic_subjects_json: space
                     .self_study_topic
                     .as_ref()
                     .map(|value| serde_json::to_string(&value.subjects))
                     .transpose()
                     .map_err(|e| AppError::new(format!("考试期间自习主题科目序列化失败: {e}")))?,
-                space.self_study_topic.as_ref().map(|value| value.label.clone()),
-                space.building,
-                space.floor,
-                space.capacity,
-                space.sort_index
-            ],
-        )?;
-        exam_space_ids.push(tx.last_insert_rowid());
+                self_study_topic_label: space.self_study_topic.as_ref().map(|value| value.label.clone()),
+                building: space.building.clone(),
+                floor: space.floor.clone(),
+                capacity: space.capacity,
+                sort_index: space.sort_index,
+            },
+        ))?;
+        exam_space_ids.push(space_id);
     }
 
     let mut self_study_space_by_class = HashMap::new();
     let mut self_study_ids = Vec::new();
     for space in &self_study_spaces {
-        tx.execute(
-            r#"
-            INSERT INTO latest_exam_plan_spaces
-            (session_id, space_type, space_source, grade_name, subject, space_name, original_class_name, self_study_topic_kind, self_study_topic_subjects_json, self_study_topic_label, building, floor, capacity, sort_index)
-            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)
-            "#,
-            params![
+        let id = tauri::async_runtime::block_on(exam_allocation_repo::insert_space(
+            tx,
+            exam_allocation_repo::SpaceInsertRow {
                 session_id,
-                space.space_type.as_key(),
-                space.space_source.as_key(),
-                grade_name,
-                subject.as_key(),
-                space.space_name,
-                space.original_class_name,
-                space.self_study_topic.as_ref().map(|value| value.kind.as_key().to_string()),
-                space
+                space_type: space.space_type.as_key().to_string(),
+                space_source: space.space_source.as_key().to_string(),
+                grade_name: grade_name.to_string(),
+                subject: subject.as_key().to_string(),
+                space_name: space.space_name.clone(),
+                original_class_name: space.original_class_name.clone(),
+                self_study_topic_kind: space
+                    .self_study_topic
+                    .as_ref()
+                    .map(|value| value.kind.as_key().to_string()),
+                self_study_topic_subjects_json: space
                     .self_study_topic
                     .as_ref()
                     .map(|value| serde_json::to_string(&value.subjects))
                     .transpose()
                     .map_err(|e| AppError::new(format!("考试期间自习主题科目序列化失败: {e}")))?,
-                space.self_study_topic.as_ref().map(|value| value.label.clone()),
-                space.building,
-                space.floor,
-                Option::<i64>::None,
-                space.sort_index
-            ],
-        )?;
-        let id = tx.last_insert_rowid();
+                self_study_topic_label: space.self_study_topic.as_ref().map(|value| value.label.clone()),
+                building: space.building.clone(),
+                floor: space.floor.clone(),
+                capacity: None,
+                sort_index: space.sort_index,
+            },
+        ))?;
         self_study_ids.push(id);
         if let Some(class_name) = &space.original_class_name {
             self_study_space_by_class.insert(class_name.clone(), id);
@@ -1410,23 +1272,19 @@ fn build_session(
         let end = (start + cap_u).min(ordered.len());
         let room_students = &ordered[start..end];
         for (seat_idx, student) in room_students.iter().enumerate() {
-            tx.execute(
-                r#"
-                INSERT INTO latest_exam_plan_student_allocations
-                (session_id, admission_no, student_name, class_name, allocation_type, space_id, seat_no, subject_score)
-                VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
-                "#,
-                params![
+            tauri::async_runtime::block_on(exam_allocation_repo::insert_student_allocation(
+                tx,
+                exam_allocation_repo::StudentAllocationInsertRow {
                     session_id,
-                    student.admission_no,
-                    student.student_name,
-                    student.class_name,
-                    ExamAllocationType::Exam.as_key(),
-                    exam_space_ids.get(space_index),
-                    seat_idx as i64 + 1,
-                    student.score
-                ],
-            )?;
+                    admission_no: student.admission_no.clone(),
+                    student_name: student.student_name.clone(),
+                    class_name: student.class_name.clone(),
+                    allocation_type: ExamAllocationType::Exam.as_key().to_string(),
+                    space_id: exam_space_ids.get(space_index).copied(),
+                    seat_no: Some(seat_idx as i64 + 1),
+                    subject_score: student.score,
+                },
+            ))?;
         }
         start = end;
         if start >= ordered.len() {
@@ -1443,21 +1301,19 @@ fn build_session(
                     student.class_name
                 ))
             })?;
-        tx.execute(
-            r#"
-            INSERT INTO latest_exam_plan_student_allocations
-            (session_id, admission_no, student_name, class_name, allocation_type, space_id, seat_no, subject_score)
-            VALUES (?1, ?2, ?3, ?4, ?5, ?6, NULL, NULL)
-            "#,
-            params![
+        tauri::async_runtime::block_on(exam_allocation_repo::insert_student_allocation(
+            tx,
+            exam_allocation_repo::StudentAllocationInsertRow {
                 session_id,
-                student.admission_no,
-                student.student_name,
-                student.class_name,
-                ExamAllocationType::SelfStudy.as_key(),
-                mapped_id
-            ],
-        )?;
+                admission_no: student.admission_no,
+                student_name: student.student_name,
+                class_name: student.class_name,
+                allocation_type: ExamAllocationType::SelfStudy.as_key().to_string(),
+                space_id: Some(mapped_id),
+                seat_no: None,
+                subject_score: None,
+            },
+        ))?;
     }
 
     Ok(SessionBuildResult {
@@ -1466,7 +1322,7 @@ fn build_session(
 }
 
 fn update_exam_generation_progress(
-    conn: &Connection,
+    db: &DatabaseConnection,
     status: &str,
     stage: &str,
     stage_label: &str,
@@ -1477,32 +1333,20 @@ fn update_exam_generation_progress(
     completed_grades: i64,
 ) -> Result<(), AppError> {
     let now = Utc::now().to_rfc3339();
-    conn.execute(
-        r#"
-        UPDATE exam_generation_progress
-        SET status = ?1,
-            stage = ?2,
-            stage_label = ?3,
-            percent = ?4,
-            message = ?5,
-            current_grade = ?6,
-            total_grades = ?7,
-            completed_grades = ?8,
-            updated_at = ?9
-        WHERE id = 1
-        "#,
-        params![
-            status,
-            stage,
-            stage_label,
-            percent.clamp(0, 100),
-            message,
-            current_grade,
-            total_grades.max(0),
-            completed_grades.max(0),
-            now
-        ],
-    )?;
+    tauri::async_runtime::block_on(exam_allocation_repo::update_progress(
+        db,
+        exam_allocation_repo::ProgressRow {
+            status: status.to_string(),
+            stage: stage.to_string(),
+            stage_label: stage_label.to_string(),
+            percent,
+            message: message.to_string(),
+            current_grade: current_grade.map(ToString::to_string),
+            total_grades,
+            completed_grades,
+            updated_at: now,
+        },
+    ))?;
     Ok(())
 }
 
@@ -1512,9 +1356,9 @@ fn pause_after_generation_stage() {
 
 pub fn get_exam_allocation_settings(app: AppHandle) -> Result<ExamAllocationSettings, String> {
     let result = (|| -> Result<ExamAllocationSettings, AppError> {
-        let conn = score::open_connection(&app)?;
-        ensure_schema(&conn)?;
-        load_settings(&conn)
+        let db = open_exam_allocation_db(&app)?;
+        ensure_exam_allocation_defaults(&db)?;
+        load_settings(&db)
     })();
     result.map_err(|e| e.to_string())
 }
@@ -1534,13 +1378,17 @@ pub fn update_exam_allocation_settings(
             .collect::<Vec<_>>();
         let exam_notices_json = serde_json::to_string(&exam_notices)
             .map_err(|e| AppError::new(format!("考试须知序列化失败: {e}")))?;
-        let conn = score::open_connection(&app)?;
-        ensure_schema(&conn)?;
+        let db = open_exam_allocation_db(&app)?;
+        ensure_exam_allocation_defaults(&db)?;
         let now = Utc::now().to_rfc3339();
-        conn.execute(
-            "UPDATE exam_allocation_settings SET default_capacity = ?1, max_capacity = ?2, exam_title = ?3, exam_notices_json = ?4, updated_at = ?5 WHERE id = 1",
-            params![payload.default_capacity, payload.max_capacity, exam_title, exam_notices_json, now],
-        )?;
+        tauri::async_runtime::block_on(exam_allocation_repo::update_settings(
+            &db,
+            payload.default_capacity,
+            payload.max_capacity,
+            &exam_title,
+            &exam_notices_json,
+            &now,
+        ))?;
         Ok(SuccessResponse::ok())
     })();
     result.map_err(|e| e.to_string())
@@ -1550,10 +1398,10 @@ fn generate_latest_exam_plan_internal(
     app: &AppHandle,
     payload: Option<GenerateLatestExamPlanPayload>,
 ) -> Result<GenerateLatestExamPlanResult, AppError> {
-    let mut conn = score::open_connection(&app)?;
-    ensure_schema(&conn)?;
+    let db = open_exam_allocation_db(app)?;
+    ensure_exam_allocation_defaults(&db)?;
     update_exam_generation_progress(
-        &conn,
+        &db,
         "running",
         "loading_config",
         "读取配置",
@@ -1564,7 +1412,7 @@ fn generate_latest_exam_plan_internal(
         0,
     )?;
     pause_after_generation_stage();
-    let settings = load_settings(&conn)?;
+    let settings = load_settings(&db)?;
     let default_capacity = payload
         .as_ref()
         .and_then(|p| p.default_capacity)
@@ -1575,13 +1423,13 @@ fn generate_latest_exam_plan_internal(
         .unwrap_or(settings.max_capacity);
     validate_capacity(default_capacity, max_capacity)?;
 
-    let grade_contexts = load_grade_contexts(&conn)?;
-    let grade_subject_schedule_order = load_grade_subject_schedule_order(&conn)?;
+    let grade_contexts = load_grade_contexts(&db)?;
+    let grade_subject_schedule_order = load_grade_subject_schedule_order(&db)?;
     let mut grades: Vec<String> = grade_contexts.keys().cloned().collect();
     grades.sort_by(|a, b| grade_order_key(a).cmp(&grade_order_key(b)).then(a.cmp(b)));
     let total_grades = grades.len() as i64;
     update_exam_generation_progress(
-        &conn,
+        &db,
         "running",
         "clearing_snapshot",
         "清理旧结果",
@@ -1594,10 +1442,10 @@ fn generate_latest_exam_plan_internal(
     pause_after_generation_stage();
 
     let generated_at = Utc::now().to_rfc3339();
-    let tx = conn.transaction()?;
+    let tx = tauri::async_runtime::block_on(db.begin())?;
     clear_latest_plan_snapshot(&tx)?;
     update_exam_generation_progress(
-        &tx,
+        &db,
         "running",
         "building_sessions",
         "生成场次",
@@ -1615,7 +1463,7 @@ fn generate_latest_exam_plan_internal(
     for (grade_index, grade_name) in grades.iter().enumerate() {
         let alloc_percent = 28 + (((grade_index as i64) * 44) / total_grades.max(1));
         update_exam_generation_progress(
-            &tx,
+            &db,
             "running",
             "allocating_rooms",
             "分配考场",
@@ -1669,6 +1517,7 @@ fn generate_latest_exam_plan_internal(
                 .copied()
                 .unwrap_or_else(|| subject_order(subject) as i64);
             let built = build_session(
+                &db,
                 &tx,
                 grade_name,
                 subject,
@@ -1684,13 +1533,20 @@ fn generate_latest_exam_plan_internal(
         }
     }
 
-    tx.execute(
-            "INSERT INTO latest_exam_plan_meta (id, generated_at, default_capacity, max_capacity, grade_count, session_count, warning_count) VALUES (1, ?1, ?2, ?3, ?4, ?5, ?6)",
-            params![generated_at, default_capacity, max_capacity, grades.len() as i64, session_count, warning_count],
-        )?;
-    tx.commit()?;
+    tauri::async_runtime::block_on(exam_allocation_repo::insert_plan_meta(
+        &tx,
+        exam_allocation_repo::PlanMetaInsertRow {
+            generated_at: generated_at.clone(),
+            default_capacity,
+            max_capacity,
+            grade_count: grades.len() as i64,
+            session_count,
+            warning_count,
+        },
+    ))?;
+    tauri::async_runtime::block_on(tx.commit())?;
     update_exam_generation_progress(
-        &conn,
+        &db,
         "running",
         "finalizing_results",
         "整理结果",
@@ -1702,12 +1558,11 @@ fn generate_latest_exam_plan_internal(
     )?;
     pause_after_generation_stage();
     tauri::async_runtime::block_on(async {
-        let db = crate::db::connect(&app).await?;
         crate::db::repos::exam_staff::seed_default_session_times(&db, &Utc::now().to_rfc3339())
             .await
     })?;
     update_exam_generation_progress(
-        &conn,
+        &db,
         "running",
         "exporting_files",
         "生成文件",
@@ -1718,10 +1573,11 @@ fn generate_latest_exam_plan_internal(
         0,
     )?;
     pause_after_generation_stage();
+    let conn = score::open_connection(app)?;
     export_bundle::generate_export_files(&app, &conn, |grade_name, done, total| {
         let percent = 82 + (((done as i64) * 16) / (total as i64).max(1));
         let _ = update_exam_generation_progress(
-            &conn,
+            &db,
             "running",
             "exporting_files",
             "生成文件",
@@ -1734,7 +1590,7 @@ fn generate_latest_exam_plan_internal(
         pause_after_generation_stage();
     })?;
     update_exam_generation_progress(
-        &conn,
+        &db,
         "completed",
         "completed",
         "已完成",
@@ -1759,18 +1615,14 @@ pub fn start_generate_latest_exam_plan(
     payload: Option<GenerateLatestExamPlanPayload>,
 ) -> Result<SuccessResponse, String> {
     let result = (|| -> Result<SuccessResponse, AppError> {
-        let conn = score::open_connection(&app)?;
-        ensure_schema(&conn)?;
-        let running: String = conn.query_row(
-            "SELECT status FROM exam_generation_progress WHERE id = 1",
-            [],
-            |row| row.get(0),
-        )?;
-        if running == "running" {
+        let db = open_exam_allocation_db(&app)?;
+        ensure_exam_allocation_defaults(&db)?;
+        let progress = tauri::async_runtime::block_on(exam_allocation_repo::get_progress(&db))?;
+        if progress.status == "running" {
             return Err(AppError::new("考场分配正在执行中，请稍候"));
         }
         update_exam_generation_progress(
-            &conn,
+            &db,
             "running",
             "queued",
             "准备开始",
@@ -1783,10 +1635,10 @@ pub fn start_generate_latest_exam_plan(
         let app_handle = app.clone();
         thread::spawn(move || {
             if let Err(error) = generate_latest_exam_plan_internal(&app_handle, payload) {
-                if let Ok(conn) = score::open_connection(&app_handle) {
-                    let _ = ensure_schema(&conn);
+                if let Ok(db) = open_exam_allocation_db(&app_handle) {
+                    let _ = ensure_exam_allocation_defaults(&db);
                     let _ = update_exam_generation_progress(
-                        &conn,
+                        &db,
                         "error",
                         "error",
                         "执行失败",
@@ -1811,41 +1663,21 @@ pub fn start_generate_latest_exam_plan(
 
 pub fn get_latest_exam_plan_overview(app: AppHandle) -> Result<ExamPlanOverview, String> {
     let result = (|| -> Result<ExamPlanOverview, AppError> {
-        let conn = score::open_connection(&app)?;
-        ensure_schema(&conn)?;
-        let settings = load_settings(&conn)?;
-        let meta_row: Option<(String, i64, i64, i64)> = conn
-            .query_row(
-                "SELECT generated_at, grade_count, session_count, warning_count FROM latest_exam_plan_meta WHERE id = 1",
-                [],
-                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
-            )
-            .ok();
-        let exam_room_count: i64 = conn.query_row(
-            "SELECT COUNT(*) FROM latest_exam_plan_spaces WHERE space_type = 'exam_room'",
-            [],
-            |row| row.get(0),
-        )?;
-        let self_study_room_count: i64 = conn.query_row(
-            "SELECT COUNT(*) FROM latest_exam_plan_spaces WHERE space_type = 'self_study_room'",
-            [],
-            |row| row.get(0),
-        )?;
-        let student_allocation_count: i64 = conn.query_row(
-            "SELECT COUNT(DISTINCT admission_no) FROM latest_exam_plan_student_allocations WHERE allocation_type = 'exam'",
-            [],
-            |row| row.get(0),
-        )?;
+        let db = open_exam_allocation_db(&app)?;
+        ensure_exam_allocation_defaults(&db)?;
+        let settings = load_settings(&db)?;
+        let meta_row = tauri::async_runtime::block_on(exam_allocation_repo::latest_plan_meta(&db))?;
+        let counts = tauri::async_runtime::block_on(exam_allocation_repo::overview_counts(&db))?;
         Ok(ExamPlanOverview {
-            generated_at: meta_row.as_ref().map(|v| v.0.clone()),
+            generated_at: meta_row.as_ref().map(|v| v.generated_at.clone()),
             default_capacity: settings.default_capacity,
             max_capacity: settings.max_capacity,
-            grade_count: meta_row.as_ref().map(|v| v.1).unwrap_or(0),
-            session_count: meta_row.as_ref().map(|v| v.2).unwrap_or(0),
-            warning_count: meta_row.as_ref().map(|v| v.3).unwrap_or(0),
-            exam_room_count,
-            self_study_room_count,
-            student_allocation_count,
+            grade_count: meta_row.as_ref().map(|v| v.grade_count).unwrap_or(0),
+            session_count: meta_row.as_ref().map(|v| v.session_count).unwrap_or(0),
+            warning_count: meta_row.as_ref().map(|v| v.warning_count).unwrap_or(0),
+            exam_room_count: counts.exam_room_count,
+            self_study_room_count: counts.self_study_room_count,
+            student_allocation_count: counts.student_allocation_count,
         })
     })();
     result.map_err(|e| e.to_string())
@@ -1853,26 +1685,20 @@ pub fn get_latest_exam_plan_overview(app: AppHandle) -> Result<ExamPlanOverview,
 
 pub fn get_exam_generation_progress(app: AppHandle) -> Result<ExamGenerationProgress, String> {
     let result = (|| -> Result<ExamGenerationProgress, AppError> {
-        let conn = score::open_connection(&app)?;
-        ensure_schema(&conn)?;
-        conn.query_row(
-            "SELECT status, stage, stage_label, percent, message, current_grade, total_grades, completed_grades, updated_at FROM exam_generation_progress WHERE id = 1",
-            [],
-            |row| {
-                Ok(ExamGenerationProgress {
-                    status: row.get(0)?,
-                    stage: row.get(1)?,
-                    stage_label: row.get(2)?,
-                    percent: row.get(3)?,
-                    message: row.get(4)?,
-                    current_grade: row.get(5)?,
-                    total_grades: row.get(6)?,
-                    completed_grades: row.get(7)?,
-                    updated_at: row.get(8)?,
-                })
-            },
-        )
-        .map_err(AppError::from)
+        let db = open_exam_allocation_db(&app)?;
+        ensure_exam_allocation_defaults(&db)?;
+        let row = tauri::async_runtime::block_on(exam_allocation_repo::get_progress(&db))?;
+        Ok(ExamGenerationProgress {
+            status: row.status,
+            stage: row.stage,
+            stage_label: row.stage_label,
+            percent: row.percent,
+            message: row.message,
+            current_grade: row.current_grade,
+            total_grades: row.total_grades,
+            completed_grades: row.completed_grades,
+            updated_at: row.updated_at,
+        })
     })();
     result.map_err(|e| e.to_string())
 }
@@ -1882,102 +1708,105 @@ pub fn list_latest_exam_plan_sessions(
     params: ListExamPlanSessionsParams,
 ) -> Result<ListResult<ExamPlanSession>, String> {
     let result = (|| -> Result<ListResult<ExamPlanSession>, AppError> {
-        let conn = score::open_connection(&app)?;
-        ensure_schema(&conn)?;
-
-        let mut where_parts = Vec::new();
-        let mut values = Vec::<Value>::new();
-        if let Some(grade_name) = params
+        let db = open_exam_allocation_db(&app)?;
+        ensure_exam_allocation_defaults(&db)?;
+        let grade_name = if let Some(grade_name) = params
             .grade_name
             .as_ref()
             .map(|v| v.trim())
             .filter(|v| !v.is_empty())
         {
-            where_parts.push("grade_name = ?".to_string());
-            values.push(Value::Text(grade_name.to_string()));
-        }
-        if let Some(subject) = params.subject {
-            where_parts.push("subject = ?".to_string());
-            values.push(Value::Text(subject.as_key().to_string()));
-        }
-        let where_sql = if where_parts.is_empty() {
-            String::new()
+            Some(grade_name.to_string())
         } else {
-            format!(" WHERE {}", where_parts.join(" AND "))
+            None
         };
-        let total_sql = format!("SELECT COUNT(*) FROM latest_exam_plan_sessions{where_sql}");
-        let total: i64 = conn.query_row(&total_sql, params_from_iter(values.iter()), |row| {
-            row.get(0)
-        })?;
-
+        let subject = params.subject.map(|subject| subject.as_key().to_string());
         let page = params.page.unwrap_or(1).max(1);
         let page_size = params.page_size.unwrap_or(100).clamp(1, 500);
-        let offset = (page - 1) * page_size;
-        let mut query_values = values;
-        query_values.push(Value::Integer(page_size));
-        query_values.push(Value::Integer(offset));
-
-        let list_sql = format!(
-            r#"
-            SELECT id, grade_name, subject, is_foreign_group, foreign_order, participant_count, exam_room_count, self_study_room_count
-            FROM latest_exam_plan_sessions
-            {where_sql}
-            ORDER BY grade_name ASC, is_foreign_group DESC, COALESCE(foreign_order, 99) ASC, subject ASC, id ASC
-            LIMIT ? OFFSET ?
-            "#
-        );
-        let mut stmt = conn.prepare(&list_sql)?;
-        let rows = stmt.query_map(params_from_iter(query_values.iter()), |row| {
-            let subject_key: String = row.get(2)?;
-            let subject = Subject::from_key(&subject_key).ok_or_else(|| {
-                rusqlite::Error::InvalidColumnType(
-                    2,
-                    "subject".to_string(),
-                    rusqlite::types::Type::Text,
-                )
-            })?;
-            Ok(ExamPlanSession {
-                id: row.get(0)?,
-                grade_name: row.get(1)?,
+        let result = tauri::async_runtime::block_on(exam_allocation_repo::list_sessions(
+            &db,
+            exam_allocation_repo::SessionFilters {
+                grade_name,
                 subject,
-                is_foreign_group: row.get::<_, i64>(3)? == 1,
-                foreign_order: row.get(4)?,
-                participant_count: row.get(5)?,
-                exam_room_count: row.get(6)?,
-                self_study_room_count: row.get(7)?,
-            })
-        })?;
-        let mut items = Vec::new();
-        for row in rows {
-            items.push(row?);
-        }
-        Ok(ListResult { items, total })
+                page,
+                page_size,
+            },
+        ))?;
+        let items = result
+            .items
+            .into_iter()
+            .map(session_from_model)
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(ListResult {
+            items,
+            total: result.total,
+        })
     })();
     result.map_err(|e| e.to_string())
 }
 
-fn get_session_by_id(conn: &Connection, session_id: i64) -> Result<ExamPlanSession, AppError> {
-    conn.query_row(
-        "SELECT id, grade_name, subject, is_foreign_group, foreign_order, participant_count, exam_room_count, self_study_room_count FROM latest_exam_plan_sessions WHERE id = ?1",
-        params![session_id],
-        |row| {
-            let subject_key: String = row.get(2)?;
-            let subject = Subject::from_key(&subject_key).ok_or_else(|| {
-                rusqlite::Error::InvalidColumnType(2, "subject".to_string(), rusqlite::types::Type::Text)
-            })?;
-            Ok(ExamPlanSession {
-                id: row.get(0)?,
-                grade_name: row.get(1)?,
-                subject,
-                is_foreign_group: row.get::<_, i64>(3)? == 1,
-                foreign_order: row.get(4)?,
-                participant_count: row.get(5)?,
-                exam_room_count: row.get(6)?,
-                self_study_room_count: row.get(7)?,
-            })
-        },
-    )
-    .map_err(AppError::from)
+fn session_from_model(
+    row: crate::entity::latest_exam_plan_sessions::Model,
+) -> Result<ExamPlanSession, AppError> {
+    let subject = Subject::from_key(&row.subject)
+        .ok_or_else(|| AppError::new(format!("无效的科目: {}", row.subject)))?;
+    Ok(ExamPlanSession {
+        id: row.id,
+        grade_name: row.grade_name,
+        subject,
+        is_foreign_group: row.is_foreign_group == 1,
+        foreign_order: row.foreign_order,
+        participant_count: row.participant_count,
+        exam_room_count: row.exam_room_count,
+        self_study_room_count: row.self_study_room_count,
+    })
+}
+
+fn space_from_model(row: crate::entity::latest_exam_plan_spaces::Model) -> Result<ExamPlanSpace, AppError> {
+    let space_type = ExamPlanSpaceType::from_key(&row.space_type)
+        .ok_or_else(|| AppError::new(format!("无效的空间类型: {}", row.space_type)))?;
+    let space_source = ExamPlanSpaceSource::from_key(&row.space_source)
+        .ok_or_else(|| AppError::new(format!("无效的空间来源: {}", row.space_source)))?;
+    let subject = Subject::from_key(&row.subject)
+        .ok_or_else(|| AppError::new(format!("无效的科目: {}", row.subject)))?;
+    let self_study_topic = deserialize_self_study_topic(
+        row.self_study_topic_kind,
+        row.self_study_topic_subjects_json,
+        row.self_study_topic_label,
+    )?;
+    Ok(ExamPlanSpace {
+        id: row.id,
+        session_id: row.session_id,
+        space_type,
+        space_source,
+        grade_name: row.grade_name,
+        subject,
+        space_name: row.space_name,
+        original_class_name: row.original_class_name,
+        self_study_topic,
+        building: row.building,
+        floor: row.floor,
+        capacity: row.capacity,
+        sort_index: row.sort_index,
+    })
+}
+
+fn student_allocation_from_model(
+    row: crate::entity::latest_exam_plan_student_allocations::Model,
+) -> Result<ExamPlanStudentAllocation, AppError> {
+    let allocation_type = ExamAllocationType::from_key(&row.allocation_type)
+        .ok_or_else(|| AppError::new(format!("无效的分配类型: {}", row.allocation_type)))?;
+    Ok(ExamPlanStudentAllocation {
+        id: row.id,
+        session_id: row.session_id,
+        admission_no: row.admission_no,
+        student_name: row.student_name,
+        class_name: row.class_name,
+        allocation_type,
+        space_id: row.space_id,
+        seat_no: row.seat_no,
+        subject_score: row.subject_score,
+    })
 }
 
 pub fn get_latest_exam_plan_session_detail(
@@ -1985,122 +1814,41 @@ pub fn get_latest_exam_plan_session_detail(
     session_id: i64,
 ) -> Result<ExamPlanSessionDetail, String> {
     let result = (|| -> Result<ExamPlanSessionDetail, AppError> {
-        let conn = score::open_connection(&app)?;
-        ensure_schema(&conn)?;
-        let session = get_session_by_id(&conn, session_id)?;
+        let db = open_exam_allocation_db(&app)?;
+        ensure_exam_allocation_defaults(&db)?;
+        let session = tauri::async_runtime::block_on(exam_allocation_repo::get_session(
+            &db, session_id,
+        ))?
+        .ok_or_else(|| AppError::new("未找到考试场次"))?;
+        let session = session_from_model(session)?;
 
-        let mut spaces_stmt = conn.prepare(
-            "SELECT id, session_id, space_type, space_source, grade_name, subject, space_name, original_class_name, self_study_topic_kind, self_study_topic_subjects_json, self_study_topic_label, building, floor, capacity, sort_index FROM latest_exam_plan_spaces WHERE session_id = ?1 ORDER BY sort_index ASC, id ASC",
-        )?;
-        let space_rows = spaces_stmt.query_map(params![session_id], |row| {
-            let space_type_key: String = row.get(2)?;
-            let space_source_key: String = row.get(3)?;
-            let subject_key: String = row.get(5)?;
-            let space_type = ExamPlanSpaceType::from_key(&space_type_key).ok_or_else(|| {
-                rusqlite::Error::InvalidColumnType(
-                    2,
-                    "space_type".to_string(),
-                    rusqlite::types::Type::Text,
-                )
-            })?;
-            let space_source =
-                ExamPlanSpaceSource::from_key(&space_source_key).ok_or_else(|| {
-                    rusqlite::Error::InvalidColumnType(
-                        3,
-                        "space_source".to_string(),
-                        rusqlite::types::Type::Text,
-                    )
-                })?;
-            let subject = Subject::from_key(&subject_key).ok_or_else(|| {
-                rusqlite::Error::InvalidColumnType(
-                    5,
-                    "subject".to_string(),
-                    rusqlite::types::Type::Text,
-                )
-            })?;
-            let self_study_topic = deserialize_self_study_topic(
-                row.get::<_, Option<String>>(8)?,
-                row.get::<_, Option<String>>(9)?,
-                row.get::<_, Option<String>>(10)?,
-            )
-            .map_err(|e| {
-                rusqlite::Error::FromSqlConversionFailure(
-                    8,
-                    rusqlite::types::Type::Text,
-                    Box::new(std::io::Error::new(
-                        std::io::ErrorKind::InvalidData,
-                        e.to_string(),
-                    )),
-                )
-            })?;
-            Ok(ExamPlanSpace {
-                id: row.get(0)?,
-                session_id: row.get(1)?,
-                space_type,
-                space_source,
-                grade_name: row.get(4)?,
-                subject,
-                space_name: row.get(6)?,
-                original_class_name: row.get(7)?,
-                self_study_topic,
-                building: row.get(11)?,
-                floor: row.get(12)?,
-                capacity: row.get(13)?,
-                sort_index: row.get(14)?,
-            })
-        })?;
-        let mut spaces = Vec::new();
-        for row in space_rows {
-            spaces.push(row?);
-        }
+        let spaces = tauri::async_runtime::block_on(exam_allocation_repo::list_spaces(
+            &db, session_id,
+        ))?
+        .into_iter()
+        .map(space_from_model)
+        .collect::<Result<Vec<_>, _>>()?;
 
-        let mut allocation_stmt = conn.prepare(
-            "SELECT id, session_id, admission_no, student_name, class_name, allocation_type, space_id, seat_no, subject_score FROM latest_exam_plan_student_allocations WHERE session_id = ?1 ORDER BY allocation_type ASC, COALESCE(space_id, 0) ASC, COALESCE(seat_no, 9999) ASC, admission_no ASC",
-        )?;
-        let allocation_rows = allocation_stmt.query_map(params![session_id], |row| {
-            let allocation_key: String = row.get(5)?;
-            let allocation_type =
-                ExamAllocationType::from_key(&allocation_key).ok_or_else(|| {
-                    rusqlite::Error::InvalidColumnType(
-                        5,
-                        "allocation_type".to_string(),
-                        rusqlite::types::Type::Text,
-                    )
-                })?;
-            Ok(ExamPlanStudentAllocation {
-                id: row.get(0)?,
-                session_id: row.get(1)?,
-                admission_no: row.get(2)?,
-                student_name: row.get(3)?,
-                class_name: row.get(4)?,
-                allocation_type,
-                space_id: row.get(6)?,
-                seat_no: row.get(7)?,
-                subject_score: row.get(8)?,
-            })
-        })?;
-        let mut student_allocations = Vec::new();
-        for row in allocation_rows {
-            student_allocations.push(row?);
-        }
+        let student_allocations = tauri::async_runtime::block_on(
+            exam_allocation_repo::list_student_allocations(&db, session_id),
+        )?
+        .into_iter()
+        .map(student_allocation_from_model)
+        .collect::<Result<Vec<_>, _>>()?;
 
-        let mut staff_stmt = conn.prepare(
-            "SELECT id, session_id, space_id, teacher_name, assignment_type, note FROM latest_exam_plan_staff_assignments WHERE session_id = ?1 ORDER BY id ASC",
-        )?;
-        let staff_rows = staff_stmt.query_map(params![session_id], |row| {
-            Ok(ExamPlanStaffAssignment {
-                id: row.get(0)?,
-                session_id: row.get(1)?,
-                space_id: row.get(2)?,
-                teacher_name: row.get(3)?,
-                assignment_type: row.get(4)?,
-                note: row.get(5)?,
-            })
-        })?;
-        let mut staff_assignments = Vec::new();
-        for row in staff_rows {
-            staff_assignments.push(row?);
-        }
+        let staff_assignments = tauri::async_runtime::block_on(
+            exam_allocation_repo::list_staff_assignments(&db, session_id),
+        )?
+        .into_iter()
+        .map(|row| ExamPlanStaffAssignment {
+            id: row.id,
+            session_id: row.session_id,
+            space_id: row.space_id,
+            teacher_name: row.teacher_name,
+            assignment_type: row.assignment_type,
+            note: row.note,
+        })
+        .collect();
 
         Ok(ExamPlanSessionDetail {
             session,
@@ -2115,7 +1863,10 @@ pub fn get_latest_exam_plan_session_detail(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rusqlite::Connection;
+    use crate::db::migration::Migrator;
+    use crate::entity::{latest_student_scores, latest_subject_scores};
+    use sea_orm::{ActiveModelTrait, ActiveValue::Set, Database};
+    use sea_orm_migration::MigratorTrait;
 
     #[test]
     fn test_capacity_rebalance() {
@@ -2336,52 +2087,46 @@ mod tests {
 
     #[test]
     fn test_foreign_sessions_do_not_create_subject_based_self_study_students() {
-        let conn = Connection::open_in_memory().unwrap();
-        conn.execute_batch(
-            r#"
-            CREATE TABLE latest_student_scores (
-                admission_no TEXT PRIMARY KEY,
-                student_name TEXT NOT NULL,
-                class_name TEXT NOT NULL,
-                grade_name TEXT NOT NULL,
-                total_score REAL NOT NULL
-            );
-            CREATE TABLE latest_subject_scores (
-                admission_no TEXT NOT NULL,
-                subject TEXT NOT NULL,
-                is_selected INTEGER NOT NULL,
-                score REAL
-            );
-            "#,
-        )
-        .unwrap();
-        conn.execute(
-            "INSERT INTO latest_student_scores (admission_no, student_name, class_name, grade_name, total_score) VALUES ('s1', '张三', '高一1班', '高一', 600)",
-            [],
-        )
-        .unwrap();
-        conn.execute(
-            "INSERT INTO latest_subject_scores (admission_no, subject, is_selected, score) VALUES ('s1', 'english', 0, NULL)",
-            [],
-        )
-        .unwrap();
-        conn.execute(
-            "INSERT INTO latest_subject_scores (admission_no, subject, is_selected, score) VALUES ('s1', 'russian', 1, NULL)",
-            [],
-        )
-        .unwrap();
-        conn.execute(
-            "INSERT INTO latest_subject_scores (admission_no, subject, is_selected, score) VALUES ('s1', 'math', 0, NULL)",
-            [],
-        )
-        .unwrap();
+        let db = tauri::async_runtime::block_on(async {
+            let db = Database::connect("sqlite::memory:").await.unwrap();
+            Migrator::up(&db, None).await.unwrap();
+            latest_student_scores::ActiveModel {
+                admission_no: Set("s1".to_string()),
+                student_name: Set("张三".to_string()),
+                class_name: Set("高一1班".to_string()),
+                grade_name: Set("高一".to_string()),
+                subject_combination: Set(String::new()),
+                language: Set(String::new()),
+                total_score: Set(600.0),
+                class_rank: Set(1),
+                grade_rank: Set(1),
+                selected_subject_count: Set(1),
+            }
+            .insert(&db)
+            .await
+            .unwrap();
+            for (subject, is_selected) in [("english", 0), ("russian", 1), ("math", 0)] {
+                latest_subject_scores::ActiveModel {
+                    id: sea_orm::ActiveValue::NotSet,
+                    admission_no: Set("s1".to_string()),
+                    subject: Set(subject.to_string()),
+                    score: Set(None),
+                    is_selected: Set(is_selected),
+                    is_absent: Set(0),
+                }
+                .insert(&db)
+                .await
+                .unwrap();
+            }
+            db
+        });
 
         let english_self_study =
-            load_self_study_students_for_session(&conn, "高一", Subject::English).unwrap();
+            load_self_study_students_for_session(&db, "高一", Subject::English).unwrap();
         let russian_self_study =
-            load_self_study_students_for_session(&conn, "高一", Subject::Russian).unwrap();
+            load_self_study_students_for_session(&db, "高一", Subject::Russian).unwrap();
         let math_self_study =
-            load_self_study_students_for_session(&conn, "高一", Subject::Math).unwrap();
+            load_self_study_students_for_session(&db, "高一", Subject::Math).unwrap();
 
         assert!(english_self_study.is_empty());
         assert!(russian_self_study.is_empty());

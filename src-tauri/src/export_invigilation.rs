@@ -11,7 +11,6 @@ use serde::Serialize;
 use tauri::{AppHandle, Manager};
 
 use crate::app_log;
-use crate::exam_allocation;
 use crate::score::{self, AppError, Subject};
 
 const EXPORT_SHEET_NAME: &str = "监考表";
@@ -1833,7 +1832,7 @@ fn export_schedule_internal(
     app: &AppHandle,
 ) -> Result<ExportLatestInvigilationScheduleResult, AppError> {
     let conn = score::open_connection(app)?;
-    exam_allocation::ensure_schema(&conn)?;
+    crate::schema::ensure_schema(&conn)?;
     let workbook = build_workbook_from_connection(&conn)?;
     let exam_title = load_exam_title(&conn)?;
     let output_dir = export_root_dir(app)?;
