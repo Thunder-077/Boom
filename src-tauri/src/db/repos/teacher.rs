@@ -20,6 +20,13 @@ pub struct ScheduleTeacherAssignment {
     pub class_name: String,
 }
 
+#[derive(Clone)]
+struct PreservedTeacherDetails {
+    remark: Option<String>,
+    is_middle_manager: i32,
+    homeroom_classes: Vec<String>,
+}
+
 pub async fn replace_all(
     db: &DatabaseConnection,
     imported_at: &str,
@@ -106,6 +113,7 @@ pub async fn sync_from_course_schedule(
     .await?;
 
     let teacher_names = unique_teacher_names(assignments);
+    let preserved_teacher_details = load_preserved_teacher_details(&tx).await?;
     remove_teachers_not_in_schedule(&tx, &teacher_names).await?;
 
     for teacher_name in &teacher_names {
@@ -115,14 +123,29 @@ pub async fn sync_from_course_schedule(
             .await?
             .is_some();
         if !exists {
-            latest_teachers_v2::ActiveModel {
+            let preserved = preserved_teacher_details
+                .get(teacher_name)
+                .or_else(|| preserved_teacher_details.get(teacher_name.trim()));
+            let row = latest_teachers_v2::ActiveModel {
                 teacher_name: Set(teacher_name.clone()),
-                remark: Set(None),
-                is_middle_manager: Set(0),
+                remark: Set(preserved.and_then(|details| details.remark.clone())),
+                is_middle_manager: Set(preserved.map_or(0, |details| details.is_middle_manager)),
                 ..Default::default()
             }
             .insert(&tx)
             .await?;
+
+            if let Some(preserved) = preserved {
+                for class_name in &preserved.homeroom_classes {
+                    latest_teacher_homerooms_v2::ActiveModel {
+                        teacher_id: Set(row.id),
+                        class_name: Set(class_name.clone()),
+                        ..Default::default()
+                    }
+                    .insert(&tx)
+                    .await?;
+                }
+            }
         }
     }
 
@@ -277,6 +300,39 @@ fn unique_teacher_names(assignments: &[ScheduleTeacherAssignment]) -> HashSet<St
         .iter()
         .map(|assignment| assignment.teacher_name.clone())
         .collect()
+}
+
+async fn load_preserved_teacher_details<C>(
+    db: &C,
+) -> Result<HashMap<String, PreservedTeacherDetails>, AppError>
+where
+    C: sea_orm::ConnectionTrait,
+{
+    let teachers = latest_teachers_v2::Entity::find().all(db).await?;
+    let homerooms = latest_teacher_homerooms_v2::Entity::find().all(db).await?;
+    let mut homerooms_by_teacher: HashMap<i32, Vec<String>> = HashMap::new();
+    for homeroom in homerooms {
+        homerooms_by_teacher
+            .entry(homeroom.teacher_id)
+            .or_default()
+            .push(homeroom.class_name);
+    }
+
+    let mut out = HashMap::new();
+    for teacher in teachers {
+        let details = PreservedTeacherDetails {
+            remark: teacher.remark,
+            is_middle_manager: teacher.is_middle_manager,
+            homeroom_classes: homerooms_by_teacher.remove(&teacher.id).unwrap_or_default(),
+        };
+        let trimmed_name = teacher.teacher_name.trim().to_string();
+        out.insert(teacher.teacher_name, details.clone());
+        if !trimmed_name.is_empty() {
+            out.entry(trimmed_name).or_insert(details);
+        }
+    }
+
+    Ok(out)
 }
 
 async fn remove_teachers_not_in_schedule<C>(
