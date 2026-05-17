@@ -404,7 +404,7 @@ onMounted(async () => {
   position: sticky;
   top: 0;
   z-index: 1;
-  background: var(--surface-table-stripe);
+  background: var(--surface-table-content);
   color: var(--text-secondary);
   font-weight: 700;
 }
