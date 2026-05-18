@@ -337,7 +337,10 @@ pub async fn delete_session_time_template(
     Ok(())
 }
 
-pub async fn seed_default_session_times(db: &DatabaseConnection, now: &str) -> Result<(), AppError> {
+pub async fn seed_default_session_times(
+    db: &DatabaseConnection,
+    now: &str,
+) -> Result<(), AppError> {
     let templates = list_grade_subject_templates(db).await?;
     let sessions = list_session_subjects(db).await?;
     let template_map = templates
@@ -346,8 +349,16 @@ pub async fn seed_default_session_times(db: &DatabaseConnection, now: &str) -> R
         .collect::<std::collections::HashMap<_, _>>();
     let tx = db.begin().await?;
     for session in sessions {
-        let Some((start_at, end_at)) =
-            template_map.get(&(session.grade_name.clone(), session.subject.clone()))
+        let Some((start_at, end_at)) = template_map
+            .get(&(session.grade_name.clone(), session.subject.clone()))
+            .or_else(|| {
+                // 俄语/日语是外语拆分场次；未单独配置时沿用同年级英语考试时间。
+                if matches!(session.subject.as_str(), "russian" | "japanese") {
+                    template_map.get(&(session.grade_name.clone(), "english".to_string()))
+                } else {
+                    None
+                }
+            })
         else {
             continue;
         };
@@ -653,10 +664,18 @@ pub async fn persist_plan_snapshot(
     duty_stats: Vec<PersistedDutyStatRow>,
 ) -> Result<(), AppError> {
     let tx = db.begin().await?;
-    latest_exam_staff_assignments::Entity::delete_many().exec(&tx).await?;
-    latest_exam_staff_tasks::Entity::delete_many().exec(&tx).await?;
-    latest_teacher_duty_stats::Entity::delete_many().exec(&tx).await?;
-    latest_exam_staff_plan_meta::Entity::delete_many().exec(&tx).await?;
+    latest_exam_staff_assignments::Entity::delete_many()
+        .exec(&tx)
+        .await?;
+    latest_exam_staff_tasks::Entity::delete_many()
+        .exec(&tx)
+        .await?;
+    latest_teacher_duty_stats::Entity::delete_many()
+        .exec(&tx)
+        .await?;
+    latest_exam_staff_plan_meta::Entity::delete_many()
+        .exec(&tx)
+        .await?;
 
     for task in tasks {
         let teacher_id = task.teacher_id;
@@ -675,7 +694,7 @@ pub async fn persist_plan_snapshot(
             duration_minutes: Set(task.duration_minutes),
             recommended_self_study_topic_kind: Set(task.recommended_self_study_topic_kind),
             recommended_self_study_topic_subjects_json: Set(
-                task.recommended_self_study_topic_subjects_json,
+                task.recommended_self_study_topic_subjects_json
             ),
             recommended_self_study_topic_label: Set(task.recommended_self_study_topic_label),
             priority_self_study_chain_json: Set(task.priority_self_study_chain_json),

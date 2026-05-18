@@ -143,7 +143,7 @@ const railItems: RailItem[] = [
   { key: "students", label: "学生模块", icon: "person" },
   { key: "teachers", label: "教师模块", icon: "badge" },
   { key: "classes", label: "班级模块", icon: "domain" },
-  { key: "academic", label: "教务模块", icon: "calendar_month" },
+  { key: "academic", label: "教务模块", icon: "school" },
   { key: "dashboard", label: "考试模块", icon: "event_note" },
 ];
 

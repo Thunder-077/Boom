@@ -149,17 +149,25 @@
             <span class="material-symbols-rounded">event_available</span>
             <strong>暂无调代课记录</strong>
           </div>
-          <div v-for="change in store.viewState.scheduleChanges" :key="change.id" class="change-row" :class="{ revoked: change.status === 'revoked' }">
-            <div class="change-main">
-              <strong>{{ formatDate(change.targetDate) }} {{ change.periodLabel }} {{ change.displayClassName }} {{ change.subject }}</strong>
-              <span>原任课：{{ change.sourceTeacherName }} · 代课：{{ change.actualTeacherName }}</span>
-              <small>{{ change.reason || "未填写原因" }}{{ change.remark ? ` / ${change.remark}` : "" }}</small>
-            </div>
-            <div class="change-actions">
-              <span class="status-pill" :class="{ active: change.status === 'active' }">{{ change.status === "active" ? "已生效" : "已撤销" }}</span>
-              <button class="icon-btn danger" type="button" :disabled="change.status !== 'active'" @click="revokeChange(change.id)">
-                <span class="material-symbols-rounded">undo</span>
-              </button>
+          <div v-for="[teacherName, changes] in changesGroupedByTeacher" :key="teacherName" class="teacher-group">
+            <button class="teacher-group-header" type="button" :class="{ expanded: expandedTeachers.has(teacherName) }" @click="toggleTeacherGroup(teacherName)">
+              <span class="material-symbols-rounded expand-icon">expand_more</span>
+              <span class="teacher-name">{{ teacherName }}</span>
+              <span class="group-stats">{{ changes.length }} 条记录</span>
+            </button>
+            <div v-show="expandedTeachers.has(teacherName)" class="teacher-group-body">
+              <div v-for="change in changes" :key="change.id" class="change-row">
+                <div class="change-main">
+                  <strong>{{ formatDate(change.targetDate) }} {{ change.periodLabel }} {{ change.displayClassName }} {{ change.subject }}</strong>
+                  <span>代课：{{ change.actualTeacherName }}</span>
+                  <small>{{ change.reason || "未填写原因" }}{{ change.remark ? ` / ${change.remark}` : "" }}</small>
+                </div>
+                <div class="change-actions">
+                  <button class="icon-btn danger" type="button" @click="revokeChange(change.id)">
+                    <span class="material-symbols-rounded">undo</span>
+                  </button>
+                </div>
+              </div>
             </div>
           </div>
         </div>
@@ -228,9 +236,28 @@ const periodOptions = computed(() => {
 });
 
 const candidateMeta = computed(() => `已查询 ${store.viewState.substitutionCandidates.length} 节课`);
-const changeMeta = computed(() => `${activeChanges.value.length} 条生效，${revokedChanges.value.length} 条撤销`);
-const activeChanges = computed(() => store.viewState.scheduleChanges.filter((item) => item.status === "active"));
-const revokedChanges = computed(() => store.viewState.scheduleChanges.filter((item) => item.status === "revoked"));
+const changeMeta = computed(() => `${store.viewState.scheduleChanges.length} 条记录`);
+
+const changesGroupedByTeacher = computed(() => {
+  const map = new Map<string, typeof store.viewState.scheduleChanges[number][]>();
+  for (const change of store.viewState.scheduleChanges) {
+    const key = change.sourceTeacherName;
+    if (!map.has(key)) map.set(key, []);
+    map.get(key)!.push(change);
+  }
+  return Array.from(map.entries()).sort(([a], [b]) => a.localeCompare(b, "zh-CN"));
+});
+const expandedTeachers = ref(new Set<string>());
+
+function toggleTeacherGroup(teacherName: string) {
+  const next = new Set(expandedTeachers.value);
+  if (next.has(teacherName)) {
+    next.delete(teacherName);
+  } else {
+    next.add(teacherName);
+  }
+  expandedTeachers.value = next;
+}
 
 const allSelected = computed(() => {
   const candidates = store.viewState.substitutionCandidates;
@@ -255,11 +282,11 @@ function excelFileName(path: string) {
 }
 
 function formatDate(value: string) {
-  return new Date(`${value}T00:00:00`).toLocaleDateString("zh-CN", {
-    month: "2-digit",
-    day: "2-digit",
-    weekday: "short",
-  });
+  const date = new Date(`${value}T00:00:00`);
+  const month = date.getMonth() + 1;
+  const day = date.getDate();
+  const weekdays = ["周日", "周一", "周二", "周三", "周四", "周五", "周六"];
+  return `${month}月${day}日（${weekdays[date.getDay()]}）`;
 }
 
 function substituteOptionsFor(sourceTeacher: string) {
@@ -440,16 +467,16 @@ async function revokeChange(changeId: number) {
   const confirmed = await dialog.confirm({
     tone: "warning",
     icon: "undo",
-    title: "撤销调代课记录",
-    summary: "确定撤销这条调代课记录吗？撤销后该记录会保留在历史列表中，但不再参与课表执行。",
-    confirmText: "确认撤销",
+    title: "删除调代课记录",
+    summary: "确定删除这条调代课记录吗？删除后该记录将无法恢复。",
+    confirmText: "确认删除",
     cancelText: "取消",
   });
   if (!confirmed) return;
   try {
     await store.revokeScheduleChange(changeId);
     feedbackType.value = "success";
-    feedbackMessage.value = "调代课记录已撤销。";
+    feedbackMessage.value = "调代课记录已删除。";
   } catch (error) {
     feedbackType.value = "error";
     feedbackMessage.value = error instanceof Error ? error.message : String(error);
@@ -500,6 +527,7 @@ watch(
 .workspace :deep(.table-card .content) {
   min-height: 0;
   overflow: visible;
+  height: auto;
 }
 
 .substitution-form {
@@ -681,8 +709,8 @@ watch(
 .data-table th {
   position: sticky;
   top: 0;
-  z-index: 1;
-  background: var(--surface-table-stripe);
+  z-index: 10;
+  background: var(--surface-panel-strong);
   color: var(--text-secondary);
   font-weight: 700;
 }
@@ -696,9 +724,50 @@ watch(
   margin-top: 3px;
 }
 
+.data-table .status-pill {
+  display: inline-flex;
+  margin-top: 0;
+}
+
 .check-col {
   width: 42px;
+  min-width: 42px;
   text-align: center;
+}
+
+.data-table th:nth-child(2),
+.data-table td:nth-child(2) {
+  width: 120px;
+}
+
+.data-table th:nth-child(3),
+.data-table td:nth-child(3) {
+  width: 75px;
+}
+
+.data-table th:nth-child(4),
+.data-table td:nth-child(4) {
+  width: 90px;
+}
+
+.data-table th:nth-child(5),
+.data-table td:nth-child(5) {
+  width: 75px;
+}
+
+.data-table th:nth-child(6),
+.data-table td:nth-child(6) {
+  width: 70px;
+}
+
+.data-table th:nth-child(7),
+.data-table td:nth-child(7) {
+  width: 170px;
+}
+
+.data-table th:nth-child(8),
+.data-table td:nth-child(8) {
+  width: 75px;
 }
 
 .empty-cell {
@@ -710,7 +779,8 @@ watch(
 .status-pill {
   display: inline-flex;
   align-items: center;
-  min-height: 26px;
+  justify-content: center;
+  height: 26px;
   padding: 0 9px;
   border-radius: 999px;
   background: var(--surface-table-stripe);
@@ -726,13 +796,66 @@ watch(
 }
 
 .change-list {
-  max-height: 360px;
   min-height: 0;
-  overflow: auto;
   padding: 8px;
   display: flex;
   flex-direction: column;
+  gap: 6px;
+}
+
+.teacher-group {
+  border: 1px solid var(--border-default);
+  border-radius: 12px;
+  background: var(--surface-panel);
+  overflow: hidden;
+}
+
+.teacher-group-header {
+  width: 100%;
+  display: flex;
+  align-items: center;
   gap: 8px;
+  padding: 10px 14px;
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  color: var(--color-text);
+  font-size: 14px;
+  font-weight: 700;
+  cursor: pointer;
+  text-align: left;
+  transition: background 0.15s;
+}
+
+.teacher-group-header:hover {
+  background: rgba(var(--accent-rgb), 0.06);
+}
+
+.expand-icon {
+  font-size: 20px;
+  transition: transform 0.2s ease;
+  color: var(--color-text-muted);
+}
+
+.teacher-group-header.expanded .expand-icon {
+  transform: rotate(180deg);
+}
+
+.teacher-name {
+  flex: 1;
+}
+
+.group-stats {
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--color-text-muted);
+}
+
+.teacher-group-body {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 0 8px 8px;
 }
 
 .change-row {
@@ -744,10 +867,6 @@ watch(
   border: 1px solid var(--border-default);
   border-radius: 12px;
   background: var(--surface-panel);
-}
-
-.change-row.revoked {
-  opacity: 0.62;
 }
 
 .change-main {

@@ -39,15 +39,13 @@
         </div>
 
         <div class="feedback-block">
-          <InfoHint :type="feedbackType" :text="feedbackMessage" />
-          <button
-            v-if="feedbackLinkPath"
-            class="feedback-link"
-            type="button"
-            @click="openFeedbackExport"
-          >
-            {{ feedbackLinkLabel }}
-          </button>
+          <InfoHint
+            :type="feedbackType"
+            :text="feedbackMessage"
+            :link-label="feedbackLinkPath ? feedbackLinkLabel : ''"
+            :suffix="feedbackLinkPath ? '打开文件所在位置。' : ''"
+            @click-link="openFeedbackExport"
+          />
         </div>
 
         <div class="stats-strip">
@@ -63,9 +61,6 @@
             <span>代课节数</span>
             <strong>{{ substitutionLessons }}</strong>
           </div>
-          <button v-if="store.viewState.lastWorkloadExport" class="export-link" type="button" @click="openLastExport">
-            {{ exportFileName(store.viewState.lastWorkloadExport.filePath) }}
-          </button>
         </div>
 
         <div class="tables">
@@ -154,6 +149,7 @@ const feedbackType = ref<"info" | "success" | "warning" | "error">("info");
 const feedbackMessage = ref("选择真实日期和节次范围后查看课时统计；导出文件包含明细和分类汇总两个 Sheet。");
 const feedbackLinkPath = ref("");
 const feedbackLinkLabel = ref("");
+const feedbackSuffix = ref("");
 
 const importOptions = computed(() =>
   store.viewState.imports.map((item) => ({
@@ -204,11 +200,11 @@ function exportFileName(path: string) {
 }
 
 function formatDate(value: string) {
-  return new Date(`${value}T00:00:00`).toLocaleDateString("zh-CN", {
-    month: "2-digit",
-    day: "2-digit",
-    weekday: "short",
-  });
+  const date = new Date(`${value}T00:00:00`);
+  const month = date.getMonth() + 1;
+  const day = date.getDate();
+  const weekdays = ["周日", "周一", "周二", "周三", "周四", "周五", "周六"];
+  return `${month}月${day}日（${weekdays[date.getDay()]}）`;
 }
 
 async function loadReport() {
@@ -235,9 +231,10 @@ async function exportReport() {
     const result = await store.exportWorkloadReport(buildQuery());
     if (!result) return;
     feedbackType.value = "success";
-    feedbackMessage.value = "课时统计明细已导出，点击下方链接打开文件所在位置。";
+    feedbackMessage.value = "课时统计明细已导出，点击";
     feedbackLinkPath.value = result.filePath;
     feedbackLinkLabel.value = exportFileName(result.filePath);
+    feedbackSuffix.value = "打开文件所在位置。";
   } catch (error) {
     feedbackType.value = "error";
     feedbackMessage.value = error instanceof Error ? error.message : String(error);
@@ -246,11 +243,6 @@ async function exportReport() {
   }
 }
 
-async function openLastExport() {
-  const target = store.viewState.lastWorkloadExport?.filePath;
-  if (!target) return;
-  await revealInExplorer(target);
-}
 
 async function openFeedbackExport() {
   if (!feedbackLinkPath.value) return;
@@ -397,15 +389,6 @@ onMounted(async () => {
   font-size: 20px;
 }
 
-.export-link {
-  justify-self: start;
-  align-self: center;
-  border: 0;
-  background: transparent;
-  color: var(--accent-primary);
-  font-weight: 700;
-  cursor: pointer;
-}
 
 .tables {
   display: grid;

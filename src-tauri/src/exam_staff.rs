@@ -792,6 +792,15 @@ fn resolve_effective_grade_subject_template(
     {
         return Some((start_at, end_at, Some(grade_name.to_string()), false));
     }
+    if matches!(subject, Subject::Russian | Subject::Japanese) {
+        if let Some((start_at, end_at)) = grade_templates
+            .get(grade_name)
+            .and_then(|map| map.get(&Subject::English))
+            .cloned()
+        {
+            return Some((start_at, end_at, Some(grade_name.to_string()), true));
+        }
+    }
 
     None
 }
@@ -941,8 +950,7 @@ async fn hydrate_runtime_middle_manager_config(
     db: &sea_orm::DatabaseConnection,
     config: &mut RuntimeInvigilationConfig,
 ) -> Result<(), AppError> {
-    if let Some(persisted) = exam_staff_repo::get_config(db).await?
-    {
+    if let Some(persisted) = exam_staff_repo::get_config(db).await? {
         config.middle_manager_default_enabled = persisted.middle_manager_default_enabled == 1;
         config.middle_manager_exception_teacher_ids =
             serde_json::from_str::<Vec<i64>>(&persisted.middle_manager_exception_teacher_ids_json)
@@ -1132,9 +1140,7 @@ async fn load_session_times_runtime_with_policy(
     Ok(out)
 }
 
-async fn load_teacher_pool(
-    db: &sea_orm::DatabaseConnection,
-) -> Result<Vec<TeacherInfo>, AppError> {
+async fn load_teacher_pool(db: &sea_orm::DatabaseConnection) -> Result<Vec<TeacherInfo>, AppError> {
     let mut map: HashMap<i64, TeacherInfo> = HashMap::new();
 
     for row in exam_staff_repo::load_teacher_rows(db).await? {
@@ -1193,7 +1199,8 @@ async fn load_teacher_grade_subject_pairs(
         let Some(subject) = Subject::from_key(&row.subject) else {
             continue;
         };
-        let Some(grade_name) = row.grade_name
+        let Some(grade_name) = row
+            .grade_name
             .and_then(|value| {
                 let trimmed = value.trim().to_string();
                 (!trimmed.is_empty()).then_some(trimmed)
@@ -3212,7 +3219,9 @@ async fn persist_solved_plan(
             solver_engine: plan.solver_engine.as_key().to_string(),
             optimality_status: plan.optimality_status.as_key().to_string(),
             solve_duration_ms: plan.solve_duration_ms,
-            fallback_reason: plan.fallback_reason.map(|reason| reason.as_key().to_string()),
+            fallback_reason: plan
+                .fallback_reason
+                .map(|reason| reason.as_key().to_string()),
             fallback_pool_assignments: plan.metrics.fallback_pool_assignments,
         },
         task_rows,
@@ -3446,7 +3455,8 @@ async fn generate_latest_exam_staff_plan_internal(
             ),
         );
     }
-    let result = persist_solved_plan(db, session_times.len() as i64, &teachers, &final_plan).await?;
+    let result =
+        persist_solved_plan(db, session_times.len() as i64, &teachers, &final_plan).await?;
     if let Some(progress) = progress {
         progress.emit_completed(format!(
             "监考分配完成：已分配 {} 项，未分配 {} 项。",
@@ -3532,8 +3542,22 @@ pub async fn delete_exam_session_time(
             return Err(AppError::new("年级不能为空"));
         }
         let db = crate::db::connect(&app).await?;
-        exam_staff_repo::delete_session_time_template(&db, trimmed_grade_name, subject.as_key())
+        let subjects = if matches!(
+            subject,
+            Subject::English | Subject::Russian | Subject::Japanese
+        ) {
+            vec![Subject::English, Subject::Russian, Subject::Japanese]
+        } else {
+            vec![subject]
+        };
+        for subject in subjects {
+            exam_staff_repo::delete_session_time_template(
+                &db,
+                trimmed_grade_name,
+                subject.as_key(),
+            )
             .await?;
+        }
         Ok(SuccessResponse::ok())
     }
     .await;
@@ -3947,10 +3971,8 @@ async fn build_rule_target_options_from_spaces(
         && !config.self_study_start_time.trim().is_empty()
         && !config.self_study_end_time.trim().is_empty()
     {
-        let start_at = build_self_study_datetime(
-            &config.self_study_date,
-            &config.self_study_start_time,
-        )?;
+        let start_at =
+            build_self_study_datetime(&config.self_study_date, &config.self_study_start_time)?;
         let end_at =
             build_self_study_datetime(&config.self_study_date, &config.self_study_end_time)?;
         let subtitle = Some(format!("{} {}", start_at, end_at));
@@ -4001,10 +4023,11 @@ pub async fn get_persisted_invigilation_state(
             .as_ref()
             .map(|row| {
                 let self_study_date = row.self_study_date.trim().to_string();
-                let middle_manager_exception_teacher_ids =
-                    serde_json::from_str::<Vec<i64>>(&row.middle_manager_exception_teacher_ids_json)
-                        .map(normalize_teacher_id_list)
-                        .unwrap_or_default();
+                let middle_manager_exception_teacher_ids = serde_json::from_str::<Vec<i64>>(
+                    &row.middle_manager_exception_teacher_ids_json,
+                )
+                .map(normalize_teacher_id_list)
+                .unwrap_or_default();
                 PersistedInvigilationConfig {
                     default_exam_room_required_count: row.default_exam_room_required_count.max(1),
                     indoor_allowance_per_minute: row.indoor_allowance_per_minute.max(0.0),
@@ -4024,7 +4047,9 @@ pub async fn get_persisted_invigilation_state(
 
         let self_study_class_subjects = config_row
             .map(|row| row.self_study_class_subjects_json)
-            .and_then(|text| serde_json::from_str::<Vec<PersistedSelfStudyClassSubject>>(&text).ok())
+            .and_then(|text| {
+                serde_json::from_str::<Vec<PersistedSelfStudyClassSubject>>(&text).ok()
+            })
             .unwrap_or_default();
 
         let custom_rules = exam_staff_repo::list_custom_rules(&db)
@@ -4079,7 +4104,11 @@ pub async fn save_persisted_invigilation_config(
                     payload.outdoor_allowance_per_minute.max(0.0),
                 ),
                 middle_manager_default_enabled: sea_orm::ActiveValue::Set(
-                    if payload.middle_manager_default_enabled { 1 } else { 0 },
+                    if payload.middle_manager_default_enabled {
+                        1
+                    } else {
+                        0
+                    },
                 ),
                 middle_manager_exception_teacher_ids_json: sea_orm::ActiveValue::Set(
                     middle_manager_exception_teacher_ids_json,
@@ -4179,9 +4208,15 @@ pub async fn get_latest_exam_staff_plan_overview(
             session_count: meta.as_ref().map(|value| value.session_count).unwrap_or(0),
             task_count: meta.as_ref().map(|value| value.task_count).unwrap_or(0),
             assigned_count: meta.as_ref().map(|value| value.assigned_count).unwrap_or(0),
-            unassigned_count: meta.as_ref().map(|value| value.unassigned_count).unwrap_or(0),
+            unassigned_count: meta
+                .as_ref()
+                .map(|value| value.unassigned_count)
+                .unwrap_or(0),
             warning_count: meta.as_ref().map(|value| value.warning_count).unwrap_or(0),
-            imbalance_minutes: meta.as_ref().map(|value| value.imbalance_minutes).unwrap_or(0),
+            imbalance_minutes: meta
+                .as_ref()
+                .map(|value| value.imbalance_minutes)
+                .unwrap_or(0),
             solver_engine: meta
                 .as_ref()
                 .and_then(|value| SolverEngine::from_key(&value.solver_engine))
@@ -4190,10 +4225,16 @@ pub async fn get_latest_exam_staff_plan_overview(
                 .as_ref()
                 .and_then(|value| OptimalityStatus::from_key(&value.optimality_status))
                 .unwrap_or(OptimalityStatus::Feasible),
-            solve_duration_ms: meta.as_ref().map(|value| value.solve_duration_ms).unwrap_or(0),
-            fallback_reason: meta
+            solve_duration_ms: meta
                 .as_ref()
-                .and_then(|value| value.fallback_reason.as_deref().and_then(FallbackReason::from_key)),
+                .map(|value| value.solve_duration_ms)
+                .unwrap_or(0),
+            fallback_reason: meta.as_ref().and_then(|value| {
+                value
+                    .fallback_reason
+                    .as_deref()
+                    .and_then(FallbackReason::from_key)
+            }),
             fallback_pool_assignments: meta
                 .as_ref()
                 .map(|value| value.fallback_pool_assignments)
@@ -4422,11 +4463,7 @@ mod tests {
         });
     }
 
-    fn insert_test_plan_session(
-        db: &sea_orm::DatabaseConnection,
-        id: i64,
-        subject: Subject,
-    ) {
+    fn insert_test_plan_session(db: &sea_orm::DatabaseConnection, id: i64, subject: Subject) {
         tauri::async_runtime::block_on(async {
             latest_exam_plan_sessions::ActiveModel {
                 id: Set(id),
@@ -5637,7 +5674,9 @@ mod tests {
             db_path.to_string_lossy().replace('\\', "/")
         );
         let db = tauri::async_runtime::block_on(async {
-            let db = Database::connect(db_url).await.expect("open real sqlite db");
+            let db = Database::connect(db_url)
+                .await
+                .expect("open real sqlite db");
             Migrator::up(&db, None).await.expect("ensure schema");
             db
         });

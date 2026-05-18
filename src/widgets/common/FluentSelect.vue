@@ -266,6 +266,19 @@ watch(() => isOpen.value, (val) => {
   }
 });
 
+watch(() => props.modelValue, (val) => {
+  if (props.searchable && (val === "" || val === null || val === undefined)) {
+    searchKeyword.value = "";
+    return;
+  }
+  if (props.searchable && val !== "") {
+    const selected = props.options.find((opt) => opt.value === val);
+    if (selected) {
+      searchKeyword.value = selected.label;
+    }
+  }
+}, { immediate: true });
+
 onUnmounted(() => {
   window.removeEventListener("scroll", handleScrollOrResize, true);
   window.removeEventListener("resize", handleScrollOrResize);

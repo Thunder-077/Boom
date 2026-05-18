@@ -1,7 +1,7 @@
 export interface RailItem {
   key: string;
   label: string;
-  icon: "person" | "badge" | "domain" | "event_note" | "calendar_month";
+  icon: "person" | "badge" | "domain" | "event_note" | "calendar_month" | "school";
 }
 
 export interface SecondaryNavItem {

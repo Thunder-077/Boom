@@ -6,15 +6,23 @@
                  10-4.48 10-10S17.52 2 12 2zm1 15h-2v-6h2v6zm0-8h-2V7h2v2z"/>
       </svg>
     </span>
-    <p>{{ text }}</p>
+    <p class="hint-text">
+      <span v-if="text">{{ text }}</span>
+      <a v-if="linkLabel" class="hint-link" @click.prevent="$emit('click-link')">{{ linkLabel }}</a>
+      <span v-if="suffix">{{ suffix }}</span>
+    </p>
   </section>
 </template>
 
 <script setup lang="ts">
 defineProps<{ 
-  text: string;
+  text?: string;
   type?: 'info' | 'success' | 'warning' | 'error';
+  linkLabel?: string;
+  suffix?: string;
 }>();
+
+defineEmits<{ 'click-link': [] }>();
 </script>
 
 <style scoped>
@@ -75,7 +83,18 @@ defineProps<{
   height: 16px;
 }
 
-.hint p {
+.hint-text {
   margin: 0;
+}
+
+.hint-link {
+  color: inherit;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.hint-link:hover {
+  text-decoration: underline;
+  opacity: 0.85;
 }
 </style>
