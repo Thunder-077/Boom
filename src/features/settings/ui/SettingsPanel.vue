@@ -115,7 +115,7 @@
         </div>
 
         <div class="update-ready" v-if="updaterStatus === 'ready'">
-          <p>更新已下载完成，安装程序即将启动。</p>
+          <p>更新已安装完成，正在重启应用...</p>
         </div>
       </section>
 

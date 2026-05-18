@@ -1,4 +1,5 @@
 import { computed, ref } from "vue";
+import { relaunch } from "@tauri-apps/plugin-process";
 import { check } from "@tauri-apps/plugin-updater";
 
 export type UpdateStatus = "idle" | "checking" | "available" | "downloading" | "ready" | "up-to-date" | "error";
@@ -43,6 +44,7 @@ async function downloadAndInstall() {
   status.value = "downloading";
   progress.value = 0;
   try {
+    let downloadedSize = 0;
     const update = await check();
     if (!update) {
       status.value = "error";
@@ -52,15 +54,18 @@ async function downloadAndInstall() {
     await update.downloadAndInstall((event) => {
       if (event.event === "Started") {
         downloadSize.value = event.data.contentLength ?? 0;
+        downloadedSize = 0;
       } else if (event.event === "Progress") {
         if (downloadSize.value > 0) {
-          progress.value = Math.round((event.data.chunkLength / downloadSize.value) * 100);
+          downloadedSize += event.data.chunkLength;
+          progress.value = Math.min(99, Math.round((downloadedSize / downloadSize.value) * 100));
         }
       } else if (event.event === "Finished") {
         progress.value = 100;
       }
     });
     status.value = "ready";
+    await relaunch();
   } catch (error) {
     status.value = "error";
     errorMessage.value = error instanceof Error ? error.message : String(error);
@@ -78,7 +83,7 @@ const statusLabel = computed(() => {
     case "downloading":
       return `下载中 ${progress.value}%`;
     case "ready":
-      return "下载完成，即将安装";
+      return "更新完成，正在重启";
     case "up-to-date":
       return "当前已是最新版本";
     case "error":
