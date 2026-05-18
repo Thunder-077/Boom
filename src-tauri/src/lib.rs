@@ -21,6 +21,7 @@ use tauri::{AppHandle, Manager, RunEvent};
 pub fn run() {
     let app = tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .setup(|app| {
             configure_cp_sat_runtime(app);
             Ok(())
