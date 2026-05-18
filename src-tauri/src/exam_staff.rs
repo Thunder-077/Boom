@@ -13,7 +13,7 @@ use crate::app_log;
 use crate::db::repos::exam_staff as exam_staff_repo;
 use crate::entity::invigilation_config_settings;
 use crate::exam_allocation::{self, SuccessResponse};
-use crate::score::{self, AppError, ListResult, Subject};
+use crate::score::{AppError, ListResult, Subject};
 
 const CP_SAT_MAX_SOLVE_MS: i64 = 30 * 60 * 1000;
 const CP_SAT_MAX_SOLVE_LABEL: &str = "30 分钟";
@@ -3721,8 +3721,6 @@ pub fn import_monitor_draw_pairs_from_excel(
 ) -> Result<MonitorDrawImportResult, String> {
     let started = Instant::now();
     let result = (|| -> Result<MonitorDrawImportResult, AppError> {
-        let conn = score::open_connection(&app)?;
-        crate::schema::ensure_schema(&conn)?;
         let path_text = file_path.trim();
         if path_text.is_empty() {
             return Err(AppError::new("未提供可导入的 Excel 文件路径"));

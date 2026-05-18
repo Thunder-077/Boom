@@ -9,7 +9,6 @@ mod exam_staff;
 mod export_bundle;
 mod export_invigilation;
 mod invigilation;
-mod schema;
 mod score;
 mod teacher;
 

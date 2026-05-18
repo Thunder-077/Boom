@@ -38,7 +38,17 @@
           </button>
         </div>
 
-        <InfoHint :type="feedbackType" :text="feedbackMessage" />
+        <div class="feedback-block">
+          <InfoHint :type="feedbackType" :text="feedbackMessage" />
+          <button
+            v-if="feedbackLinkPath"
+            class="feedback-link"
+            type="button"
+            @click="openFeedbackExport"
+          >
+            {{ feedbackLinkLabel }}
+          </button>
+        </div>
 
         <div class="stats-strip">
           <div class="stat-cell">
@@ -142,6 +152,8 @@ const selectedTeacher = ref("");
 const isLoading = ref(false);
 const feedbackType = ref<"info" | "success" | "warning" | "error">("info");
 const feedbackMessage = ref("选择真实日期和节次范围后查看课时统计；导出文件包含明细和分类汇总两个 Sheet。");
+const feedbackLinkPath = ref("");
+const feedbackLinkLabel = ref("");
 
 const importOptions = computed(() =>
   store.viewState.imports.map((item) => ({
@@ -206,9 +218,13 @@ async function loadReport() {
     const count = report?.details.length ?? 0;
     feedbackType.value = count > 0 ? "success" : "warning";
     feedbackMessage.value = count > 0 ? `已生成 ${count} 条课时明细。` : "该范围内暂无课时数据。";
+    feedbackLinkPath.value = "";
+    feedbackLinkLabel.value = "";
   } catch (error) {
     feedbackType.value = "error";
     feedbackMessage.value = error instanceof Error ? error.message : String(error);
+    feedbackLinkPath.value = "";
+    feedbackLinkLabel.value = "";
   } finally {
     isLoading.value = false;
   }
@@ -219,10 +235,14 @@ async function exportReport() {
     const result = await store.exportWorkloadReport(buildQuery());
     if (!result) return;
     feedbackType.value = "success";
-    feedbackMessage.value = `已导出：${exportFileName(result.filePath)}`;
+    feedbackMessage.value = "课时统计明细已导出，点击下方链接打开文件所在位置。";
+    feedbackLinkPath.value = result.filePath;
+    feedbackLinkLabel.value = exportFileName(result.filePath);
   } catch (error) {
     feedbackType.value = "error";
     feedbackMessage.value = error instanceof Error ? error.message : String(error);
+    feedbackLinkPath.value = "";
+    feedbackLinkLabel.value = "";
   }
 }
 
@@ -230,6 +250,11 @@ async function openLastExport() {
   const target = store.viewState.lastWorkloadExport?.filePath;
   if (!target) return;
   await revealInExplorer(target);
+}
+
+async function openFeedbackExport() {
+  if (!feedbackLinkPath.value) return;
+  await revealInExplorer(feedbackLinkPath.value);
 }
 
 onMounted(async () => {
@@ -327,6 +352,22 @@ onMounted(async () => {
 
 .action-btn .material-symbols-rounded {
   font-size: 18px;
+}
+
+.feedback-block {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.feedback-link {
+  align-self: flex-start;
+  border: 0;
+  background: transparent;
+  color: var(--accent-primary);
+  font-weight: 700;
+  cursor: pointer;
+  padding: 0;
 }
 
 .stats-strip {
