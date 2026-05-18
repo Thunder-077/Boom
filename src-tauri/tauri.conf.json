@@ -25,7 +25,7 @@
   },
   "plugins": {
     "updater": {
-      "pubkey": "RWQl58EUEMbdPUmESAu03PTZPsL6MldwWSoV/rTS4pFTNJtOwov4xXgq",
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDNERERDNjEwMTRDMUU3MjUKUldRbDU4RVVFTWJkUFVtRVNBdTAzUFRaUHNMNk1sZHdXU29WL3JUUzRwRlROSnRPd292eDRYZ3EK",
       "endpoints": [
         "https://github.com/Thunder-077/Boom/releases/latest/download/latest.json"
       ]
