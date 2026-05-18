@@ -93,7 +93,7 @@ const pageMap: Record<AppSection, { title: string; description: string; breadcru
     description: "课表导入、课务关系同步与课表查看",
     breadcrumb: "教务管理 / 课务管理",
     pageTitle: "课务管理",
-    summary: "导入双周循环课表，查看教师、行政班和外语教学班课表。",
+    summary: "导入双周循环课表，查看教师、行政班和教学班课表。",
   },
   "course-substitution": {
     title: "教务管理",
