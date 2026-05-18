@@ -1,8 +1,8 @@
 use std::collections::{HashMap, HashSet};
 
 use sea_orm::{
-    ActiveModelTrait, DatabaseConnection, EntityTrait, PaginatorTrait, QueryOrder, Set,
-    TransactionTrait, ColumnTrait, QueryFilter,
+    ActiveModelTrait, ColumnTrait, DatabaseConnection, EntityTrait, PaginatorTrait, QueryFilter,
+    QueryOrder, Set, TransactionTrait,
 };
 
 use crate::entity::{
@@ -13,6 +13,8 @@ use crate::score::{AppError, ListResult};
 use crate::teacher::{
     AggregatedTeacher, TeacherListParams, TeacherRow, TeacherSubject, TeacherSummary,
 };
+
+const INSERT_CHUNK_SIZE: usize = 500;
 
 pub struct ScheduleTeacherAssignment {
     pub teacher_name: String,
@@ -136,14 +138,19 @@ pub async fn sync_from_course_schedule(
             .await?;
 
             if let Some(preserved) = preserved {
-                for class_name in &preserved.homeroom_classes {
-                    latest_teacher_homerooms_v2::ActiveModel {
+                let homeroom_rows = preserved
+                    .homeroom_classes
+                    .iter()
+                    .map(|class_name| latest_teacher_homerooms_v2::ActiveModel {
                         teacher_id: Set(row.id),
                         class_name: Set(class_name.clone()),
                         ..Default::default()
-                    }
-                    .insert(&tx)
-                    .await?;
+                    })
+                    .collect::<Vec<_>>();
+                for chunk in homeroom_rows.chunks(INSERT_CHUNK_SIZE) {
+                    latest_teacher_homerooms_v2::Entity::insert_many(chunk.iter().cloned())
+                        .exec(&tx)
+                        .await?;
                 }
             }
         }
@@ -155,6 +162,7 @@ pub async fn sync_from_course_schedule(
         .map(|teacher| (teacher.teacher_name, teacher.id))
         .collect::<HashMap<_, _>>();
     let mut seen = HashSet::new();
+    let mut assignment_rows = Vec::new();
     for assignment in assignments {
         if !seen.insert((
             assignment.teacher_name.clone(),
@@ -167,14 +175,17 @@ pub async fn sync_from_course_schedule(
             .get(&assignment.teacher_name)
             .copied()
             .ok_or_else(|| AppError::new(format!("未找到教师: {}", assignment.teacher_name)))?;
-        latest_teacher_assignments_v2::ActiveModel {
+        assignment_rows.push(latest_teacher_assignments_v2::ActiveModel {
             teacher_id: Set(teacher_id),
             subject: Set(assignment.subject_key.clone()),
             class_name: Set(assignment.class_name.clone()),
             ..Default::default()
-        }
-        .insert(&tx)
-        .await?;
+        });
+    }
+    for chunk in assignment_rows.chunks(INSERT_CHUNK_SIZE) {
+        latest_teacher_assignments_v2::Entity::insert_many(chunk.iter().cloned())
+            .exec(&tx)
+            .await?;
     }
 
     tx.commit().await?;

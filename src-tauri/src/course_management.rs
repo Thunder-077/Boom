@@ -1,11 +1,14 @@
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::fs;
 use std::path::PathBuf;
+use std::sync::LazyLock;
 
 use calamine::{open_workbook_auto, Data, Range, Reader};
 use chrono::{Datelike, Duration, NaiveDate, Utc};
 use regex::Regex;
-use rust_xlsxwriter::{Color, Format, FormatAlign, FormatBorder, Workbook, Worksheet, XlsxError};
+use rust_xlsxwriter::{
+    Color, DataValidation, Format, FormatAlign, FormatBorder, Workbook, Worksheet, XlsxError,
+};
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Manager};
 
@@ -13,6 +16,17 @@ use crate::app_log;
 use crate::db::repos::course_management as course_repo;
 use crate::db::repos::teacher::ScheduleTeacherAssignment;
 use crate::score::AppError;
+
+static SUBJECT_SUFFIX_REGEX: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"[（(]([^）)]+)[）)]").expect("subject suffix regex should be valid")
+});
+static CLASS_CODE_REGEX: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"^([123])(\d{2})$").expect("class code regex should be valid"));
+static ADMIN_CLASS_REGEX: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"^[123]\d{2}$").expect("admin class regex should be valid"));
+static DAY_REGEX: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"星\s*期\s*([一二三四五六日])").expect("day regex should be valid")
+});
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -254,7 +268,7 @@ pub struct ExportCourseWorkloadResult {
     exported_at: String,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 enum ParsedSubject {
     Chinese,
     Math,
@@ -393,8 +407,7 @@ fn parse_subject(text: &str) -> Option<ParsedSubject> {
 
 fn subject_from_bracket_suffix(text: &str) -> Option<ParsedSubject> {
     let normalized = normalize_subject_name(text);
-    let matcher = Regex::new(r"[（(]([^）)]+)[）)]").expect("subject suffix regex should be valid");
-    let caps = matcher.captures(&normalized)?;
+    let caps = SUBJECT_SUFFIX_REGEX.captures(&normalized)?;
     let token = caps.get(1).map(|m| m.as_str()).unwrap_or_default();
     parse_subject(token)
 }
@@ -410,8 +423,7 @@ fn is_importable_schedule_cell(text: &str) -> bool {
 
 fn normalize_class_code(token: &str) -> String {
     let trimmed = token.trim();
-    let pattern = Regex::new(r"^([123])(\d{2})$").expect("class code regex should be valid");
-    if let Some(caps) = pattern.captures(trimmed) {
+    if let Some(caps) = CLASS_CODE_REGEX.captures(trimmed) {
         let grade = match &caps[1] {
             "1" => "高一",
             "2" => "高二",
@@ -427,9 +439,7 @@ fn normalize_class_code(token: &str) -> String {
 }
 
 fn is_admin_class(class_name: &str) -> bool {
-    Regex::new(r"^[123]\d{2}$")
-        .expect("admin class regex should be valid")
-        .is_match(class_name.trim())
+    ADMIN_CLASS_REGEX.is_match(class_name.trim())
 }
 
 fn class_type_for(class_name: &str) -> &'static str {
@@ -501,13 +511,16 @@ fn foreign_subject_from_text(text: &str) -> Option<ParsedSubject> {
 
 fn foreign_subject_from_label_text(text: &str) -> Option<ParsedSubject> {
     let normalized = normalize_subject_name(text);
-    if normalized.contains("俄语") || normalized.contains("（俄）") || normalized.contains("(俄)") {
+    if normalized.contains("俄语") || normalized.contains("（俄）") || normalized.contains("(俄)")
+    {
         return Some(ParsedSubject::Russian);
     }
-    if normalized.contains("日语") || normalized.contains("（日）") || normalized.contains("(日)") {
+    if normalized.contains("日语") || normalized.contains("（日）") || normalized.contains("(日)")
+    {
         return Some(ParsedSubject::Japanese);
     }
-    if normalized.contains("英语") || normalized.contains("（英）") || normalized.contains("(英)") {
+    if normalized.contains("英语") || normalized.contains("（英）") || normalized.contains("(英)")
+    {
         return Some(ParsedSubject::English);
     }
     foreign_subject_from_text(&normalized)
@@ -524,8 +537,7 @@ fn is_generic_foreign_subject_text(text: &str) -> bool {
     if matches!(normalized.as_str(), "外语" | "外" | "听力") {
         return true;
     }
-    let matcher = Regex::new(r"[（(]([^）)]+)[）)]").expect("subject suffix regex should be valid");
-    matcher
+    SUBJECT_SUFFIX_REGEX
         .captures(&normalized)
         .and_then(|caps| caps.get(1).map(|m| m.as_str().to_string()))
         .is_some_and(|token| matches!(token.as_str(), "外语" | "外"))
@@ -549,12 +561,10 @@ fn get_cell(range: &Range<Data>, row: usize, col: usize) -> String {
 
 fn find_day_blocks(range: &Range<Data>) -> Vec<DayBlock> {
     let mut starts = Vec::new();
-    let day_matcher =
-        Regex::new(r"星\s*期\s*([一二三四五六日])").expect("day regex should be valid");
     let max_col = range.width();
     for col in 0..max_col {
         let title = get_cell(range, 0, col);
-        if let Some(caps) = day_matcher.captures(&title) {
+        if let Some(caps) = DAY_REGEX.captures(&title) {
             let day_label = caps.get(1).map(|m| m.as_str()).unwrap_or("一").to_string();
             let day_of_week = match day_label.as_str() {
                 "一" => 1,
@@ -678,39 +688,58 @@ fn parse_total_schedule(
     (entries, periods, classes)
 }
 
-fn foreign_entry_matches_admin_foreign_subject(
-    foreign_entry: &ParsedEntry,
-    admin_entry: &ParsedEntry,
-) -> bool {
-    if foreign_entry.class_type != "foreign" || admin_entry.class_type != "admin" {
-        return false;
-    }
-    let Some(foreign_subject) = foreign_subject_for_entry(foreign_entry) else {
-        return false;
-    };
-    if !is_generic_foreign_subject_text(&admin_entry.subject)
-        && foreign_subject_for_entry(admin_entry) != Some(foreign_subject)
-    {
-        return false;
-    }
-    if grade_digit_from_text(&foreign_entry.class_name) != grade_digit_from_text(&admin_entry.class_name) {
-        return false;
-    }
-    true
-}
-
 fn expand_short_foreign_teacher_names(entries: &mut [ParsedEntry]) {
-    let foreign_entries = entries
-        .iter()
-        .filter(|entry| entry.class_type == "foreign")
-        .cloned()
-        .collect::<Vec<_>>();
+    type ForeignTeacherKey = (Option<char>, ParsedSubject);
+    type ForeignTeacherExactKey = (i64, i64, i64, Option<char>, ParsedSubject);
+
+    let mut teachers_by_exact_slot = BTreeMap::<ForeignTeacherExactKey, Vec<String>>::new();
+    let mut teachers_by_grade_subject = BTreeMap::<ForeignTeacherKey, Vec<String>>::new();
+    for entry in entries.iter().filter(|entry| entry.class_type == "foreign") {
+        let Some(subject) = foreign_subject_for_entry(entry) else {
+            continue;
+        };
+        let grade = grade_digit_from_text(&entry.class_name);
+        let teacher_names = entry
+            .teacher_names
+            .iter()
+            .filter(|name| should_import_teacher_name(name))
+            .cloned()
+            .collect::<Vec<_>>();
+        if teacher_names.is_empty() {
+            continue;
+        }
+        teachers_by_grade_subject
+            .entry((grade, subject))
+            .or_default()
+            .extend(teacher_names.iter().cloned());
+        teachers_by_exact_slot
+            .entry((
+                entry.week_index,
+                entry.day_of_week,
+                entry.period_index,
+                grade,
+                subject,
+            ))
+            .or_default()
+            .extend(teacher_names);
+    }
 
     for entry in entries.iter_mut() {
-        if entry.class_type != "admin"
-            || (foreign_subject_from_text(&entry.subject).is_none()
-                && !is_generic_foreign_subject_text(&entry.subject))
-        {
+        if entry.class_type != "admin" {
+            continue;
+        }
+        let target_subjects = if is_generic_foreign_subject_text(&entry.subject) {
+            vec![
+                ParsedSubject::English,
+                ParsedSubject::Russian,
+                ParsedSubject::Japanese,
+            ]
+        } else {
+            foreign_subject_for_entry(entry)
+                .into_iter()
+                .collect::<Vec<_>>()
+        };
+        if target_subjects.is_empty() {
             continue;
         }
         let has_short_name = entry
@@ -720,34 +749,27 @@ fn expand_short_foreign_teacher_names(entries: &mut [ParsedEntry]) {
         if !has_short_name {
             continue;
         }
-        let matched_foreign_teachers = foreign_entries
+
+        let grade = grade_digit_from_text(&entry.class_name);
+        let matched_foreign_teachers = target_subjects
             .iter()
-            .filter(|foreign_entry| {
-                foreign_entry.week_index == entry.week_index
-                    && foreign_entry.day_of_week == entry.day_of_week
-                    && foreign_entry.period_index == entry.period_index
-                    && foreign_entry_matches_admin_foreign_subject(foreign_entry, entry)
+            .filter_map(|subject| {
+                teachers_by_exact_slot.get(&(
+                    entry.week_index,
+                    entry.day_of_week,
+                    entry.period_index,
+                    grade,
+                    *subject,
+                ))
             })
-            .flat_map(|foreign_entry| {
-                foreign_entry
-                    .teacher_names
-                    .iter()
-                    .map(|teacher_name| (foreign_entry.subject.clone(), teacher_name.clone()))
-                    .collect::<Vec<_>>()
-            })
-            .filter(|(_, name)| should_import_teacher_name(name))
+            .flatten()
+            .cloned()
             .collect::<Vec<_>>();
-        let grade_foreign_teachers = foreign_entries
+        let grade_foreign_teachers = target_subjects
             .iter()
-            .filter(|foreign_entry| foreign_entry_matches_admin_foreign_subject(foreign_entry, entry))
-            .flat_map(|foreign_entry| {
-                foreign_entry
-                    .teacher_names
-                    .iter()
-                    .map(|teacher_name| (foreign_entry.subject.clone(), teacher_name.clone()))
-                    .collect::<Vec<_>>()
-            })
-            .filter(|(_, name)| should_import_teacher_name(name))
+            .filter_map(|subject| teachers_by_grade_subject.get(&(grade, *subject)))
+            .flatten()
+            .cloned()
             .collect::<Vec<_>>();
 
         let mut expanded = Vec::new();
@@ -758,18 +780,18 @@ fn expand_short_foreign_teacher_names(entries: &mut [ParsedEntry]) {
             }
             let unique_matches: BTreeSet<String> = matched_foreign_teachers
                 .iter()
-                .filter(|(_, candidate)| teacher_surname(candidate).as_deref() == Some(name.as_str()))
-                .map(|(_, candidate)| candidate.clone())
+                .filter(|candidate| teacher_surname(candidate).as_deref() == Some(name.as_str()))
+                .cloned()
                 .collect();
             if unique_matches.len() == 1 {
                 expanded.push(unique_matches.iter().next().unwrap().clone());
             } else {
                 let grade_unique_matches: BTreeSet<String> = grade_foreign_teachers
                     .iter()
-                    .filter(|(_, candidate)| {
+                    .filter(|candidate| {
                         teacher_surname(candidate).as_deref() == Some(name.as_str())
                     })
-                    .map(|(_, candidate)| candidate.clone())
+                    .cloned()
                     .collect();
                 if grade_unique_matches.len() == 1 {
                     expanded.push(grade_unique_matches.iter().next().unwrap().clone());
@@ -851,14 +873,32 @@ fn validate_no_short_teacher_names(entries: &[ParsedEntry]) -> Result<(), AppErr
     )))
 }
 
-fn parse_course_workbook(file_path: &str) -> Result<ParsedWorkbook, AppError> {
+fn parse_course_workbook_with_progress<F>(
+    file_path: &str,
+    mut report_progress: F,
+) -> Result<ParsedWorkbook, AppError>
+where
+    F: FnMut(&str),
+{
+    report_progress("parse_open_workbook_start");
     let mut workbook = open_workbook_auto(file_path)?;
+    report_progress("parse_open_workbook_done");
+    report_progress("parse_total_sheet_start");
     let total_range = workbook.worksheet_range("总课表").map_err(AppError::from)?;
+    report_progress("parse_total_sheet_done");
 
+    report_progress("parse_total_schedule_start");
     let (mut entries, periods, classes) = parse_total_schedule(&total_range);
+    report_progress("parse_total_schedule_done");
+    report_progress("expand_short_foreign_teacher_names_start");
     expand_short_foreign_teacher_names(&mut entries);
+    report_progress("expand_short_foreign_teacher_names_done");
+    report_progress("validate_short_teacher_names_start");
     validate_no_short_teacher_names(&entries)?;
+    report_progress("validate_short_teacher_names_done");
+    report_progress("build_teacher_assignments_start");
     let assignments = build_teacher_assignments_from_entries(&entries);
+    report_progress("build_teacher_assignments_done");
     if entries.is_empty() {
         return Err(AppError::new("总课表中没有识别到可导入的课表数据"));
     }
@@ -890,7 +930,9 @@ fn date_range_inclusive(start: NaiveDate, end: NaiveDate) -> Result<Vec<NaiveDat
     if days > 62 {
         return Err(AppError::new("单次查询范围不能超过 63 天"));
     }
-    Ok((0..=days).map(|offset| start + Duration::days(offset)).collect())
+    Ok((0..=days)
+        .map(|offset| start + Duration::days(offset))
+        .collect())
 }
 
 async fn get_import_anchor(
@@ -899,7 +941,9 @@ async fn get_import_anchor(
 ) -> Result<(NaiveDate, i64), AppError> {
     let (effective_start_date, start_week) = course_repo::import_anchor(db, import_id).await?;
     let Some(start_date_text) = effective_start_date else {
-        return Err(AppError::new("请先在课务管理中设置该课表批次的生效开始日期"));
+        return Err(AppError::new(
+            "请先在课务管理中设置该课表批次的生效开始日期",
+        ));
     };
     let start_date = parse_iso_date(&start_date_text, "生效开始日期")?;
     Ok((start_date, start_week.max(1)))
@@ -964,6 +1008,12 @@ fn workload_category(section_label: &str, period_label: &str) -> &'static str {
     }
 }
 
+fn is_admin_walk_class_foreign_entry(row: &course_repo::CourseEntryRow) -> bool {
+    row.class_type == "admin"
+        && (foreign_subject_from_text(&row.subject).is_some()
+            || is_generic_foreign_subject_text(&row.subject))
+}
+
 async fn build_course_workload_report(
     db: &sea_orm::DatabaseConnection,
     query: &CourseWorkloadQuery,
@@ -1001,6 +1051,9 @@ async fn build_course_workload_report(
         )
         .await?;
         for row in rows {
+            if is_admin_walk_class_foreign_entry(&row) {
+                continue;
+            }
             let category = workload_category(&row.section_label, &row.period_label).to_string();
             for original_teacher_name in row.teacher_names {
                 if !should_import_teacher_name(&original_teacher_name) {
@@ -1141,53 +1194,126 @@ fn write_workload_detail_sheet(
     sheet: &mut Worksheet,
     report: &CourseWorkloadReport,
 ) -> Result<(), XlsxError> {
+    let (_title_fmt, header_fmt, teacher_fmt, cell_fmt, wrap_fmt) = build_workload_formats();
+    sheet.set_name("课时明细数据")?;
+    let headers = [
+        "教师",
+        "日期",
+        "星期",
+        "节次",
+        "时段",
+        "班级",
+        "科目",
+        "原任课教师",
+        "实际授课教师",
+        "备注",
+        "课时",
+    ];
+    for (col, header) in headers.iter().enumerate() {
+        sheet.write_string_with_format(0, col as u16, *header, &header_fmt)?;
+    }
+    for (idx, detail) in report.details.iter().enumerate() {
+        let row = 1_u32 + idx as u32;
+        sheet.write_string_with_format(row, 0, &detail.teacher_name, &teacher_fmt)?;
+        sheet.write_string_with_format(row, 1, &detail.target_date, &cell_fmt)?;
+        sheet.write_string_with_format(row, 2, &detail.day_label, &cell_fmt)?;
+        sheet.write_string_with_format(row, 3, &detail.period_label, &cell_fmt)?;
+        sheet.write_string_with_format(row, 4, &detail.category, &cell_fmt)?;
+        sheet.write_string_with_format(row, 5, &detail.display_class_name, &cell_fmt)?;
+        sheet.write_string_with_format(row, 6, &detail.subject, &cell_fmt)?;
+        sheet.write_string_with_format(row, 7, &detail.original_teacher_name, &cell_fmt)?;
+        sheet.write_string_with_format(row, 8, &detail.actual_teacher_name, &cell_fmt)?;
+        sheet.write_string_with_format(row, 9, &detail.remark, &wrap_fmt)?;
+        sheet.write_number_with_format(row, 10, 1.0, &cell_fmt)?;
+    }
+    if !report.details.is_empty() {
+        let last_row = report.details.len() as u32;
+        sheet.autofilter(0, 0, last_row, 10)?;
+    }
+    let widths = [12., 12., 10., 10., 10., 14., 12., 12., 12., 26., 8.];
+    for (col, width) in widths.iter().enumerate() {
+        sheet.set_column_width(col as u16, *width)?;
+    }
+    Ok(())
+}
+
+fn write_workload_teacher_list_sheet(
+    sheet: &mut Worksheet,
+    report: &CourseWorkloadReport,
+) -> Result<(), XlsxError> {
+    sheet.set_name("教师列表")?;
+    for (idx, summary) in report.summaries.iter().enumerate() {
+        sheet.write_string(idx as u32, 0, &summary.teacher_name)?;
+    }
+    sheet.set_hidden(true);
+    Ok(())
+}
+
+fn write_workload_teacher_detail_sheet(
+    sheet: &mut Worksheet,
+    report: &CourseWorkloadReport,
+) -> Result<(), XlsxError> {
     let (title_fmt, header_fmt, teacher_fmt, cell_fmt, wrap_fmt) = build_workload_formats();
     sheet.set_name("课时明细")?;
     sheet.merge_range(
         0,
         0,
         0,
-        10,
-        &format!("课时明细（{} 至 {}）", report.start_date, report.end_date),
+        9,
+        &format!(
+            "教师课时明细（{} 至 {}）",
+            report.start_date, report.end_date
+        ),
         &title_fmt,
     )?;
+    sheet.write_string_with_format(1, 0, "选择教师", &header_fmt)?;
+    let selected_teacher = report
+        .summaries
+        .first()
+        .map(|summary| summary.teacher_name.as_str())
+        .unwrap_or_default();
+    sheet.write_string_with_format(1, 1, selected_teacher, &teacher_fmt)?;
+    if !report.summaries.is_empty() {
+        let teacher_last_row = report.summaries.len();
+        let teacher_range = format!("'教师列表'!$A$1:$A${teacher_last_row}");
+        let validation = DataValidation::new().allow_list_formula(teacher_range.as_str().into());
+        sheet.add_data_validation(1, 1, 1, 1, &validation)?;
+    }
+
     let headers = [
-        "教师", "日期", "星期", "节次", "时段", "班级", "科目", "原任课教师", "实际授课教师", "备注", "课时",
+        "日期",
+        "星期",
+        "节次",
+        "时段",
+        "班级",
+        "科目",
+        "原任课教师",
+        "实际授课教师",
+        "备注",
+        "课时",
     ];
     for (col, header) in headers.iter().enumerate() {
-        sheet.write_string_with_format(1, col as u16, *header, &header_fmt)?;
+        sheet.write_string_with_format(3, col as u16, *header, &header_fmt)?;
     }
 
-    let mut row = 2_u32;
-    let mut index = 0_usize;
-    while index < report.details.len() {
-        let teacher = &report.details[index].teacher_name;
-        let group_start = row;
-        let mut group_end = row;
-        while index < report.details.len() && &report.details[index].teacher_name == teacher {
-            let detail = &report.details[index];
-            sheet.write_string_with_format(row, 1, &detail.target_date, &cell_fmt)?;
-            sheet.write_string_with_format(row, 2, &detail.day_label, &cell_fmt)?;
-            sheet.write_string_with_format(row, 3, &detail.period_label, &cell_fmt)?;
-            sheet.write_string_with_format(row, 4, &detail.category, &cell_fmt)?;
-            sheet.write_string_with_format(row, 5, &detail.display_class_name, &cell_fmt)?;
-            sheet.write_string_with_format(row, 6, &detail.subject, &cell_fmt)?;
-            sheet.write_string_with_format(row, 7, &detail.original_teacher_name, &cell_fmt)?;
-            sheet.write_string_with_format(row, 8, &detail.actual_teacher_name, &cell_fmt)?;
-            sheet.write_string_with_format(row, 9, &detail.remark, &wrap_fmt)?;
-            sheet.write_number_with_format(row, 10, 1.0, &cell_fmt)?;
-            group_end = row;
-            row += 1;
-            index += 1;
-        }
-        if group_end > group_start {
-            sheet.merge_range(group_start, 0, group_end, 0, teacher, &teacher_fmt)?;
-        } else {
-            sheet.write_string_with_format(group_start, 0, teacher, &teacher_fmt)?;
+    let data_last_row = report.details.len() + 1;
+    for idx in 0..report.details.len() {
+        let row = 4_u32 + idx as u32;
+        let display_index = idx + 1;
+        for col in 0..headers.len() {
+            let data_col = (b'B' + col as u8) as char;
+            let formula = format!(
+                "=IFERROR(INDEX('课时明细数据'!${data_col}$2:${data_col}${data_last_row},AGGREGATE(15,6,(ROW('课时明细数据'!$A$2:$A${data_last_row})-1)/('课时明细数据'!$A$2:$A${data_last_row}=$B$2),{display_index})),\"\")"
+            );
+            let format = if col == 8 { &wrap_fmt } else { &cell_fmt };
+            sheet.write_formula_with_format(row, col as u16, formula.as_str(), format)?;
         }
     }
-
-    let widths = [12., 12., 10., 10., 10., 14., 12., 12., 12., 26., 8.];
+    if !report.details.is_empty() {
+        let last_row = 3_u32 + report.details.len() as u32;
+        sheet.autofilter(3, 0, last_row, 9)?;
+    }
+    let widths = [12., 10., 10., 10., 14., 12., 12., 12., 26., 8.];
     for (col, width) in widths.iter().enumerate() {
         sheet.set_column_width(col as u16, *width)?;
     }
@@ -1205,7 +1331,10 @@ fn write_workload_summary_sheet(
         0,
         0,
         6,
-        &format!("课时分类汇总（{} 至 {}）", report.start_date, report.end_date),
+        &format!(
+            "课时分类汇总（{} 至 {}）",
+            report.start_date, report.end_date
+        ),
         &title_fmt,
     )?;
     let headers = ["教师", "早上", "上午", "下午", "晚上", "代课节数", "合计"];
@@ -1236,12 +1365,23 @@ fn save_workload_report(
         return Err(AppError::new("暂无可导出的课时明细"));
     }
     let mut workbook = Workbook::new();
-    let detail_sheet = workbook.add_worksheet();
-    write_workload_detail_sheet(detail_sheet, report)
-        .map_err(|e| AppError::new(format!("写入课时明细失败: {e}")))?;
+
     let summary_sheet = workbook.add_worksheet();
     write_workload_summary_sheet(summary_sheet, report)
         .map_err(|e| AppError::new(format!("写入课时汇总失败: {e}")))?;
+
+    let detail_sheet = workbook.add_worksheet();
+    write_workload_teacher_detail_sheet(detail_sheet, report)
+        .map_err(|e| AppError::new(format!("写入课时明细失败: {e}")))?;
+
+    let data_sheet = workbook.add_worksheet();
+    write_workload_detail_sheet(data_sheet, report)
+        .map_err(|e| AppError::new(format!("写入课时明细数据失败: {e}")))?;
+    data_sheet.set_hidden(true);
+
+    let teacher_list_sheet = workbook.add_worksheet();
+    write_workload_teacher_list_sheet(teacher_list_sheet, report)
+        .map_err(|e| AppError::new(format!("写入教师列表失败: {e}")))?;
 
     let output_dir = course_export_root_dir(app)?;
     fs::create_dir_all(&output_dir).map_err(|e| AppError::new(format!("创建导出目录失败: {e}")))?;
@@ -1252,7 +1392,8 @@ fn save_workload_report(
     ));
     let path = output_dir.join(file_name);
     if path.exists() {
-        fs::remove_file(&path).map_err(|e| AppError::new(format!("覆盖旧课时统计文件失败: {e}")))?;
+        fs::remove_file(&path)
+            .map_err(|e| AppError::new(format!("覆盖旧课时统计文件失败: {e}")))?;
     }
     workbook
         .save(&path)
@@ -1268,17 +1409,38 @@ pub async fn import_course_schedule_from_excel(
     app: AppHandle,
     file_path: String,
 ) -> Result<CourseImportResult, String> {
+    const IMPORT_SCOPE: &str = "course_management.import_course_schedule_from_excel";
+
     let start = Utc::now();
+    let _ = app_log::append_log(
+        &app,
+        "info",
+        IMPORT_SCOPE,
+        &format!("stage=parse_start | file_path={file_path}"),
+    );
     let app_for_blocking = app.clone();
     let file_path_for_blocking = file_path.clone();
     let parsed = tauri::async_runtime::spawn_blocking(move || {
+        let parse_start = Utc::now();
         let result = (|| -> Result<ParsedWorkbook, AppError> {
-            parse_course_workbook(&file_path_for_blocking)
+            parse_course_workbook_with_progress(&file_path_for_blocking, |stage| {
+                let _ = app_log::append_log(
+                    &app_for_blocking,
+                    "info",
+                    IMPORT_SCOPE,
+                    &format!(
+                        "stage={} | file_path={} | parse_elapsed_ms={}",
+                        stage,
+                        file_path_for_blocking,
+                        (Utc::now() - parse_start).num_milliseconds()
+                    ),
+                );
+            })
         })();
         result.map_err(|e| {
             app_log::log_error(
                 &app_for_blocking,
-                "course_management.import_course_schedule_from_excel",
+                IMPORT_SCOPE,
                 &format!("file_path={file_path_for_blocking} | {e}"),
             );
             e.to_string()
@@ -1286,6 +1448,20 @@ pub async fn import_course_schedule_from_excel(
     })
     .await
     .map_err(|error| format!("课表导入任务执行失败: {error}"))??;
+    let _ = app_log::append_log(
+        &app,
+        "info",
+        IMPORT_SCOPE,
+        &format!(
+            "stage=parse_done | file_path={} | entries={} | periods={} | classes={} | assignments={} | elapsed_ms={}",
+            file_path,
+            parsed.entries.len(),
+            parsed.periods.len(),
+            parsed.classes.len(),
+            parsed.assignments.len(),
+            (Utc::now() - start).num_milliseconds()
+        ),
+    );
 
     let imported_at = Utc::now().to_rfc3339();
     let teacher_assignments = parsed
@@ -1315,25 +1491,49 @@ pub async fn import_course_schedule_from_excel(
         duration_ms: (Utc::now() - start).num_milliseconds(),
     };
 
+    let _ = app_log::append_log(
+        &app,
+        "info",
+        IMPORT_SCOPE,
+        &format!("stage=db_connect_start | file_path={file_path}"),
+    );
     let db = crate::db::connect(&app).await.map_err(|error| {
         app_log::log_error(
             &app,
-            "course_management.import_course_schedule_from_excel",
+            IMPORT_SCOPE,
             &format!("file_path={file_path} | {error}"),
         );
         error.to_string()
     })?;
+    let _ = app_log::append_log(
+        &app,
+        "info",
+        IMPORT_SCOPE,
+        &format!("stage=persist_start | file_path={file_path}"),
+    );
     if let Err(error) =
         course_repo::persist_course_import(&db, &imported_at, &file_path, &parsed).await
     {
         app_log::log_error(
             &app,
-            "course_management.import_course_schedule_from_excel",
+            IMPORT_SCOPE,
             &format!("file_path={file_path} | {error}"),
         );
         return Err(error.to_string());
     }
+    let _ = app_log::append_log(
+        &app,
+        "info",
+        IMPORT_SCOPE,
+        &format!("stage=persist_done | file_path={file_path}"),
+    );
 
+    let _ = app_log::append_log(
+        &app,
+        "info",
+        IMPORT_SCOPE,
+        &format!("stage=teacher_sync_start | file_path={file_path}"),
+    );
     if let Err(error) = async {
         crate::db::repos::teacher::sync_from_course_schedule(&db, &teacher_assignments).await
     }
@@ -1346,6 +1546,16 @@ pub async fn import_course_schedule_from_excel(
         );
         return Err(error.to_string());
     }
+    let _ = app_log::append_log(
+        &app,
+        "info",
+        IMPORT_SCOPE,
+        &format!(
+            "stage=done | file_path={} | elapsed_ms={}",
+            file_path,
+            (Utc::now() - start).num_milliseconds()
+        ),
+    );
 
     Ok(result)
 }
@@ -1382,7 +1592,9 @@ pub async fn list_course_schedule_classes(
 }
 
 #[tauri::command]
-pub async fn list_course_schedule_imports(app: AppHandle) -> Result<Vec<CourseImportBatch>, String> {
+pub async fn list_course_schedule_imports(
+    app: AppHandle,
+) -> Result<Vec<CourseImportBatch>, String> {
     let result = async {
         let db = crate::db::connect(&app).await?;
         course_repo::list_imports(&db).await
@@ -1535,7 +1747,7 @@ pub async fn list_course_substitution_candidates(
                         query.start_period_index,
                         query.end_period_index,
                     )
-            };
+                };
             let date_text = date.format("%Y-%m-%d").to_string();
             let rows = course_repo::list_entries_for_teacher_slot(
                 &db,
@@ -1548,6 +1760,9 @@ pub async fn list_course_substitution_candidates(
             )
             .await?;
             for row in rows {
+                if is_admin_walk_class_foreign_entry(&row) {
+                    continue;
+                }
                 let teacher_names = row.teacher_names.clone();
                 if let Some(period_indexes) = selected_period_indexes.as_ref() {
                     if !period_indexes.contains(&row.period_index) {
@@ -1557,13 +1772,9 @@ pub async fn list_course_substitution_candidates(
                 if !teacher_names.iter().any(|name| name == &teacher_name) {
                     continue;
                 }
-                let existing_change = course_repo::active_change_for_slot(
-                    &db,
-                    row.id,
-                    &date_text,
-                    &teacher_name,
-                )
-                .await?;
+                let existing_change =
+                    course_repo::active_change_for_slot(&db, row.id, &date_text, &teacher_name)
+                        .await?;
                 candidates.push(CourseSubstitutionCandidate {
                     source_entry_id: row.id,
                     import_id: row.import_id,
@@ -1648,8 +1859,7 @@ pub async fn revoke_course_schedule_change(app: AppHandle, change_id: i64) -> Re
             return Err(AppError::new("请选择要撤销的换课记录"));
         }
         let db = crate::db::connect(&app).await?;
-        let now = Utc::now().to_rfc3339();
-        course_repo::revoke_change(&db, change_id, &now).await
+        course_repo::revoke_change(&db, change_id).await
     }
     .await;
     result.map_err(|e: AppError| e.to_string())

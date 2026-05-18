@@ -16,6 +16,8 @@ use crate::entity::{
 };
 use crate::score::AppError;
 
+const INSERT_CHUNK_SIZE: usize = 500;
+
 #[derive(Clone)]
 pub struct CourseEntryRow {
     pub id: i64,
@@ -72,21 +74,31 @@ pub async fn persist_course_import(
     .insert(&tx)
     .await?;
 
-    for (sort_index, class_option) in parsed.classes.iter().enumerate() {
-        course_schedule_classes::ActiveModel {
-            import_id: Set(import.id),
-            class_name: Set(class_option.class_name.clone()),
-            display_name: Set(class_option.display_name.clone()),
-            class_type: Set(class_option.class_type.clone()),
-            sort_index: Set(sort_index as i64),
-            ..Default::default()
-        }
-        .insert(&tx)
-        .await?;
+    let class_rows = parsed
+        .classes
+        .iter()
+        .enumerate()
+        .map(
+            |(sort_index, class_option)| course_schedule_classes::ActiveModel {
+                import_id: Set(import.id),
+                class_name: Set(class_option.class_name.clone()),
+                display_name: Set(class_option.display_name.clone()),
+                class_type: Set(class_option.class_type.clone()),
+                sort_index: Set(sort_index as i64),
+                ..Default::default()
+            },
+        )
+        .collect::<Vec<_>>();
+    for chunk in class_rows.chunks(INSERT_CHUNK_SIZE) {
+        course_schedule_classes::Entity::insert_many(chunk.iter().cloned())
+            .exec(&tx)
+            .await?;
     }
 
-    for period in &parsed.periods {
-        course_schedule_periods::ActiveModel {
+    let period_rows = parsed
+        .periods
+        .iter()
+        .map(|period| course_schedule_periods::ActiveModel {
             import_id: Set(import.id),
             week_index: Set(period.week_index),
             day_of_week: Set(period.day_of_week),
@@ -95,31 +107,41 @@ pub async fn persist_course_import(
             period_label: Set(period.period_label.clone()),
             section_label: Set(period.section_label.clone()),
             ..Default::default()
-        }
-        .insert(&tx)
-        .await?;
+        })
+        .collect::<Vec<_>>();
+    for chunk in period_rows.chunks(INSERT_CHUNK_SIZE) {
+        course_schedule_periods::Entity::insert_many(chunk.iter().cloned())
+            .exec(&tx)
+            .await?;
     }
 
-    for entry in &parsed.entries {
-        let teacher_text = entry.teacher_names.join("/");
-        course_schedule_entries::ActiveModel {
-            import_id: Set(import.id),
-            class_name: Set(entry.class_name.clone()),
-            display_class_name: Set(entry.display_class_name.clone()),
-            class_type: Set(entry.class_type.clone()),
-            week_index: Set(entry.week_index),
-            day_of_week: Set(entry.day_of_week),
-            day_label: Set(entry.day_label.clone()),
-            period_index: Set(entry.period_index),
-            period_label: Set(entry.period_label.clone()),
-            section_label: Set(entry.section_label.clone()),
-            subject: Set(entry.subject.clone()),
-            teacher_names: Set(teacher_text.clone()),
-            teacher_search_text: Set(teacher_text),
-            ..Default::default()
-        }
-        .insert(&tx)
-        .await?;
+    let entry_rows = parsed
+        .entries
+        .iter()
+        .map(|entry| {
+            let teacher_text = entry.teacher_names.join("/");
+            course_schedule_entries::ActiveModel {
+                import_id: Set(import.id),
+                class_name: Set(entry.class_name.clone()),
+                display_class_name: Set(entry.display_class_name.clone()),
+                class_type: Set(entry.class_type.clone()),
+                week_index: Set(entry.week_index),
+                day_of_week: Set(entry.day_of_week),
+                day_label: Set(entry.day_label.clone()),
+                period_index: Set(entry.period_index),
+                period_label: Set(entry.period_label.clone()),
+                section_label: Set(entry.section_label.clone()),
+                subject: Set(entry.subject.clone()),
+                teacher_names: Set(teacher_text.clone()),
+                teacher_search_text: Set(teacher_text),
+                ..Default::default()
+            }
+        })
+        .collect::<Vec<_>>();
+    for chunk in entry_rows.chunks(INSERT_CHUNK_SIZE) {
+        course_schedule_entries::Entity::insert_many(chunk.iter().cloned())
+            .exec(&tx)
+            .await?;
     }
 
     tx.commit().await?;
@@ -286,10 +308,7 @@ pub async fn import_anchor(
     Ok((row.effective_start_date, row.start_week.max(1)))
 }
 
-pub async fn schedule_week_count(
-    db: &DatabaseConnection,
-    import_id: i64,
-) -> Result<i64, AppError> {
+pub async fn schedule_week_count(db: &DatabaseConnection, import_id: i64) -> Result<i64, AppError> {
     let count = course_schedule_periods::Entity::find()
         .filter(course_schedule_periods::Column::ImportId.eq(import_id))
         .count(db)
@@ -364,7 +383,9 @@ pub async fn list_entries_for_view(
     let mut query = course_schedule_entries::Entity::find()
         .filter(course_schedule_entries::Column::ImportId.eq(import_id));
     query = match view_type {
-        "teacher" => query.filter(course_schedule_entries::Column::TeacherSearchText.contains(target)),
+        "teacher" => {
+            query.filter(course_schedule_entries::Column::TeacherSearchText.contains(target))
+        }
         "foreign_class" => query
             .filter(course_schedule_entries::Column::ClassType.eq("foreign"))
             .filter(course_schedule_entries::Column::ClassName.eq(target)),
@@ -523,21 +544,15 @@ pub async fn save_substitutions(
     list_changes_for_import(db, payload.import_id).await
 }
 
-pub async fn revoke_change(
-    db: &DatabaseConnection,
-    change_id: i64,
-    now: &str,
-) -> Result<(), AppError> {
+pub async fn revoke_change(db: &DatabaseConnection, change_id: i64) -> Result<(), AppError> {
     if let Some(row) = course_schedule_changes::Entity::find_by_id(change_id)
         .filter(course_schedule_changes::Column::Status.eq("active"))
         .one(db)
         .await?
     {
-        let mut active = row.into_active_model();
-        active.status = Set("revoked".to_string());
-        active.revoked_at = Set(Some(now.to_string()));
-        active.updated_at = Set(now.to_string());
-        active.update(db).await?;
+        course_schedule_changes::Entity::delete_by_id(row.id)
+            .exec(db)
+            .await?;
     }
     Ok(())
 }

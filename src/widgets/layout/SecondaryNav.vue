@@ -47,7 +47,7 @@ defineEmits<{
 .secondary-nav {
   width: 248px;
   padding: 18px 14px 14px;
-  border-radius: var(--radius-card-large);
+  border-radius: 0;
   background: var(--surface-nav-panel);
   border: 1px solid var(--border-default);
   box-shadow: 0 12px 28px rgba(31, 60, 103, 0.06);

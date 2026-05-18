@@ -398,9 +398,9 @@ fn load_grade_subject_schedule_order(
     db: &DatabaseConnection,
 ) -> Result<HashMap<String, HashMap<Subject, i64>>, AppError> {
     let mut out = HashMap::<String, HashMap<Subject, i64>>::new();
-    for row in tauri::async_runtime::block_on(exam_allocation_repo::list_grade_subject_templates(
-        db,
-    ))? {
+    for row in
+        tauri::async_runtime::block_on(exam_allocation_repo::list_grade_subject_templates(db))?
+    {
         let Some(subject) = Subject::from_key(&row.subject) else {
             continue;
         };
@@ -422,6 +422,12 @@ pub(crate) fn grade_order_key(grade_name: &str) -> (i32, &str) {
 }
 
 fn seed_preset_grade_subject_time_templates(db: &DatabaseConnection) -> Result<(), AppError> {
+    let existing_templates =
+        tauri::async_runtime::block_on(exam_allocation_repo::list_grade_subject_templates(db))?;
+    if !existing_templates.is_empty() {
+        return Ok(());
+    }
+
     let now = Utc::now().to_rfc3339();
     // 根据用户提供的考试安排图片，预置高一/高二科目时间。
     let presets: [(&str, Subject, &str, &str); 18] = [
@@ -536,13 +542,20 @@ fn seed_preset_grade_subject_time_templates(db: &DatabaseConnection) -> Result<(
     ];
     let rows = presets
         .into_iter()
-        .map(|(grade_name, subject, start_at, end_at)| {
-            exam_allocation_repo::GradeSubjectTemplateSeedRow {
-                grade_name: grade_name.to_string(),
-                subject: subject.as_key().to_string(),
-                start_at: start_at.to_string(),
-                end_at: end_at.to_string(),
-            }
+        .flat_map(|(grade_name, subject, start_at, end_at)| {
+            let subjects = if subject == Subject::English {
+                vec![Subject::English, Subject::Russian, Subject::Japanese]
+            } else {
+                vec![subject]
+            };
+            subjects.into_iter().map(move |subject| {
+                exam_allocation_repo::GradeSubjectTemplateSeedRow {
+                    grade_name: grade_name.to_string(),
+                    subject: subject.as_key().to_string(),
+                    start_at: start_at.to_string(),
+                    end_at: end_at.to_string(),
+                }
+            })
         })
         .collect::<Vec<_>>();
     tauri::async_runtime::block_on(exam_allocation_repo::seed_grade_subject_templates(
@@ -556,12 +569,15 @@ fn resolve_grade_subject_schedule_order(
     subject: Subject,
     grade_order_map: &HashMap<String, HashMap<Subject, i64>>,
 ) -> i64 {
-    if let Some(ts) = grade_order_map
-        .get(grade_name)
-        .and_then(|map| map.get(&subject))
-        .copied()
-    {
-        return ts;
+    if let Some(map) = grade_order_map.get(grade_name) {
+        if let Some(ts) = map.get(&subject).copied() {
+            return ts;
+        }
+        if matches!(subject, Subject::Russian | Subject::Japanese) {
+            if let Some(ts) = map.get(&Subject::English).copied() {
+                return ts;
+            }
+        }
     }
     // Keep deterministic ordering when no time template is configured yet.
     subject_order(subject) as i64
@@ -931,18 +947,23 @@ fn load_selected_participants(
     grade_name: &str,
     subject: Subject,
 ) -> Result<Vec<Participant>, AppError> {
-    Ok(tauri::async_runtime::block_on(
-        exam_allocation_repo::list_participants(db, grade_name, subject.as_key(), 1),
-    )?
-    .into_iter()
-    .map(|row| Participant {
-        admission_no: row.admission_no,
-        student_name: row.student_name,
-        class_name: row.class_name,
-        total_score: row.total_score,
-        score: row.score,
-    })
-    .collect())
+    Ok(
+        tauri::async_runtime::block_on(exam_allocation_repo::list_participants(
+            db,
+            grade_name,
+            subject.as_key(),
+            1,
+        ))?
+        .into_iter()
+        .map(|row| Participant {
+            admission_no: row.admission_no,
+            student_name: row.student_name,
+            class_name: row.class_name,
+            total_score: row.total_score,
+            score: row.score,
+        })
+        .collect(),
+    )
 }
 
 fn load_not_selected_students(
@@ -950,18 +971,23 @@ fn load_not_selected_students(
     grade_name: &str,
     subject: Subject,
 ) -> Result<Vec<Participant>, AppError> {
-    Ok(tauri::async_runtime::block_on(
-        exam_allocation_repo::list_participants(db, grade_name, subject.as_key(), 0),
-    )?
-    .into_iter()
-    .map(|row| Participant {
-        admission_no: row.admission_no,
-        student_name: row.student_name,
-        class_name: row.class_name,
-        total_score: row.total_score,
-        score: row.score,
-    })
-    .collect())
+    Ok(
+        tauri::async_runtime::block_on(exam_allocation_repo::list_participants(
+            db,
+            grade_name,
+            subject.as_key(),
+            0,
+        ))?
+        .into_iter()
+        .map(|row| Participant {
+            admission_no: row.admission_no,
+            student_name: row.student_name,
+            class_name: row.class_name,
+            total_score: row.total_score,
+            score: row.score,
+        })
+        .collect(),
+    )
 }
 
 fn load_self_study_students_for_session(
@@ -1215,7 +1241,10 @@ fn build_session(
                     .map(|value| serde_json::to_string(&value.subjects))
                     .transpose()
                     .map_err(|e| AppError::new(format!("考试期间自习主题科目序列化失败: {e}")))?,
-                self_study_topic_label: space.self_study_topic.as_ref().map(|value| value.label.clone()),
+                self_study_topic_label: space
+                    .self_study_topic
+                    .as_ref()
+                    .map(|value| value.label.clone()),
                 building: space.building.clone(),
                 floor: space.floor.clone(),
                 capacity: space.capacity,
@@ -1248,7 +1277,10 @@ fn build_session(
                     .map(|value| serde_json::to_string(&value.subjects))
                     .transpose()
                     .map_err(|e| AppError::new(format!("考试期间自习主题科目序列化失败: {e}")))?,
-                self_study_topic_label: space.self_study_topic.as_ref().map(|value| value.label.clone()),
+                self_study_topic_label: space
+                    .self_study_topic
+                    .as_ref()
+                    .map(|value| value.label.clone()),
                 building: space.building.clone(),
                 floor: space.floor.clone(),
                 capacity: None,
@@ -1428,6 +1460,21 @@ fn generate_latest_exam_plan_internal(
     let mut grades: Vec<String> = grade_contexts.keys().cloned().collect();
     grades.sort_by(|a, b| grade_order_key(a).cmp(&grade_order_key(b)).then(a.cmp(b)));
     let total_grades = grades.len() as i64;
+    let _ = app_log::append_log(
+        app,
+        "info",
+        "exam_allocation.generate_latest_exam_plan",
+        &format!(
+            "loaded grade contexts: grades={} [{}]",
+            total_grades,
+            grades.join(", ")
+        ),
+    );
+    if grades.is_empty() {
+        return Err(AppError::new(
+            "未读取到可用于考场分配的班级配置，请先在班级配置中维护教学班和考场。",
+        ));
+    }
     update_exam_generation_progress(
         &db,
         "running",
@@ -1488,6 +1535,25 @@ fn generate_latest_exam_plan_internal(
         }
         let mut subjects: Vec<Subject> = subject_set.into_iter().collect();
         subjects.sort_by_key(|s| subject_order(*s));
+        let _ = app_log::append_log(
+            app,
+            "info",
+            "exam_allocation.generate_latest_exam_plan",
+            &format!(
+                "building grade={grade_name} subjects={} [{}]",
+                subjects.len(),
+                subjects
+                    .iter()
+                    .map(|subject| subject.as_key())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ),
+        );
+        if subjects.is_empty() {
+            return Err(AppError::new(format!(
+                "{grade_name} 未配置任何考试科目，请检查班级配置中的科目设置。"
+            )));
+        }
         let mut current_grade_schedule_order = HashMap::<Subject, i64>::new();
         for subject in &subjects {
             current_grade_schedule_order.insert(
@@ -1536,6 +1602,11 @@ fn generate_latest_exam_plan_internal(
             warning_count += built.warning_count;
         }
         tauri::async_runtime::block_on(grade_tx.commit())?;
+    }
+    if session_count == 0 {
+        return Err(AppError::new(
+            "未生成任何考试场次，请检查班级配置中的考试科目和成绩数据是否匹配。",
+        ));
     }
 
     {
@@ -1769,7 +1840,9 @@ fn session_from_model(
     })
 }
 
-fn space_from_model(row: crate::entity::latest_exam_plan_spaces::Model) -> Result<ExamPlanSpace, AppError> {
+fn space_from_model(
+    row: crate::entity::latest_exam_plan_spaces::Model,
+) -> Result<ExamPlanSpace, AppError> {
     let space_type = ExamPlanSpaceType::from_key(&row.space_type)
         .ok_or_else(|| AppError::new(format!("无效的空间类型: {}", row.space_type)))?;
     let space_source = ExamPlanSpaceSource::from_key(&row.space_source)
@@ -1823,18 +1896,16 @@ pub fn get_latest_exam_plan_session_detail(
     let result = (|| -> Result<ExamPlanSessionDetail, AppError> {
         let db = open_exam_allocation_db(&app)?;
         ensure_exam_allocation_defaults(&db)?;
-        let session = tauri::async_runtime::block_on(exam_allocation_repo::get_session(
-            &db, session_id,
-        ))?
-        .ok_or_else(|| AppError::new("未找到考试场次"))?;
+        let session =
+            tauri::async_runtime::block_on(exam_allocation_repo::get_session(&db, session_id))?
+                .ok_or_else(|| AppError::new("未找到考试场次"))?;
         let session = session_from_model(session)?;
 
-        let spaces = tauri::async_runtime::block_on(exam_allocation_repo::list_spaces(
-            &db, session_id,
-        ))?
-        .into_iter()
-        .map(space_from_model)
-        .collect::<Result<Vec<_>, _>>()?;
+        let spaces =
+            tauri::async_runtime::block_on(exam_allocation_repo::list_spaces(&db, session_id))?
+                .into_iter()
+                .map(space_from_model)
+                .collect::<Result<Vec<_>, _>>()?;
 
         let student_allocations = tauri::async_runtime::block_on(
             exam_allocation_repo::list_student_allocations(&db, session_id),

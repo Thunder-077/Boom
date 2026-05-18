@@ -251,7 +251,9 @@ pub async fn replace_default_notices_if_needed(
     Ok(())
 }
 
-pub async fn list_class_config_rows(db: &DatabaseConnection) -> Result<Vec<ClassConfigRow>, AppError> {
+pub async fn list_class_config_rows(
+    db: &DatabaseConnection,
+) -> Result<Vec<ClassConfigRow>, AppError> {
     let configs = class_configs::Entity::find()
         .filter(class_configs::Column::ConfigType.is_in(["teaching_class", "exam_room"]))
         .order_by_asc(class_configs::Column::GradeName)
@@ -263,10 +265,13 @@ pub async fn list_class_config_rows(db: &DatabaseConnection) -> Result<Vec<Class
         .all(db)
         .await?
         .into_iter()
-        .fold(std::collections::HashMap::<i32, Vec<String>>::new(), |mut map, row| {
-            map.entry(row.config_id).or_default().push(row.subject);
-            map
-        });
+        .fold(
+            std::collections::HashMap::<i32, Vec<String>>::new(),
+            |mut map, row| {
+                map.entry(row.config_id).or_default().push(row.subject);
+                map
+            },
+        );
     let mut rows = Vec::new();
     for config in configs {
         let config_subjects = subjects.get(&config.id).cloned().unwrap_or_default();
@@ -374,16 +379,19 @@ pub async fn clear_latest_plan_snapshot(tx: &DatabaseTransaction) -> Result<(), 
     latest_exam_plan_student_allocations::Entity::delete_many()
         .exec(tx)
         .await?;
-    latest_exam_plan_spaces::Entity::delete_many().exec(tx).await?;
-    latest_exam_plan_sessions::Entity::delete_many().exec(tx).await?;
-    latest_exam_plan_meta::Entity::delete_many().exec(tx).await?;
+    latest_exam_plan_spaces::Entity::delete_many()
+        .exec(tx)
+        .await?;
+    latest_exam_plan_sessions::Entity::delete_many()
+        .exec(tx)
+        .await?;
+    latest_exam_plan_meta::Entity::delete_many()
+        .exec(tx)
+        .await?;
     Ok(())
 }
 
-pub async fn update_progress(
-    db: &DatabaseConnection,
-    row: ProgressRow,
-) -> Result<(), AppError> {
+pub async fn update_progress(db: &DatabaseConnection, row: ProgressRow) -> Result<(), AppError> {
     let existing = exam_generation_progress::Entity::find_by_id(1)
         .one(db)
         .await?;
@@ -455,10 +463,7 @@ pub async fn insert_session(
     Ok(model.id)
 }
 
-pub async fn insert_space(
-    tx: &DatabaseTransaction,
-    row: SpaceInsertRow,
-) -> Result<i64, AppError> {
+pub async fn insert_space(tx: &DatabaseTransaction, row: SpaceInsertRow) -> Result<i64, AppError> {
     let model = latest_exam_plan_spaces::ActiveModel {
         id: sea_orm::ActiveValue::NotSet,
         session_id: Set(row.session_id),

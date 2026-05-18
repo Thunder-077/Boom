@@ -73,7 +73,7 @@ defineEmits<{
   flex-direction: column;
   align-items: center;
   gap: 16px;
-  border-radius: calc(var(--radius-card-large) - 6px);
+  border-radius: 0;
   justify-content: flex-start;
   background: var(--surface-nav-gradient);
   border: 1px solid var(--border-default);

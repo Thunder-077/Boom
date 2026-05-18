@@ -93,9 +93,7 @@ mod m20260517_000002_course_import_settings {
                     .alter_table(
                         Table::alter()
                             .table(Alias::new("course_schedule_imports"))
-                            .add_column(
-                                ColumnDef::new(Alias::new("effective_start_date")).string(),
-                            )
+                            .add_column(ColumnDef::new(Alias::new("effective_start_date")).string())
                             .to_owned(),
                     )
                     .await?;
