@@ -1,6 +1,7 @@
 import { computed, ref } from "vue";
 import { relaunch } from "@tauri-apps/plugin-process";
 import { check } from "@tauri-apps/plugin-updater";
+import { getVersion } from "@tauri-apps/api/app";
 
 export type UpdateStatus = "idle" | "checking" | "available" | "downloading" | "ready" | "up-to-date" | "error";
 
@@ -10,6 +11,17 @@ const downloadSize = ref(0);
 const errorMessage = ref("");
 const updateVersion = ref("");
 const updateBody = ref("");
+const currentVersion = ref("");
+
+async function initCurrentVersion() {
+  try {
+    currentVersion.value = await getVersion();
+  } catch {
+    currentVersion.value = "未知版本";
+  }
+}
+
+initCurrentVersion();
 
 function reset() {
   progress.value = 0;
@@ -97,6 +109,7 @@ export function useAppUpdater() {
     progress,
     updateVersion,
     updateBody,
+    currentVersion,
     statusLabel,
     checkForUpdate,
     downloadAndInstall,

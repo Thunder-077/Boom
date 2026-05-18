@@ -7,7 +7,7 @@
       :secondary-description="pageCopy.description"
       :secondary-items="secondaryItems"
       :active-secondary="activeSection"
-      :is-settings-active="activeSection === 'settings'"
+      :is-settings-active="activeSection === 'appearance' || activeSection === 'update'"
       @select-rail="onRailSelect"
       @select-secondary="onSecondarySelect"
       @open-settings="openSettings"
@@ -25,7 +25,8 @@
       <CourseSubstitutionPanel v-else-if="activeSection === 'course-substitution'" />
       <CourseWorkloadPanel v-else-if="activeSection === 'course-workload'" />
       <ExamDashboardPanel v-else-if="activeSection === 'exam-assignment'" />
-      <SettingsPanel v-else-if="activeSection === 'settings'" />
+      <AppearancePanel v-else-if="activeSection === 'appearance'" />
+      <UpdatePanel v-else-if="activeSection === 'update'" />
       <KeepAlive>
         <MonitorDrawPanel v-if="activeSection === 'monitor-draw'" />
       </KeepAlive>
@@ -49,7 +50,8 @@ import ExamDashboardPanel from "../../features/dashboard/ui/ExamDashboardPanel.v
 import InvigilationPanel from "../../features/invigilation/ui/InvigilationPanel.vue";
 import MonitorDrawPanel from "../../features/monitor-draw/ui/MonitorDrawPanel.vue";
 import ScoreManagementPanel from "../../features/scores/ui/ScoreManagementPanel.vue";
-import SettingsPanel from "../../features/settings/ui/SettingsPanel.vue";
+import AppearancePanel from "../../features/settings/ui/SettingsPanel.vue";
+import UpdatePanel from "../../features/settings/ui/UpdatePanel.vue";
 import TeacherListPanel from "../../features/teachers/ui/TeacherListPanel.vue";
 
 const route = useRoute();
@@ -57,7 +59,7 @@ const router = useRouter();
 
 const activeSection = computed<AppSection>(() => {
   const section = route.params.section as string;
-  const validSections: AppSection[] = ["teachers", "scores", "classes", "course-management", "course-substitution", "course-workload", "exam-assignment", "monitor-draw", "monitor-config", "settings"];
+  const validSections: AppSection[] = ["teachers", "scores", "classes", "course-management", "course-substitution", "course-workload", "exam-assignment", "monitor-draw", "monitor-config", "appearance", "update"];
   if (validSections.includes(section as AppSection)) {
     return section as AppSection;
   }
@@ -128,12 +130,19 @@ const pageMap: Record<AppSection, { title: string; description: string; breadcru
     pageTitle: "监考配置",
     summary: "配置监考规则、任务与津贴参数。",
   },
-  settings: {
+  appearance: {
     title: "系统设置",
-    description: "主题外观与后续工作区偏好的集中入口",
-    breadcrumb: "系统设置 / 外观主题",
-    pageTitle: "系统设置",
-    summary: "调整主题外观与系统偏好设置。",
+    description: "配色主题与版本更新",
+    breadcrumb: "系统设置 / 配色主题",
+    pageTitle: "配色主题",
+    summary: "调整界面配色主题与外观偏好。",
+  },
+  update: {
+    title: "系统设置",
+    description: "配色主题与版本更新",
+    breadcrumb: "系统设置 / 版本与更新",
+    pageTitle: "版本与更新",
+    summary: "检查应用版本并安装可用更新。",
   },
 };
 
@@ -148,7 +157,7 @@ const railItems: RailItem[] = [
 ];
 
 const activeRail = computed(() => {
-  if (activeSection.value === "settings") {
+  if (activeSection.value === "appearance" || activeSection.value === "update") {
     return "dashboard";
   }
   if (activeSection.value === "scores") {
@@ -167,8 +176,11 @@ const activeRail = computed(() => {
 });
 
 const secondaryItems = computed<SecondaryNavItem[]>(() => {
-  if (activeSection.value === "settings") {
-    return [{ key: "settings", label: "配色与主题", icon: "palette" }];
+  if (activeSection.value === "appearance" || activeSection.value === "update") {
+    return [
+      { key: "appearance", label: "配色主题", icon: "palette" },
+      { key: "update", label: "版本与更新", icon: "system_update" },
+    ];
   }
   if (activeRail.value === "students") {
     return [{ key: "scores", label: "成绩管理", icon: "assignment" }];
@@ -218,7 +230,7 @@ function onSecondarySelect(key: string) {
 }
 
 function openSettings() {
-  void router.push("/app/settings");
+  void router.push("/app/appearance");
 }
 </script>
 

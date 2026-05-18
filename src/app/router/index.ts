@@ -11,7 +11,8 @@ export type AppSection =
   | "course-management"
   | "course-substitution"
   | "course-workload"
-  | "settings";
+  | "appearance"
+  | "update";
 
 export const router = createRouter({
   history: createWebHistory(),
