@@ -173,7 +173,7 @@ const days = [
 
 const viewTypeOptions: Array<{ value: CourseViewType; label: string; icon: string }> = [
   { value: "admin_class", label: "行政班", icon: "domain" },
-  { value: "foreign_class", label: "外语教学班", icon: "groups" },
+  { value: "foreign_class", label: "教学班", icon: "groups" },
   { value: "teacher", label: "教师", icon: "badge" },
 ];
 

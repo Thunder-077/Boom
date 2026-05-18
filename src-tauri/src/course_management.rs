@@ -869,7 +869,7 @@ fn validate_no_short_teacher_names(entries: &[ParsedEntry]) -> Result<(), AppErr
         format!(" 共 {} 处", unresolved.len())
     };
     Err(AppError::new(format!(
-        "课表中仍存在未能推导完整姓名的单姓教师：{preview}{suffix}。请检查总课表中对应外语教学班的任课教师。"
+        "课表中仍存在未能推导完整姓名的单姓教师：{preview}{suffix}。请检查总课表中对应教学班的任课教师。"
     )))
 }
 
