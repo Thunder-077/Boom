@@ -31,3 +31,4 @@ rust_xlsxwriter = "0.92"
 zip = "4.6.1"
 cp_sat = { path = "third_party/cp_sat" }
 tauri-plugin-updater = "2.10.1"
+tauri-plugin-process = "2.3.1"
