@@ -322,7 +322,7 @@ onMounted(async () => {
   align-items: center;
   justify-content: center;
   gap: 6px;
-  color: #fff;
+  color: var(--color-on-primary);
   font-weight: 700;
   font-size: 13px;
   cursor: pointer;
@@ -334,7 +334,7 @@ onMounted(async () => {
 }
 
 .action-btn.secondary {
-  background: #3a6ea5;
+  background: var(--color-secondary-action);
 }
 
 .action-btn:disabled {

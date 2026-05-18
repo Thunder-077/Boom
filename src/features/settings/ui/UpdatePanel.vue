@@ -130,13 +130,13 @@ async function handleInstall() {
 }
 
 .theme-pill.status-available {
-  background: rgba(34, 197, 94, 0.12);
-  color: #22c55e;
+  background: var(--color-success-soft);
+  color: var(--color-success);
 }
 
 .theme-pill.status-updating {
-  background: rgba(59, 130, 246, 0.12);
-  color: #3b82f6;
+  background: var(--accent-soft);
+  color: var(--accent-primary);
 }
 
 .update-actions {
@@ -158,8 +158,8 @@ async function handleInstall() {
 }
 
 .action-btn.primary {
-  background: var(--accent-primary, #4f8cff);
-  color: white;
+  background: var(--accent-primary);
+  color: var(--color-on-primary);
 }
 
 .action-btn.primary:hover:not(:disabled) {
@@ -221,7 +221,7 @@ async function handleInstall() {
 .progress-fill {
   height: 100%;
   border-radius: 4px;
-  background: var(--accent-primary, #4f8cff);
+  background: var(--accent-primary);
   transition: width 0.2s ease;
 }
 

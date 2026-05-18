@@ -72,12 +72,12 @@ textarea {
 }
 
 ::-webkit-scrollbar-thumb {
-  background: rgba(79, 109, 145, 0.24);
+  background: var(--scrollbar-thumb);
   border-radius: 999px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: rgba(63, 89, 121, 0.38);
+  background: var(--scrollbar-thumb-hover);
 }
 
 .card-shell {
@@ -147,12 +147,12 @@ textarea {
 }
 
 .glass-area::-webkit-scrollbar-thumb {
-  background: rgba(79, 109, 145, 0.24);
+  background: var(--scrollbar-thumb);
   border-radius: 999px;
 }
 
 .glass-area::-webkit-scrollbar-thumb:hover {
-  background: rgba(63, 89, 121, 0.38);
+  background: var(--scrollbar-thumb-hover);
 }
 
 .glass-field::placeholder,

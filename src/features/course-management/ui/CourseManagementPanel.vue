@@ -482,7 +482,7 @@ onUnmounted(() => {
 
 .segmented button.active {
   background: var(--accent-primary);
-  color: #fff;
+  color: var(--color-on-primary);
 }
 
 .import-management {
@@ -569,7 +569,7 @@ onUnmounted(() => {
   align-items: center;
   justify-content: center;
   gap: 5px;
-  color: #fff;
+  color: var(--color-on-primary);
   font-weight: 700;
   font-size: 13px;
   cursor: pointer;
@@ -585,7 +585,7 @@ onUnmounted(() => {
 }
 
 .action-btn.danger {
-  background: #d14343;
+  background: var(--color-danger-action);
 }
 
 .action-btn:disabled {
@@ -627,7 +627,7 @@ onUnmounted(() => {
 
 .week-switch button.active {
   background: var(--accent-primary);
-  color: #fff;
+  color: var(--color-on-primary);
 }
 
 .schedule-table-scroll {
@@ -727,31 +727,31 @@ onUnmounted(() => {
 }
 
 .tone-early {
-  --period-section-bg: rgba(35, 118, 196, 0.14);
-  --period-cell-bg: rgba(35, 118, 196, 0.08);
-  --period-lesson-bg: rgba(35, 118, 196, 0.10);
-  --period-accent: #2376c4;
+  --period-section-bg: rgba(var(--period-early-rgb), 0.14);
+  --period-cell-bg: rgba(var(--period-early-rgb), 0.08);
+  --period-lesson-bg: rgba(var(--period-early-rgb), 0.10);
+  --period-accent: var(--period-early-strong);
 }
 
 .tone-morning {
-  --period-section-bg: rgba(24, 141, 102, 0.14);
-  --period-cell-bg: rgba(24, 141, 102, 0.08);
-  --period-lesson-bg: rgba(24, 141, 102, 0.10);
-  --period-accent: #188d66;
+  --period-section-bg: rgba(var(--period-morning-rgb), 0.14);
+  --period-cell-bg: rgba(var(--period-morning-rgb), 0.08);
+  --period-lesson-bg: rgba(var(--period-morning-rgb), 0.10);
+  --period-accent: var(--period-morning-strong);
 }
 
 .tone-afternoon {
-  --period-section-bg: rgba(191, 119, 31, 0.16);
-  --period-cell-bg: rgba(191, 119, 31, 0.09);
-  --period-lesson-bg: rgba(191, 119, 31, 0.11);
-  --period-accent: #bf771f;
+  --period-section-bg: rgba(var(--period-afternoon-rgb), 0.16);
+  --period-cell-bg: rgba(var(--period-afternoon-rgb), 0.09);
+  --period-lesson-bg: rgba(var(--period-afternoon-rgb), 0.11);
+  --period-accent: var(--period-afternoon-strong);
 }
 
 .tone-evening {
-  --period-section-bg: rgba(108, 91, 181, 0.16);
-  --period-cell-bg: rgba(108, 91, 181, 0.09);
-  --period-lesson-bg: rgba(108, 91, 181, 0.11);
-  --period-accent: #6c5bb5;
+  --period-section-bg: rgba(var(--period-evening-rgb), 0.16);
+  --period-cell-bg: rgba(var(--period-evening-rgb), 0.09);
+  --period-lesson-bg: rgba(var(--period-evening-rgb), 0.11);
+  --period-accent: var(--period-evening-strong);
 }
 
 .lesson strong {

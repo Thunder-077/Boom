@@ -536,7 +536,7 @@ onUnmounted(() => {
 
 .page-btn.active {
   background: var(--accent-primary);
-  color: #fff;
+  color: var(--color-on-primary);
   border-color: var(--accent-primary);
 }
 

@@ -645,7 +645,7 @@ watch(
 .period-buttons button.active {
   border-color: var(--accent-primary);
   background: var(--accent-primary);
-  color: #fff;
+  color: var(--color-on-primary);
 }
 
 .action-btn {
@@ -658,7 +658,7 @@ watch(
   align-items: center;
   justify-content: center;
   gap: 6px;
-  color: #fff;
+  color: var(--color-on-primary);
   font-weight: 700;
   font-size: 13px;
   cursor: pointer;
@@ -674,7 +674,7 @@ watch(
 }
 
 .action-btn.secondary {
-  background: #3a6ea5;
+  background: var(--color-secondary-action);
 }
 
 .action-btn:disabled,
@@ -892,7 +892,7 @@ watch(
   height: 34px;
   border: 0;
   border-radius: 10px;
-  color: #fff;
+  color: var(--color-on-primary);
   background: var(--accent-primary);
   display: inline-flex;
   align-items: center;
@@ -901,7 +901,7 @@ watch(
 }
 
 .icon-btn.danger {
-  background: #d14343;
+  background: var(--color-danger-action);
 }
 
 .icon-btn .material-symbols-rounded {

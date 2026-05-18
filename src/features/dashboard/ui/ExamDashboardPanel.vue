@@ -739,7 +739,7 @@ onUnmounted(() => {
 
 .page-error-note {
   margin: 0 0 10px;
-  color: #b42318;
+  color: var(--color-danger);
   font-size: 13px;
 }
 
@@ -1289,7 +1289,7 @@ onUnmounted(() => {
 
 .icon-btn:hover {
   background: var(--color-danger-soft);
-  border-color: rgba(182, 68, 68, 0.14);
+  border-color: rgba(var(--color-danger-rgb), 0.14);
 }
 
 .icon-btn .material-symbols-rounded {

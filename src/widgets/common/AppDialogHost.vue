@@ -193,8 +193,8 @@ import { appDialogState as state, closeAppDialog } from "../../shared/ui/appDial
 }
 
 .tone-danger .dialog-btn.primary {
-  background: linear-gradient(135deg, #9f3030, var(--color-danger));
-  box-shadow: 0 14px 26px rgba(182, 68, 68, 0.22);
+  background: linear-gradient(135deg, var(--color-danger-strong), var(--color-danger));
+  box-shadow: 0 14px 26px rgba(var(--color-danger-rgb), 0.22);
 }
 
 .dialog-btn.secondary {
