@@ -23,6 +23,14 @@
       "csp": null
     }
   },
+  "plugins": {
+    "updater": {
+      "pubkey": "RWQl58EUEMbdPUmESAu03PTZPsL6MldwWSoV/rTS4pFTNJtOwov4xXgq",
+      "endpoints": [
+        "https://github.com/Thunder-077/Boom/releases/latest/download/latest.json"
+      ]
+    }
+  },
   "bundle": {
     "active": true,
     "targets": "all",
