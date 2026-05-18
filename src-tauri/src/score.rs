@@ -1,15 +1,11 @@
 use std::collections::{HashMap, HashSet};
 use std::fmt::{Display, Formatter};
-use std::fs::create_dir_all;
-use std::path::PathBuf;
 
 use calamine::{open_workbook_auto, Data, Reader};
 use chrono::Utc;
 use regex::Regex;
-use rusqlite::types::Value;
-use rusqlite::{params, params_from_iter, Connection, Transaction};
 use serde::{Deserialize, Serialize};
-use tauri::{AppHandle, Manager};
+use tauri::AppHandle;
 
 use crate::app_log;
 
@@ -62,12 +58,6 @@ impl AppError {
 impl Display for AppError {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}", self.message)
-    }
-}
-
-impl From<rusqlite::Error> for AppError {
-    fn from(value: rusqlite::Error) -> Self {
-        Self::new(format!("数据库操作失败: {value}"))
     }
 }
 
@@ -143,25 +133,25 @@ pub enum ScoreCellState {
 }
 
 #[derive(Debug, Clone)]
-struct ParsedSubjectScore {
-    subject: Subject,
-    score: Option<f64>,
-    state: ScoreCellState,
+pub(crate) struct ParsedSubjectScore {
+    pub(crate) subject: Subject,
+    pub(crate) score: Option<f64>,
+    pub(crate) state: ScoreCellState,
 }
 
 #[derive(Debug, Clone)]
-struct ParsedStudent {
-    admission_no: String,
-    class_name: String,
-    grade_name: String,
-    student_name: String,
-    subject_combination: String,
-    language: String,
-    total_score: f64,
-    selected_subject_count: i64,
-    class_rank: i64,
-    grade_rank: i64,
-    subjects: Vec<ParsedSubjectScore>,
+pub(crate) struct ParsedStudent {
+    pub(crate) admission_no: String,
+    pub(crate) class_name: String,
+    pub(crate) grade_name: String,
+    pub(crate) student_name: String,
+    pub(crate) subject_combination: String,
+    pub(crate) language: String,
+    pub(crate) total_score: f64,
+    pub(crate) selected_subject_count: i64,
+    pub(crate) class_rank: i64,
+    pub(crate) grade_rank: i64,
+    pub(crate) subjects: Vec<ParsedSubjectScore>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -176,25 +166,25 @@ pub struct ImportResult {
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ScoreRow {
-    admission_no: String,
-    class_name: String,
-    grade_name: String,
-    student_name: String,
-    subject_combination: String,
-    language: String,
-    total_score: f64,
-    class_rank: i64,
-    grade_rank: i64,
-    selected_subject_count: i64,
+    pub(crate) admission_no: String,
+    pub(crate) class_name: String,
+    pub(crate) grade_name: String,
+    pub(crate) student_name: String,
+    pub(crate) subject_combination: String,
+    pub(crate) language: String,
+    pub(crate) total_score: f64,
+    pub(crate) class_rank: i64,
+    pub(crate) grade_rank: i64,
+    pub(crate) selected_subject_count: i64,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct LatestSummary {
-    imported_at: Option<String>,
-    student_count: i64,
-    class_count: i64,
-    grade_count: i64,
+    pub(crate) imported_at: Option<String>,
+    pub(crate) student_count: i64,
+    pub(crate) class_count: i64,
+    pub(crate) grade_count: i64,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -217,25 +207,25 @@ pub struct ScoreListParams {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ScoreSubjectItem {
-    subject: Subject,
-    score: Option<f64>,
-    state: ScoreCellState,
+    pub(crate) subject: Subject,
+    pub(crate) score: Option<f64>,
+    pub(crate) state: ScoreCellState,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ScoreDetail {
-    admission_no: String,
-    class_name: String,
-    grade_name: String,
-    student_name: String,
-    subject_combination: String,
-    language: String,
-    total_score: f64,
-    class_rank: i64,
-    grade_rank: i64,
-    selected_subject_count: i64,
-    subjects: Vec<ScoreSubjectItem>,
+    pub(crate) admission_no: String,
+    pub(crate) class_name: String,
+    pub(crate) grade_name: String,
+    pub(crate) student_name: String,
+    pub(crate) subject_combination: String,
+    pub(crate) language: String,
+    pub(crate) total_score: f64,
+    pub(crate) class_rank: i64,
+    pub(crate) grade_rank: i64,
+    pub(crate) selected_subject_count: i64,
+    pub(crate) subjects: Vec<ScoreSubjectItem>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -250,25 +240,6 @@ pub struct UpdateScorePayload {
 #[derive(Debug, Serialize)]
 pub struct SuccessResponse {
     success: bool,
-}
-
-pub fn db_path(app: &AppHandle) -> Result<PathBuf, AppError> {
-    let mut dir = app
-        .path()
-        .app_data_dir()
-        .map_err(|e| AppError::new(format!("获取应用数据目录失败: {e}")))?;
-    create_dir_all(&dir).map_err(|e| AppError::new(format!("创建应用数据目录失败: {e}")))?;
-    dir.push("scores.sqlite3");
-    Ok(dir)
-}
-
-pub fn open_connection(app: &AppHandle) -> Result<Connection, AppError> {
-    let path = db_path(app)?;
-    Connection::open(path).map_err(AppError::from)
-}
-
-pub fn init_schema(conn: &Connection) -> Result<(), AppError> {
-    crate::schema::ensure_schema(conn)
 }
 
 fn cell_to_trimmed_string(cell: Option<&Data>) -> String {
@@ -567,16 +538,16 @@ fn apply_ranks(students: &mut [ParsedStudent]) {
 }
 
 #[derive(Debug, Clone)]
-struct RankRow {
-    admission_no: String,
-    class_name: String,
-    grade_name: String,
-    total_score: f64,
-    class_rank: i64,
-    grade_rank: i64,
+pub(crate) struct RankRow {
+    pub(crate) admission_no: String,
+    pub(crate) class_name: String,
+    pub(crate) grade_name: String,
+    pub(crate) total_score: f64,
+    pub(crate) class_rank: i64,
+    pub(crate) grade_rank: i64,
 }
 
-fn assign_rank_rows(rows: &mut [RankRow]) {
+pub(crate) fn assign_rank_rows(rows: &mut [RankRow]) {
     let mut class_groups: HashMap<String, Vec<usize>> = HashMap::new();
     let mut grade_groups: HashMap<String, Vec<usize>> = HashMap::new();
     for (idx, row) in rows.iter().enumerate() {
@@ -633,107 +604,27 @@ fn assign_rank_rows(rows: &mut [RankRow]) {
     }
 }
 
-fn recompute_ranks_tx(tx: &Transaction<'_>) -> Result<(), AppError> {
-    let mut stmt = tx.prepare(
-        "SELECT admission_no, class_name, grade_name, total_score FROM latest_student_scores ORDER BY admission_no ASC",
-    )?;
-    let rows_iter = stmt.query_map([], |row| {
-        Ok(RankRow {
-            admission_no: row.get(0)?,
-            class_name: row.get(1)?,
-            grade_name: row.get(2)?,
-            total_score: row.get(3)?,
-            class_rank: 0,
-            grade_rank: 0,
-        })
-    })?;
-    let mut rows = Vec::new();
-    for row in rows_iter {
-        rows.push(row?);
-    }
-    assign_rank_rows(&mut rows);
-    for row in rows {
-        tx.execute(
-            "UPDATE latest_student_scores SET class_rank = ?1, grade_rank = ?2 WHERE admission_no = ?3",
-            params![row.class_rank, row.grade_rank, row.admission_no],
-        )?;
-    }
-    Ok(())
-}
-
-fn persist_latest_snapshot(
-    conn: &mut Connection,
-    source_file: &str,
-    imported_at: &str,
-    students: &[ParsedStudent],
-) -> Result<(), AppError> {
-    let tx = conn.transaction()?;
-    tx.execute("DELETE FROM latest_subject_scores", [])?;
-    tx.execute("DELETE FROM latest_student_scores", [])?;
-    tx.execute("DELETE FROM latest_import_meta", [])?;
-    tx.execute(
-        "INSERT INTO latest_import_meta (id, imported_at, source_file, row_count) VALUES (1, ?1, ?2, ?3)",
-        params![imported_at, source_file, students.len() as i64],
-    )?;
-
-    for student in students {
-        tx.execute(
-            r#"
-            INSERT INTO latest_student_scores (
-              admission_no, class_name, grade_name, student_name,
-              subject_combination, language,
-              total_score, class_rank, grade_rank, selected_subject_count
-            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
-            "#,
-            params![
-                student.admission_no,
-                student.class_name,
-                student.grade_name,
-                student.student_name,
-                student.subject_combination,
-                student.language,
-                student.total_score,
-                student.class_rank,
-                student.grade_rank,
-                student.selected_subject_count
-            ],
-        )?;
-
-        for subject in &student.subjects {
-            tx.execute(
-                "INSERT INTO latest_subject_scores (admission_no, subject, score, is_selected, is_absent) VALUES (?1, ?2, ?3, ?4, ?5)",
-                params![
-                    student.admission_no,
-                    subject.subject.as_key(),
-                    subject.score,
-                    matches!(subject.state, ScoreCellState::Scored | ScoreCellState::Absent),
-                    matches!(subject.state, ScoreCellState::Absent)
-                ],
-            )?;
-        }
-    }
-
-    tx.commit()?;
-    Ok(())
-}
-
 #[tauri::command]
-pub fn import_scores_from_excel(app: AppHandle, file_path: String) -> Result<ImportResult, String> {
+pub async fn import_scores_from_excel(
+    app: AppHandle,
+    file_path: String,
+) -> Result<ImportResult, String> {
     let start = Utc::now();
-    let result = (|| -> Result<ImportResult, AppError> {
-        let mut conn = open_connection(&app)?;
-        init_schema(&conn)?;
+    let result: Result<ImportResult, AppError> = async {
+        let db = crate::db::connect(&app).await?;
         let mut students = parse_excel_rows(&file_path)?;
         apply_ranks(&mut students);
         let imported_at = Utc::now().to_rfc3339();
-        persist_latest_snapshot(&mut conn, &file_path, &imported_at, &students)?;
+        crate::db::repos::score::persist_latest_snapshot(&db, &file_path, &imported_at, &students)
+            .await?;
         Ok(ImportResult {
             imported_at,
             row_count: students.len() as i64,
             warning_count: 0,
             duration_ms: (Utc::now() - start).num_milliseconds(),
         })
-    })();
+    }
+    .await;
     result.map_err(|e| {
         app_log::log_error(
             &app,
@@ -745,191 +636,35 @@ pub fn import_scores_from_excel(app: AppHandle, file_path: String) -> Result<Imp
 }
 
 #[tauri::command]
-pub fn list_latest_score_rows(
+pub async fn list_latest_score_rows(
     app: AppHandle,
     params: ScoreListParams,
 ) -> Result<ListResult<ScoreRow>, String> {
-    let result = (|| -> Result<ListResult<ScoreRow>, AppError> {
-        let conn = open_connection(&app)?;
-        init_schema(&conn)?;
-        let mut where_clauses: Vec<String> = Vec::new();
-        let mut bind_values: Vec<Value> = Vec::new();
-
-        if let Some(keyword) = params
-            .name_keyword
-            .as_ref()
-            .map(|v| v.trim())
-            .filter(|v| !v.is_empty())
-        {
-            where_clauses.push("student_name LIKE ?".to_string());
-            bind_values.push(Value::Text(format!("%{keyword}%")));
-        }
-        if let Some(class_name) = params
-            .class_name
-            .as_ref()
-            .map(|v| v.trim())
-            .filter(|v| !v.is_empty())
-        {
-            where_clauses.push("class_name LIKE ?".to_string());
-            bind_values.push(Value::Text(format!("%{class_name}%")));
-        }
-        if let Some(grade_name) = params
-            .grade_name
-            .as_ref()
-            .map(|v| v.trim())
-            .filter(|v| !v.is_empty())
-        {
-            where_clauses.push("grade_name = ?".to_string());
-            bind_values.push(Value::Text(grade_name.to_string()));
-        }
-
-        let where_sql = if where_clauses.is_empty() {
-            String::new()
-        } else {
-            format!(" WHERE {}", where_clauses.join(" AND "))
-        };
-        let total_sql = format!("SELECT COUNT(*) FROM latest_student_scores{where_sql}");
-        let total: i64 =
-            conn.query_row(&total_sql, params_from_iter(bind_values.iter()), |row| {
-                row.get(0)
-            })?;
-
-        let page = params.page.unwrap_or(1).max(1);
-        let page_size = params.page_size.unwrap_or(50).clamp(1, 500);
-        let offset = (page - 1) * page_size;
-
-        let mut list_bind_values = bind_values;
-        list_bind_values.push(Value::Integer(page_size));
-        list_bind_values.push(Value::Integer(offset));
-
-        let list_sql = format!(
-            r#"
-            SELECT admission_no, class_name, grade_name, student_name, subject_combination, language, total_score, class_rank, grade_rank, selected_subject_count
-            FROM latest_student_scores
-            {where_sql}
-            ORDER BY grade_name ASC, class_name ASC, class_rank ASC, admission_no ASC
-            LIMIT ? OFFSET ?
-            "#
-        );
-
-        let mut stmt = conn.prepare(&list_sql)?;
-        let rows = stmt.query_map(params_from_iter(list_bind_values.iter()), |row| {
-            Ok(ScoreRow {
-                admission_no: row.get(0)?,
-                class_name: row.get(1)?,
-                grade_name: row.get(2)?,
-                student_name: row.get(3)?,
-                subject_combination: row.get(4)?,
-                language: row.get(5)?,
-                total_score: row.get(6)?,
-                class_rank: row.get(7)?,
-                grade_rank: row.get(8)?,
-                selected_subject_count: row.get(9)?,
-            })
-        })?;
-
-        let mut items = Vec::new();
-        for row in rows {
-            items.push(row?);
-        }
-        Ok(ListResult { items, total })
-    })();
+    let result = async {
+        let db = crate::db::connect(&app).await?;
+        crate::db::repos::score::list(&db, params).await
+    }
+    .await;
     result.map_err(|e| e.to_string())
 }
 
 #[tauri::command]
-pub fn get_score_detail(app: AppHandle, admission_no: String) -> Result<ScoreDetail, String> {
-    let result = (|| -> Result<ScoreDetail, AppError> {
-        let conn = open_connection(&app)?;
-        init_schema(&conn)?;
-        let student = conn
-            .query_row(
-                r#"
-                SELECT admission_no, class_name, grade_name, student_name, subject_combination, language, total_score, class_rank, grade_rank, selected_subject_count
-                FROM latest_student_scores
-                WHERE admission_no = ?1
-                "#,
-                params![admission_no],
-                |row| {
-                    Ok(ScoreDetail {
-                        admission_no: row.get(0)?,
-                        class_name: row.get(1)?,
-                        grade_name: row.get(2)?,
-                        student_name: row.get(3)?,
-                        subject_combination: row.get(4)?,
-                        language: row.get(5)?,
-                        total_score: row.get(6)?,
-                        class_rank: row.get(7)?,
-                        grade_rank: row.get(8)?,
-                        selected_subject_count: row.get(9)?,
-                        subjects: Vec::new(),
-                    })
-                },
-            )
-            .map_err(|_| AppError::new("未找到该成绩记录"))?;
-
-        let mut map: HashMap<Subject, ScoreSubjectItem> = HashMap::new();
-        let mut stmt = conn.prepare(
-            "SELECT subject, score, is_selected, is_absent FROM latest_subject_scores WHERE admission_no = ?1",
-        )?;
-        let rows = stmt.query_map(params![student.admission_no.clone()], |row| {
-            let subject_key: String = row.get(0)?;
-            let score: Option<f64> = row.get(1)?;
-            let is_selected: i64 = row.get(2)?;
-            let is_absent: i64 = row.get(3)?;
-            Ok((subject_key, score, is_selected, is_absent))
-        })?;
-        for row in rows {
-            let (subject_key, score, is_selected, is_absent) = row?;
-            let Some(subject) = Subject::from_key(&subject_key) else {
-                continue;
-            };
-            let state = if is_selected == 0 {
-                ScoreCellState::NotSelected
-            } else if is_absent == 1 {
-                ScoreCellState::Absent
-            } else {
-                ScoreCellState::Scored
-            };
-            map.insert(
-                subject,
-                ScoreSubjectItem {
-                    subject,
-                    score,
-                    state,
-                },
-            );
-        }
-
-        let mut subjects = Vec::new();
-        for (_, subject, _) in SUBJECT_COLUMNS {
-            if let Some(item) = map.get(&subject) {
-                subjects.push(item.clone());
-            } else {
-                subjects.push(ScoreSubjectItem {
-                    subject,
-                    score: None,
-                    state: ScoreCellState::NotSelected,
-                });
-            }
-        }
-        Ok(ScoreDetail {
-            subjects,
-            ..student
-        })
-    })();
+pub async fn get_score_detail(app: AppHandle, admission_no: String) -> Result<ScoreDetail, String> {
+    let result = async {
+        let db = crate::db::connect(&app).await?;
+        crate::db::repos::score::get_detail(&db, &admission_no).await
+    }
+    .await;
     result.map_err(|e| e.to_string())
 }
 
 #[tauri::command]
-pub fn update_score_row(
+pub async fn update_score_row(
     app: AppHandle,
     payload: UpdateScorePayload,
 ) -> Result<SuccessResponse, String> {
-    let result = (|| -> Result<SuccessResponse, AppError> {
-        let mut conn = open_connection(&app)?;
-        init_schema(&conn)?;
-
+    let result: Result<SuccessResponse, AppError> = async {
+        let db = crate::db::connect(&app).await?;
         let admission_no = payload.admission_no.trim().to_string();
         let class_name = payload.class_name.trim().to_string();
         let student_name = payload.student_name.trim().to_string();
@@ -937,12 +672,7 @@ pub fn update_score_row(
             return Err(AppError::new("准考证号、班级、姓名不能为空"));
         }
 
-        let exists: i64 = conn.query_row(
-            "SELECT COUNT(*) FROM latest_student_scores WHERE admission_no = ?1",
-            params![admission_no.clone()],
-            |row| row.get(0),
-        )?;
-        if exists == 0 {
+        if !crate::db::repos::score::exists(&db, &admission_no).await? {
             return Err(AppError::new("未找到要更新的成绩记录"));
         }
 
@@ -983,78 +713,30 @@ pub fn update_score_row(
         }
 
         let grade_name = extract_grade_name(&class_name);
-        let tx = conn.transaction()?;
-        tx.execute(
-            r#"
-            UPDATE latest_student_scores
-            SET class_name = ?1, grade_name = ?2, student_name = ?3, total_score = ?4, selected_subject_count = ?5
-            WHERE admission_no = ?6
-            "#,
-            params![
-                class_name,
-                grade_name,
-                student_name,
-                total_score,
-                selected_subject_count,
-                admission_no.clone()
-            ],
-        )?;
-        tx.execute(
-            "DELETE FROM latest_subject_scores WHERE admission_no = ?1",
-            params![admission_no.clone()],
-        )?;
-        for item in normalized {
-            tx.execute(
-                "INSERT INTO latest_subject_scores (admission_no, subject, score, is_selected, is_absent) VALUES (?1, ?2, ?3, ?4, ?5)",
-                params![
-                    admission_no.clone(),
-                    item.subject.as_key(),
-                    item.score,
-                    !matches!(item.state, ScoreCellState::NotSelected),
-                    matches!(item.state, ScoreCellState::Absent)
-                ],
-            )?;
-        }
-        recompute_ranks_tx(&tx)?;
-        tx.commit()?;
+        crate::db::repos::score::update_student_scores(
+            &db,
+            &admission_no,
+            &class_name,
+            &grade_name,
+            &student_name,
+            total_score,
+            selected_subject_count,
+            &normalized,
+        )
+        .await?;
         Ok(SuccessResponse { success: true })
-    })();
+    }
+    .await;
     result.map_err(|e| e.to_string())
 }
 
 #[tauri::command]
-pub fn get_latest_summary(app: AppHandle) -> Result<LatestSummary, String> {
-    let result = (|| -> Result<LatestSummary, AppError> {
-        let conn = open_connection(&app)?;
-        init_schema(&conn)?;
-        let imported_at = conn
-            .query_row(
-                "SELECT imported_at FROM latest_import_meta WHERE id = 1",
-                [],
-                |row| row.get::<_, String>(0),
-            )
-            .ok();
-        let student_count: i64 =
-            conn.query_row("SELECT COUNT(*) FROM latest_student_scores", [], |row| {
-                row.get(0)
-            })?;
-        let class_count: i64 = conn.query_row(
-            "SELECT COUNT(DISTINCT class_name) FROM latest_student_scores",
-            [],
-            |row| row.get(0),
-        )?;
-        let grade_count: i64 = conn.query_row(
-            "SELECT COUNT(DISTINCT grade_name) FROM latest_student_scores",
-            [],
-            |row| row.get(0),
-        )?;
-        Ok(LatestSummary {
-            imported_at,
-            student_count,
-            class_count,
-            grade_count,
-        })
-    })();
+pub async fn get_latest_summary(app: AppHandle) -> Result<LatestSummary, String> {
+    let result = async {
+        let db = crate::db::connect(&app).await?;
+        crate::db::repos::score::summary(&db).await
+    }
+    .await;
     result.map_err(|e| e.to_string())
 }
 

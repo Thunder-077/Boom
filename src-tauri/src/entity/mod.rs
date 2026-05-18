@@ -17,6 +17,7 @@ pub mod latest_exam_plan_student_allocations;
 pub mod latest_exam_staff_assignments;
 pub mod latest_exam_staff_plan_meta;
 pub mod latest_exam_staff_tasks;
+pub mod latest_import_meta;
 pub mod latest_student_scores;
 pub mod latest_subject_scores;
 pub mod latest_teacher_duty_stats;

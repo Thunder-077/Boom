@@ -3,9 +3,9 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use crate::app_log;
+use crate::db::repos::export_bundle::{ExamRow, SessionInfo, StudentBase};
 use crate::score::{AppError, Subject};
 use chrono::{DateTime, Datelike, NaiveDateTime, Timelike, Utc};
-use rusqlite::params;
 use rust_xlsxwriter::{Color, Format, FormatAlign, FormatBorder, Workbook, Worksheet, XlsxError};
 use serde::Serialize;
 use tauri::{AppHandle, Manager};
@@ -34,33 +34,6 @@ pub struct ExportLatestExamAllocationBundleResult {
 }
 
 #[derive(Debug, Clone)]
-struct SessionInfo {
-    subject_label: &'static str,
-    start_at: Option<String>,
-    end_at: Option<String>,
-    start_ts: Option<i64>,
-}
-
-#[derive(Debug, Clone)]
-struct ExamRow {
-    admission_no: String,
-    student_name: String,
-    class_name: String,
-    subject: Subject,
-    subject_label: &'static str,
-    space_name: String,
-    seat_no: i64,
-}
-
-#[derive(Debug, Clone)]
-struct StudentBase {
-    admission_no: String,
-    student_name: String,
-    class_name: String,
-    class_rank: i64,
-}
-
-#[derive(Debug, Clone)]
 struct TicketExamItem {
     subject_label: &'static str,
     exam_date: String,
@@ -68,15 +41,6 @@ struct TicketExamItem {
     room: String,
     seat: i64,
     start_ts: i64,
-}
-
-fn grade_order_key(grade_name: &str) -> (i32, &str) {
-    match grade_name {
-        "高一" => (1, grade_name),
-        "高二" => (2, grade_name),
-        "高三" => (3, grade_name),
-        _ => (4, grade_name),
-    }
 }
 
 fn class_number(name: &str) -> Option<i64> {
@@ -99,14 +63,6 @@ fn class_number(name: &str) -> Option<i64> {
 
 fn sort_class_like(a: &str, b: &str) -> std::cmp::Ordering {
     class_number(a).cmp(&class_number(b)).then(a.cmp(b))
-}
-
-fn subject_label(subject: Subject) -> &'static str {
-    SUBJECT_EXPORT_ORDER
-        .iter()
-        .find(|(s, _)| *s == subject)
-        .map(|(_, label)| *label)
-        .unwrap_or(subject.as_key())
 }
 
 fn parse_datetime(value: &str) -> Option<NaiveDateTime> {
@@ -200,169 +156,6 @@ fn strip_notice_leading_index(value: &str) -> String {
     }
 
     trimmed[end..].trim_start().to_string()
-}
-
-fn settings_from_db(conn: &rusqlite::Connection) -> Result<(String, Vec<String>), AppError> {
-    conn.query_row(
-        "SELECT exam_title, exam_notices_json FROM exam_allocation_settings WHERE id = 1",
-        [],
-        |row| {
-            let title: String = row.get(0)?;
-            let notices_json: String = row.get(1)?;
-            let notices = serde_json::from_str::<Vec<String>>(&notices_json)
-                .unwrap_or_default()
-                .into_iter()
-                .map(|v| v.trim().to_string())
-                .filter(|v| !v.is_empty())
-                .collect::<Vec<_>>();
-            Ok((title, notices))
-        },
-    )
-    .map_err(|e| AppError::new(format!("读取月考配置失败: {e}")))
-}
-
-fn load_grades(conn: &rusqlite::Connection) -> Result<Vec<String>, AppError> {
-    let mut stmt = conn
-        .prepare("SELECT DISTINCT grade_name FROM latest_exam_plan_sessions")
-        .map_err(AppError::from)?;
-    let rows = stmt
-        .query_map([], |row| row.get::<_, String>(0))
-        .map_err(AppError::from)?;
-    let mut grades = Vec::new();
-    for row in rows {
-        grades.push(row.map_err(AppError::from)?);
-    }
-    grades.sort_by(|a, b| grade_order_key(a).cmp(&grade_order_key(b)));
-    Ok(grades)
-}
-
-fn load_sessions_for_grade(
-    conn: &rusqlite::Connection,
-    grade_name: &str,
-) -> Result<HashMap<Subject, SessionInfo>, AppError> {
-    let mut stmt = conn
-        .prepare(
-            r#"
-            SELECT s.subject, t.start_at, t.end_at
-            FROM latest_exam_plan_sessions s
-            LEFT JOIN exam_session_times t ON t.session_id = s.id
-            WHERE s.grade_name = ?1
-            "#,
-        )
-        .map_err(AppError::from)?;
-    let rows = stmt
-        .query_map(params![grade_name], |row| {
-            Ok((
-                row.get::<_, String>(0)?,
-                row.get::<_, Option<String>>(1)?,
-                row.get::<_, Option<String>>(2)?,
-            ))
-        })
-        .map_err(AppError::from)?;
-
-    let mut map = HashMap::new();
-    for row in rows {
-        let (subject_key, start_at, end_at) = row.map_err(AppError::from)?;
-        let Some(subject) = Subject::from_key(&subject_key) else {
-            continue;
-        };
-        if !SUBJECT_EXPORT_ORDER.iter().any(|(s, _)| *s == subject) {
-            continue;
-        }
-        let start_ts = start_at
-            .as_deref()
-            .and_then(parse_datetime)
-            .map(|dt| dt.and_utc().timestamp_millis());
-        map.insert(
-            subject,
-            SessionInfo {
-                subject_label: subject_label(subject),
-                start_at,
-                end_at,
-                start_ts,
-            },
-        );
-    }
-    Ok(map)
-}
-
-fn load_exam_rows_for_grade(
-    conn: &rusqlite::Connection,
-    grade_name: &str,
-) -> Result<Vec<ExamRow>, AppError> {
-    let mut stmt = conn
-        .prepare(
-            r#"
-            SELECT a.admission_no, a.student_name, a.class_name, s.subject, COALESCE(sp.space_name, ''), COALESCE(a.seat_no, 0)
-            FROM latest_exam_plan_student_allocations a
-            JOIN latest_exam_plan_sessions s ON s.id = a.session_id
-            LEFT JOIN latest_exam_plan_spaces sp ON sp.id = a.space_id
-            WHERE s.grade_name = ?1 AND a.allocation_type = 'exam'
-            "#,
-        )
-        .map_err(AppError::from)?;
-    let rows = stmt
-        .query_map(params![grade_name], |row| {
-            Ok((
-                row.get::<_, String>(0)?,
-                row.get::<_, String>(1)?,
-                row.get::<_, String>(2)?,
-                row.get::<_, String>(3)?,
-                row.get::<_, String>(4)?,
-                row.get::<_, i64>(5)?,
-            ))
-        })
-        .map_err(AppError::from)?;
-
-    let mut list = Vec::new();
-    for row in rows {
-        let (admission_no, student_name, class_name, subject_key, space_name, seat_no) =
-            row.map_err(AppError::from)?;
-        let Some(subject) = Subject::from_key(&subject_key) else {
-            continue;
-        };
-        list.push(ExamRow {
-            admission_no,
-            student_name,
-            class_name,
-            subject,
-            subject_label: subject_label(subject),
-            space_name,
-            seat_no,
-        });
-    }
-    Ok(list)
-}
-
-fn load_students_for_grade(
-    conn: &rusqlite::Connection,
-    grade_name: &str,
-) -> Result<Vec<StudentBase>, AppError> {
-    let mut stmt = conn
-        .prepare(
-            "SELECT admission_no, student_name, class_name, class_rank FROM latest_student_scores WHERE grade_name = ?1",
-        )
-        .map_err(AppError::from)?;
-    let rows = stmt
-        .query_map(params![grade_name], |row| {
-            Ok(StudentBase {
-                admission_no: row.get(0)?,
-                student_name: row.get(1)?,
-                class_name: row.get(2)?,
-                class_rank: row.get(3)?,
-            })
-        })
-        .map_err(AppError::from)?;
-    let mut list = Vec::new();
-    for row in rows {
-        list.push(row.map_err(AppError::from)?);
-    }
-    list.sort_by(|a, b| {
-        sort_class_like(&a.class_name, &b.class_name)
-            .then(a.class_rank.cmp(&b.class_rank))
-            .then(a.admission_no.cmp(&b.admission_no))
-    });
-    Ok(list)
 }
 
 fn write_common_header(
@@ -571,20 +364,19 @@ fn export_batch_dir(root: &Path, exam_title: &str) -> PathBuf {
     }
 }
 
-pub fn generate_export_files<F>(
-    app: &AppHandle,
-    conn: &rusqlite::Connection,
-    mut on_grade_done: F,
-) -> Result<PathBuf, AppError>
+pub fn generate_export_files<F>(app: &AppHandle, mut on_grade_done: F) -> Result<PathBuf, AppError>
 where
     F: FnMut(&str, usize, usize),
 {
-    let (exam_title, exam_notices) = settings_from_db(conn)?;
+    let db = tauri::async_runtime::block_on(crate::db::connect(app))?;
+    let settings = tauri::async_runtime::block_on(crate::db::repos::export_bundle::settings(&db))?;
+    let exam_title = settings.exam_title;
+    let exam_notices = settings.exam_notices;
     if exam_title.trim().is_empty() {
         return Err(AppError::new("未配置考试标题，无法导出"));
     }
 
-    let grades = load_grades(conn)?;
+    let grades = tauri::async_runtime::block_on(crate::db::repos::export_bundle::grades(&db))?;
     if grades.is_empty() {
         return Err(AppError::new("暂无考场分配快照数据，请先执行考场分配"));
     }
@@ -611,9 +403,15 @@ where
         fs::create_dir_all(&ticket_dir)
             .map_err(|e| AppError::new(format!("创建准考证目录失败: {e}")))?;
 
-        let sessions = load_sessions_for_grade(conn, grade)?;
-        let rows = load_exam_rows_for_grade(conn, grade)?;
-        let students = load_students_for_grade(conn, grade)?;
+        let sessions = tauri::async_runtime::block_on(
+            crate::db::repos::export_bundle::sessions_for_grade(&db, grade),
+        )?;
+        let rows = tauri::async_runtime::block_on(
+            crate::db::repos::export_bundle::exam_rows_for_grade(&db, grade),
+        )?;
+        let students = tauri::async_runtime::block_on(
+            crate::db::repos::export_bundle::students_for_grade(&db, grade),
+        )?;
 
         let mut class_group: HashMap<String, Vec<&ExamRow>> = HashMap::new();
         let mut room_group: HashMap<String, Vec<&ExamRow>> = HashMap::new();
@@ -921,8 +719,9 @@ pub fn zip_existing_export_bundle(
 ) -> Result<ExportLatestExamAllocationBundleResult, AppError> {
     let exported_at = Utc::now().to_rfc3339();
     let root = export_root_dir(app)?;
-    let conn = crate::score::open_connection(app)?;
-    let (exam_title, _) = settings_from_db(&conn)?;
+    let db = tauri::async_runtime::block_on(crate::db::connect(app))?;
+    let settings = tauri::async_runtime::block_on(crate::db::repos::export_bundle::settings(&db))?;
+    let exam_title = settings.exam_title;
     let batch_dir = export_batch_dir(&root, &exam_title);
     if !batch_dir.exists() {
         return Err(AppError::new("尚未生成导出文件，请先执行考场分配"));

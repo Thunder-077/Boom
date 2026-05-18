@@ -11,7 +11,7 @@ use tauri::AppHandle;
 use crate::app_log;
 use crate::db::repos::exam_allocation as exam_allocation_repo;
 use crate::export_bundle;
-use crate::score::{self, AppError, ListResult, Subject};
+use crate::score::{AppError, ListResult, Subject};
 
 const DEFAULT_CAPACITY: i64 = 40;
 const DEFAULT_MAX_CAPACITY: i64 = 41;
@@ -1581,8 +1581,7 @@ fn generate_latest_exam_plan_internal(
         0,
     )?;
     pause_after_generation_stage();
-    let conn = score::open_connection(app)?;
-    export_bundle::generate_export_files(&app, &conn, |grade_name, done, total| {
+    export_bundle::generate_export_files(&app, |grade_name, done, total| {
         let percent = 82 + (((done as i64) * 16) / (total as i64).max(1));
         let _ = update_exam_generation_progress(
             &db,

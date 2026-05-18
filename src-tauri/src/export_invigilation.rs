@@ -11,7 +11,7 @@ use serde::Serialize;
 use tauri::{AppHandle, Manager};
 
 use crate::app_log;
-use crate::score::{self, AppError, Subject};
+use crate::score::{AppError, Subject};
 
 const EXPORT_SHEET_NAME: &str = "监考表";
 const ACCOUNTING_SHEET_NAME: &str = "核算";
@@ -28,21 +28,21 @@ pub struct ExportLatestInvigilationScheduleResult {
 }
 
 #[derive(Debug, Clone)]
-struct TaskExportRow {
-    session_id: Option<i64>,
-    space_id: Option<i64>,
-    task_source: String,
-    role: String,
-    grade_name: String,
-    subject: Subject,
-    space_name: String,
-    floor: String,
-    start_at: String,
-    end_at: String,
-    start_ts: i64,
-    duration_minutes: i64,
-    recommended_self_study_topic_label: Option<String>,
-    teacher_name: Option<String>,
+pub(crate) struct TaskExportRow {
+    pub(crate) session_id: Option<i64>,
+    pub(crate) space_id: Option<i64>,
+    pub(crate) task_source: String,
+    pub(crate) role: String,
+    pub(crate) grade_name: String,
+    pub(crate) subject: Subject,
+    pub(crate) space_name: String,
+    pub(crate) floor: String,
+    pub(crate) start_at: String,
+    pub(crate) end_at: String,
+    pub(crate) start_ts: i64,
+    pub(crate) duration_minutes: i64,
+    pub(crate) recommended_self_study_topic_label: Option<String>,
+    pub(crate) teacher_name: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -73,20 +73,20 @@ struct CellValue {
 }
 
 #[derive(Debug, Clone)]
-struct AccountingTeacherRow {
-    teacher_id: i64,
-    teacher_name: String,
-    group_subject: String,
-    is_middle_manager: bool,
+pub(crate) struct AccountingTeacherRow {
+    pub(crate) teacher_id: i64,
+    pub(crate) teacher_name: String,
+    pub(crate) group_subject: String,
+    pub(crate) is_middle_manager: bool,
 }
 
 #[derive(Debug, Clone)]
-struct AccountingConfig {
-    indoor_allowance_per_minute: f64,
-    outdoor_allowance_per_minute: f64,
-    middle_manager_default_enabled: bool,
-    middle_manager_exception_teacher_ids: HashSet<i64>,
-    total_exam_and_self_study_minutes: i64,
+pub(crate) struct AccountingConfig {
+    pub(crate) indoor_allowance_per_minute: f64,
+    pub(crate) outdoor_allowance_per_minute: f64,
+    pub(crate) middle_manager_default_enabled: bool,
+    pub(crate) middle_manager_exception_teacher_ids: HashSet<i64>,
+    pub(crate) total_exam_and_self_study_minutes: i64,
 }
 
 #[derive(Debug, Clone)]
@@ -329,17 +329,6 @@ fn sanitize_file_name_segment(value: &str) -> String {
         .to_string()
 }
 
-fn load_exam_title(conn: &rusqlite::Connection) -> Result<String, AppError> {
-    let title = conn
-        .query_row(
-            "SELECT exam_title FROM exam_allocation_settings WHERE id = 1",
-            [],
-            |row| row.get::<_, String>(0),
-        )
-        .unwrap_or_default();
-    Ok(title)
-}
-
 fn collect_accounting_exam_theme_headers(slots: &[SlotDef]) -> Vec<String> {
     let mut headers = Vec::<String>::new();
     for slot in slots {
@@ -356,20 +345,6 @@ fn collect_accounting_exam_theme_headers(slots: &[SlotDef]) -> Vec<String> {
     headers
 }
 
-fn normalize_subject_group(subject: Subject) -> &'static str {
-    match subject {
-        Subject::Chinese => "语文",
-        Subject::Math => "数学",
-        Subject::English | Subject::Russian | Subject::Japanese => "外语",
-        Subject::History => "历史",
-        Subject::Geography => "地理",
-        Subject::Biology => "生物",
-        Subject::Politics => "思想政治",
-        Subject::Physics => "物理",
-        Subject::Chemistry => "化学",
-    }
-}
-
 fn accounting_group_rank(label: &str) -> i32 {
     match label {
         "语文" => 1,
@@ -383,183 +358,6 @@ fn accounting_group_rank(label: &str) -> i32 {
         "化学" => 9,
         _ => 99,
     }
-}
-
-fn load_teacher_group_subjects(
-    conn: &rusqlite::Connection,
-) -> Result<HashMap<i64, String>, AppError> {
-    let mut stmt = conn.prepare(
-        r#"
-        SELECT teacher_id, subject
-        FROM latest_teacher_assignments_v2
-        ORDER BY teacher_id ASC, id ASC
-        "#,
-    )?;
-    let rows = stmt.query_map([], |row| {
-        Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?))
-    })?;
-    let mut grouped = HashMap::<i64, Vec<String>>::new();
-    for row in rows {
-        let (teacher_id, subject_key) = row?;
-        if let Some(subject) = Subject::from_key(&subject_key) {
-            let label = normalize_subject_group(subject).to_string();
-            let entry = grouped.entry(teacher_id).or_default();
-            if !entry.iter().any(|item| item == &label) {
-                entry.push(label);
-            }
-        }
-    }
-    let mut out = HashMap::new();
-    for (teacher_id, mut labels) in grouped {
-        labels.sort_by(|a, b| {
-            accounting_group_rank(a)
-                .cmp(&accounting_group_rank(b))
-                .then(a.cmp(b))
-        });
-        let label = if labels.is_empty() {
-            "艺体".to_string()
-        } else {
-            labels.join("、")
-        };
-        out.insert(teacher_id, label);
-    }
-    Ok(out)
-}
-
-fn load_accounting_teacher_rows(
-    conn: &rusqlite::Connection,
-) -> Result<Vec<AccountingTeacherRow>, AppError> {
-    let group_subjects = load_teacher_group_subjects(conn)?;
-    let mut stmt = conn.prepare(
-        r#"
-        SELECT
-          teacher_id,
-          teacher_name,
-          is_middle_manager
-        FROM latest_teacher_duty_stats
-        ORDER BY teacher_id ASC
-        "#,
-    )?;
-    let rows = stmt.query_map([], |row| {
-        let teacher_id: i64 = row.get(0)?;
-        Ok(AccountingTeacherRow {
-            teacher_id,
-            teacher_name: row.get(1)?,
-            group_subject: group_subjects
-                .get(&teacher_id)
-                .cloned()
-                .unwrap_or_else(|| "艺体".to_string()),
-            is_middle_manager: row.get::<_, i64>(2)? == 1,
-        })
-    })?;
-    let mut out = Vec::new();
-    for row in rows {
-        out.push(row?);
-    }
-    Ok(out)
-}
-
-fn load_total_exam_minutes(conn: &rusqlite::Connection) -> Result<i64, AppError> {
-    // exam_session_times only stores session_id and timestamps now, so grade_name
-    // must be resolved from latest_exam_plan_sessions before grouping by grade.
-    Ok(conn.query_row(
-        r#"
-        SELECT COALESCE(MAX(grade_total), 0)
-        FROM (
-            SELECT
-                grade_name,
-                SUM(duration_minutes) AS grade_total
-            FROM (
-                SELECT DISTINCT
-                    s.grade_name,
-                    t.start_at,
-                    t.end_at,
-                    CAST(ROUND((julianday(t.end_at) - julianday(t.start_at)) * 24 * 60) AS INTEGER) AS duration_minutes
-                FROM exam_session_times t
-                JOIN latest_exam_plan_sessions s ON s.id = t.session_id
-                WHERE t.start_at IS NOT NULL
-                  AND t.end_at IS NOT NULL
-                  AND t.start_at != ''
-                  AND t.end_at != ''
-            )
-            GROUP BY grade_name
-        )
-        "#,
-        [],
-        |row| row.get(0),
-    )?)
-}
-
-fn load_accounting_config(conn: &rusqlite::Connection) -> Result<AccountingConfig, AppError> {
-    let (
-        indoor_allowance_per_minute,
-        outdoor_allowance_per_minute,
-        middle_manager_default_enabled,
-        exception_ids_json,
-        self_study_date,
-        self_study_start_time,
-        self_study_end_time,
-    ): (f64, f64, i64, String, String, String, String) = conn.query_row(
-        r#"
-        SELECT
-          indoor_allowance_per_minute,
-          outdoor_allowance_per_minute,
-          middle_manager_default_enabled,
-          middle_manager_exception_teacher_ids_json,
-          self_study_date,
-          self_study_start_time,
-          self_study_end_time
-        FROM invigilation_config_settings
-        WHERE id = 1
-        "#,
-        [],
-        |row| {
-            Ok((
-                row.get(0)?,
-                row.get(1)?,
-                row.get(2)?,
-                row.get(3)?,
-                row.get(4)?,
-                row.get(5)?,
-                row.get(6)?,
-            ))
-        },
-    )?;
-
-    let exception_ids = serde_json::from_str::<Vec<i64>>(&exception_ids_json)
-        .unwrap_or_default()
-        .into_iter()
-        .collect::<HashSet<_>>();
-
-    let total_exam_minutes = load_total_exam_minutes(conn)?;
-
-    let total_self_study_minutes = if !self_study_date.trim().is_empty()
-        && !self_study_start_time.trim().is_empty()
-        && !self_study_end_time.trim().is_empty()
-    {
-        let start = format!(
-            "{}T{}",
-            self_study_date.trim(),
-            self_study_start_time.trim()
-        );
-        let end = format!("{}T{}", self_study_date.trim(), self_study_end_time.trim());
-        match (parse_datetime(&start), parse_datetime(&end)) {
-            (Some(start_dt), Some(end_dt)) if end_dt > start_dt => {
-                (end_dt - start_dt).num_minutes()
-            }
-            _ => 0,
-        }
-    } else {
-        0
-    };
-
-    Ok(AccountingConfig {
-        indoor_allowance_per_minute,
-        outdoor_allowance_per_minute,
-        middle_manager_default_enabled: middle_manager_default_enabled == 1,
-        middle_manager_exception_teacher_ids: exception_ids,
-        total_exam_and_self_study_minutes: total_exam_minutes + total_self_study_minutes,
-    })
 }
 
 #[allow(dead_code)]
@@ -579,102 +377,6 @@ fn middle_manager_participates(
     } else {
         is_exception
     }
-}
-
-fn load_export_rows(conn: &rusqlite::Connection) -> Result<Vec<TaskExportRow>, AppError> {
-    let mut stmt = conn.prepare(
-        r#"
-        SELECT
-          t.session_id,
-          t.space_id,
-          t.task_source,
-          t.role,
-          t.grade_name,
-          t.subject,
-          t.space_name,
-          t.floor,
-          t.start_at,
-          t.end_at,
-          t.duration_minutes,
-          t.recommended_self_study_topic_label,
-          a.teacher_name
-        FROM latest_exam_staff_tasks t
-        LEFT JOIN latest_exam_staff_assignments a ON a.task_id = t.id
-        ORDER BY t.start_at ASC, t.id ASC
-        "#,
-    )?;
-    let rows = stmt.query_map([], |row| {
-        let subject_key: String = row.get(5)?;
-        let subject = Subject::from_key(&subject_key).ok_or_else(|| {
-            rusqlite::Error::InvalidColumnType(
-                5,
-                "subject".to_string(),
-                rusqlite::types::Type::Text,
-            )
-        })?;
-        let start_at: String = row.get(8)?;
-        let start_ts = parse_datetime(&start_at)
-            .map(|dt| dt.and_utc().timestamp())
-            .ok_or_else(|| {
-                rusqlite::Error::FromSqlConversionFailure(
-                    8,
-                    rusqlite::types::Type::Text,
-                    Box::new(std::io::Error::new(
-                        std::io::ErrorKind::InvalidData,
-                        format!("无法解析任务开始时间: {start_at}"),
-                    )),
-                )
-            })?;
-        Ok(TaskExportRow {
-            session_id: row.get(0)?,
-            space_id: row.get(1)?,
-            task_source: row.get(2)?,
-            role: row.get(3)?,
-            grade_name: row.get(4)?,
-            subject,
-            space_name: row.get(6)?,
-            floor: row.get(7)?,
-            start_at,
-            end_at: row.get(9)?,
-            start_ts,
-            duration_minutes: row.get(10)?,
-            recommended_self_study_topic_label: row.get(11)?,
-            teacher_name: row.get(12)?,
-        })
-    })?;
-
-    let mut out = Vec::new();
-    for row in rows {
-        out.push(row?);
-    }
-    if out.is_empty() {
-        return Err(AppError::new("暂无监考分配结果，请先执行监考分配"));
-    }
-    Ok(out)
-}
-
-fn load_exam_counts(conn: &rusqlite::Connection) -> Result<HashMap<(i64, i64), i64>, AppError> {
-    let mut stmt = conn.prepare(
-        r#"
-        SELECT session_id, space_id, COUNT(*)
-        FROM latest_exam_plan_student_allocations
-        WHERE allocation_type = 'exam' AND space_id IS NOT NULL
-        GROUP BY session_id, space_id
-        "#,
-    )?;
-    let rows = stmt.query_map([], |row| {
-        Ok((
-            row.get::<_, i64>(0)?,
-            row.get::<_, i64>(1)?,
-            row.get::<_, i64>(2)?,
-        ))
-    })?;
-    let mut out = HashMap::new();
-    for row in rows {
-        let (session_id, space_id, count) = row?;
-        out.insert((session_id, space_id), count);
-    }
-    Ok(out)
 }
 
 fn build_slots(rows: &[TaskExportRow]) -> Result<Vec<SlotDef>, AppError> {
@@ -1700,9 +1402,12 @@ fn build_formats() -> (Format, Format, Format, Format, Format, Format, Format) {
     )
 }
 
-fn build_workbook_from_connection(conn: &rusqlite::Connection) -> Result<Workbook, AppError> {
-    let rows = load_export_rows(&conn)?;
-    let exam_counts = load_exam_counts(&conn)?;
+fn build_workbook_from_data(
+    rows: Vec<TaskExportRow>,
+    exam_counts: HashMap<(i64, i64), i64>,
+    accounting_teacher_rows: Vec<AccountingTeacherRow>,
+    accounting_config: AccountingConfig,
+) -> Result<Workbook, AppError> {
     let mut slots = build_slots(&rows)?;
     let (room_names, room_cells) = collect_room_cells(&rows, &slots, &exam_counts);
     let (floors, floor_cells) = collect_floor_cells(&rows, &slots);
@@ -1722,8 +1427,6 @@ fn build_workbook_from_connection(conn: &rusqlite::Connection) -> Result<Workboo
         slot.teacher_cols = *max_teachers.get(&slot.key).unwrap_or(&1);
     }
 
-    let accounting_teacher_rows = load_accounting_teacher_rows(conn)?;
-    let accounting_config = load_accounting_config(conn)?;
     let accounting_exam_theme_headers = collect_accounting_exam_theme_headers(&slots);
     let accounting_formula_bindings =
         build_accounting_formula_bindings(&rows, &room_names, &floors, &slots)?;
@@ -1831,10 +1534,26 @@ fn save_workbook_to_dir(
 fn export_schedule_internal(
     app: &AppHandle,
 ) -> Result<ExportLatestInvigilationScheduleResult, AppError> {
-    let conn = score::open_connection(app)?;
-    crate::schema::ensure_schema(&conn)?;
-    let workbook = build_workbook_from_connection(&conn)?;
-    let exam_title = load_exam_title(&conn)?;
+    let db = tauri::async_runtime::block_on(crate::db::connect(app))?;
+    let rows = tauri::async_runtime::block_on(
+        crate::db::repos::export_invigilation::task_export_rows(&db),
+    )?;
+    let exam_counts =
+        tauri::async_runtime::block_on(crate::db::repos::export_invigilation::exam_counts(&db))?;
+    let accounting_teacher_rows = tauri::async_runtime::block_on(
+        crate::db::repos::export_invigilation::accounting_teacher_rows(&db),
+    )?;
+    let accounting_config = tauri::async_runtime::block_on(
+        crate::db::repos::export_invigilation::accounting_config(&db),
+    )?;
+    let workbook = build_workbook_from_data(
+        rows,
+        exam_counts,
+        accounting_teacher_rows,
+        accounting_config,
+    )?;
+    let exam_title =
+        tauri::async_runtime::block_on(crate::db::repos::export_invigilation::exam_title(&db))?;
     let output_dir = export_root_dir(app)?;
     save_workbook_to_dir(workbook, &output_dir, &exam_title)
 }
@@ -1856,7 +1575,6 @@ pub fn export_latest_invigilation_schedule(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rusqlite::Connection;
 
     #[test]
     fn test_normalize_room_name_turns_class_into_room() {
@@ -2076,69 +1794,5 @@ mod tests {
             sanitize_file_name_segment(" 2026/03:月考? "),
             "2026_03_月考_"
         );
-    }
-
-    #[test]
-    fn test_load_total_exam_minutes_joins_session_grade_name() {
-        let conn = Connection::open_in_memory().expect("open memory db");
-        conn.execute_batch(
-            r#"
-            CREATE TABLE latest_exam_plan_sessions (
-                id INTEGER PRIMARY KEY,
-                grade_name TEXT NOT NULL,
-                subject TEXT NOT NULL,
-                is_foreign_group INTEGER NOT NULL,
-                foreign_order INTEGER,
-                participant_count INTEGER NOT NULL,
-                exam_room_count INTEGER NOT NULL,
-                self_study_room_count INTEGER NOT NULL
-            );
-            CREATE TABLE exam_session_times (
-                session_id INTEGER PRIMARY KEY,
-                subject TEXT NOT NULL,
-                start_at TEXT NOT NULL,
-                end_at TEXT NOT NULL,
-                updated_at TEXT NOT NULL
-            );
-            INSERT INTO latest_exam_plan_sessions
-                (id, grade_name, subject, is_foreign_group, foreign_order, participant_count, exam_room_count, self_study_room_count)
-            VALUES
-                (1, '高一', 'math', 0, NULL, 100, 4, 0),
-                (2, '高一', 'chinese', 0, NULL, 100, 4, 0),
-                (3, '高二', 'english', 0, NULL, 100, 4, 0);
-            INSERT INTO exam_session_times (session_id, subject, start_at, end_at, updated_at)
-            VALUES
-                (1, 'math', '2026-04-09T08:00', '2026-04-09T10:00', '2026-04-08T08:00:00'),
-                (2, 'chinese', '2026-04-09T10:30', '2026-04-09T12:00', '2026-04-08T08:00:00'),
-                (3, 'english', '2026-04-09T08:00', '2026-04-09T09:00', '2026-04-08T08:00:00');
-            "#,
-        )
-        .expect("seed session time data");
-
-        let total_exam_minutes = load_total_exam_minutes(&conn).expect("load total exam minutes");
-
-        assert_eq!(total_exam_minutes, 210);
-    }
-
-    #[test]
-    #[ignore = "manual integration test against the real sqlite database"]
-    fn test_export_latest_invigilation_schedule_manual() {
-        let db_path = std::env::var("ACADEMIC_REAL_DB_PATH")
-            .expect("ACADEMIC_REAL_DB_PATH must point to scores.sqlite3");
-        let db_path = PathBuf::from(db_path);
-        let conn = Connection::open(&db_path).expect("open real sqlite db");
-        crate::schema::ensure_schema(&conn).expect("ensure schema");
-
-        let workbook = build_workbook_from_connection(&conn).expect("build workbook from real db");
-        let exam_title = load_exam_title(&conn).expect("load exam title");
-        let export_dir = db_path.parent().expect("db parent").join("exports");
-        let result =
-            save_workbook_to_dir(workbook, &export_dir, &exam_title).expect("save real workbook");
-
-        println!(
-            "REAL_DB_EXPORT_INVIGILATION {}",
-            serde_json::to_string(&result).expect("serialize export result")
-        );
-        assert!(PathBuf::from(&result.file_path).is_file());
     }
 }
