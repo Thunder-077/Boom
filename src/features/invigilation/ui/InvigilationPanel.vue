@@ -3835,6 +3835,10 @@ onBeforeUnmount(() => {
   gap: var(--space-sm);
 }
 
+.middle-toolbar .exception-pill {
+  margin-left: auto;
+}
+
 .middle-primary-btn {
   padding: var(--space-sm) var(--space-lg);
   min-height: auto;
