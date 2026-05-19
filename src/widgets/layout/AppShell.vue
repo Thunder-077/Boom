@@ -59,8 +59,8 @@ const emit = defineEmits<{
 }>();
 
 const isSecondaryNavVisible = ref(true);
-const SECONDARY_NAV_WIDTH = 248;
-const SECONDARY_NAV_DURATION_MS = 260;
+const SECONDARY_NAV_WIDTH = 240;
+const SECONDARY_NAV_DURATION_MS = 220;
 
 function handleRailSelect(key: string) {
   if (key === props.activeRail) {
@@ -79,15 +79,14 @@ function onBeforeSecondaryEnter(element: Element) {
   const el = element as HTMLElement;
   el.style.width = "0px";
   el.style.opacity = "0";
-  el.style.transform = "translateX(-10px) scaleX(0.98)";
 }
 
 function onSecondaryEnter(element: Element, done: () => void) {
   const el = element as HTMLElement;
   const animation = el.animate(
     [
-      { width: "0px", opacity: 0, transform: "translateX(-10px) scaleX(0.98)" },
-      { width: `${SECONDARY_NAV_WIDTH}px`, opacity: 1, transform: "translateX(0) scaleX(1)" },
+      { width: "0px", opacity: 0 },
+      { width: `${SECONDARY_NAV_WIDTH}px`, opacity: 1 },
     ],
     {
       duration: SECONDARY_NAV_DURATION_MS,
@@ -102,24 +101,21 @@ function onAfterSecondaryEnter(element: Element) {
   const el = element as HTMLElement;
   el.style.width = "";
   el.style.opacity = "";
-  el.style.transform = "";
 }
 
 function onBeforeSecondaryLeave(element: Element) {
   const el = element as HTMLElement;
   el.style.width = `${el.offsetWidth || SECONDARY_NAV_WIDTH}px`;
   el.style.opacity = "1";
-  el.style.transform = "translateX(0) scaleX(1)";
 }
 
 function onSecondaryLeave(element: Element, done: () => void) {
   const el = element as HTMLElement;
   const fromWidth = el.offsetWidth || SECONDARY_NAV_WIDTH;
-  // Use WAAPI so the sidebar and content area reflow smoothly together during collapse.
   const animation = el.animate(
     [
-      { width: `${fromWidth}px`, opacity: 1, transform: "translateX(0) scaleX(1)" },
-      { width: "0px", opacity: 0, transform: "translateX(-10px) scaleX(0.98)" },
+      { width: `${fromWidth}px`, opacity: 1 },
+      { width: "0px", opacity: 0 },
     ],
     {
       duration: SECONDARY_NAV_DURATION_MS,
@@ -134,7 +130,6 @@ function onAfterSecondaryLeave(element: Element) {
   const el = element as HTMLElement;
   el.style.width = "";
   el.style.opacity = "";
-  el.style.transform = "";
 }
 </script>
 
@@ -144,29 +139,22 @@ function onAfterSecondaryLeave(element: Element) {
   margin: 0;
   min-height: 100%;
   display: flex;
-  gap: 10px;
-  padding: 30px 18px 36px 12px;
+  padding: 24px 24px 32px 0;
   align-items: stretch;
 }
 
 .nav-stack {
   display: flex;
   align-items: stretch;
-  gap: 0;
   flex-shrink: 0;
-  transition: gap 0.22s ease;
-}
-
-.nav-stack.collapsed {
-  gap: 0;
 }
 
 .secondary-nav-wrapper {
   overflow: hidden;
   display: flex;
   min-width: 0;
-  width: 248px;
-  will-change: width, opacity, transform;
+  width: 240px;
+  will-change: width, opacity;
 }
 
 .content-wrap {
@@ -175,22 +163,26 @@ function onAfterSecondaryLeave(element: Element) {
   display: flex;
   flex-direction: column;
   gap: 24px;
+  padding-left: 24px;
 }
 
 @media (max-width: 1280px) {
   .page-shell {
-    padding-inline: 12px;
+    padding: 20px 16px 28px 0;
+  }
+
+  .content-wrap {
+    padding-left: 16px;
   }
 }
 
 @media (max-width: 1100px) {
   .page-shell {
-    gap: 8px;
-    padding: 18px 12px 24px 10px;
+    padding: 16px 12px 24px 0;
   }
 
-  .nav-stack {
-    gap: 0;
+  .content-wrap {
+    padding-left: 12px;
   }
 }
 </style>

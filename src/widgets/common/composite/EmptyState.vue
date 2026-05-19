@@ -2,7 +2,7 @@
   <div class="empty-state">
     <span class="empty-icon material-symbols-rounded" aria-hidden="true">{{ icon }}</span>
     <h4 class="empty-title">{{ title }}</h4>
-    <p class="empty-description">{{ description }}</p>
+    <p v-if="description" class="empty-description">{{ description }}</p>
     <div v-if="$slots.default" class="empty-actions">
       <slot />
     </div>
@@ -25,28 +25,29 @@ withDefaults(
 
 <style scoped>
 .empty-state {
-  min-height: 220px;
-  border: 1px dashed var(--border-strong);
+  min-height: 200px;
+  border: 1px dashed var(--border-default);
   border-radius: var(--radius-md);
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
   gap: var(--space-sm);
-  padding: var(--space-5);
+  padding: var(--space-2xl);
   text-align: center;
 }
 
 .empty-icon {
-  font-size: 28px;
+  font-size: 32px;
   color: var(--text-tertiary);
+  opacity: 0.6;
 }
 
 .empty-title {
   margin: 0;
   color: var(--text-primary);
-  font-size: var(--font-size-xl);
-  font-weight: 700;
+  font-size: var(--font-size-base);
+  font-weight: 600;
 }
 
 .empty-description {
@@ -54,6 +55,7 @@ withDefaults(
   color: var(--text-secondary);
   font-size: var(--font-size-sm);
   line-height: 1.55;
+  max-width: 320px;
 }
 
 .empty-actions {

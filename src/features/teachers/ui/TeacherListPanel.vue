@@ -232,7 +232,7 @@ onUnmounted(() => {
   display: flex;
   flex-direction: column;
   min-height: 0;
-  gap: var(--space-4);
+  gap: var(--space-xl);
   position: relative;
   min-width: 1160px;
 }
@@ -249,8 +249,8 @@ onUnmounted(() => {
 }
 
 .panel.dragging :deep(.toolbar) {
-  border-color: var(--accent-border-strong);
-  background: rgba(var(--accent-rgb), 0.08);
+  border-color: var(--accent-primary);
+  background: var(--accent-softer);
 }
 
 .drag-overlay {
@@ -259,7 +259,7 @@ onUnmounted(() => {
   z-index: 10;
   border-radius: var(--radius-md);
   background: rgba(var(--accent-rgb), 0.08);
-  border: 2px dashed rgba(var(--accent-rgb), 0.34);
+  border: 2px dashed var(--border-strong);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -268,29 +268,29 @@ onUnmounted(() => {
 
 .drag-card {
   min-width: 280px;
-  padding: var(--space-4) var(--space-5);
+  padding: var(--space-xl) var(--space-2xl);
   border-radius: var(--radius-lg);
-  background: var(--surface-panel-strong);
+  background: var(--surface-panel);
   box-shadow: var(--shadow-medium);
   display: flex;
   flex-direction: column;
-  gap: var(--space-2);
+  gap: var(--space-sm);
   text-align: center;
 }
 
 .drag-card strong {
   font-size: var(--font-size-base);
-  color: var(--color-brand);
+  color: var(--accent-primary);
 }
 
 .drag-card span {
   font-size: var(--font-size-sm);
-  color: var(--color-text-muted);
+  color: var(--text-secondary);
 }
 
 .toolbar-fields {
   display: flex;
-  gap: var(--space-3);
+  gap: var(--space-lg);
 }
 
 .toolbar-fields label {
@@ -303,16 +303,16 @@ onUnmounted(() => {
 
 .search-field svg {
   position: absolute;
-  left: var(--space-3);
-  top: var(--space-3);
+  left: var(--space-lg);
+  top: var(--space-lg);
   width: 18px;
   height: 18px;
-  fill: var(--color-text-muted);
+  fill: var(--text-secondary);
 }
 
 .search-field input {
   width: 260px;
-  padding-left: var(--space-7);
+  padding-left: 40px;
 }
 
 .table-scroll {
@@ -329,10 +329,8 @@ onUnmounted(() => {
 
 .teacher-grid-head {
   min-height: 48px;
-  background:
-    linear-gradient(180deg, rgba(var(--accent-rgb), 0.08), rgba(var(--accent-rgb), 0.04)),
-    linear-gradient(90deg, rgba(255, 255, 255, 0.82), rgba(255, 255, 255, 0.94));
-  border-bottom: 1px solid var(--color-border-soft);
+  background: var(--surface-table-stripe);
+  border-bottom: 1px solid var(--border-default);
 }
 
 .teacher-grid-row {
@@ -345,15 +343,15 @@ onUnmounted(() => {
   min-height: inherit;
   display: flex;
   align-items: center;
-  padding: 0 var(--space-4);
+  padding: 0 var(--space-xl);
   font-size: var(--font-size-sm);
-  color: var(--color-text);
+  color: var(--text-primary);
   min-width: 0;
 }
 
 .head {
   font-size: var(--font-size-xs);
-  font-weight: 700;
+  font-weight: 600;
   color: var(--text-secondary);
   letter-spacing: 0.04em;
   text-transform: uppercase;
@@ -369,7 +367,7 @@ onUnmounted(() => {
 
 .remark-col {
   word-break: break-word;
-  color: var(--color-text-muted);
+  color: var(--text-secondary);
 }
 
 .tag-row {
@@ -377,9 +375,9 @@ onUnmounted(() => {
   align-items: center;
   align-content: center;
   flex-wrap: wrap;
-  gap: var(--space-2);
+  gap: var(--space-xs);
   width: 100%;
-  padding: var(--space-2) 0;
+  padding: var(--space-xs) 0;
 }
 
 .row-alt {
@@ -387,6 +385,6 @@ onUnmounted(() => {
 }
 
 .import-status {
-  margin: calc(-1 * var(--space-2)) var(--space-1) 0;
+  margin: calc(-1 * var(--space-xs)) var(--space-xs) 0;
 }
 </style>

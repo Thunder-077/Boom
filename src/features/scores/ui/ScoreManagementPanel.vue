@@ -347,7 +347,7 @@ onUnmounted(() => {
   display: flex;
   flex-direction: column;
   min-height: 0;
-  gap: 22px;
+  gap: var(--space-lg);
   position: relative;
   min-width: 1220px;
 }
@@ -364,17 +364,17 @@ onUnmounted(() => {
 }
 
 .panel.dragging :deep(.toolbar) {
-  border-color: var(--accent-border-strong);
-  background: rgba(var(--accent-rgb), 0.08);
+  border-color: var(--accent-primary);
+  background: var(--accent-softer);
 }
 
 .drag-overlay {
   position: absolute;
   inset: 0;
   z-index: 10;
-  border-radius: var(--radius-xl);
+  border-radius: var(--radius-lg);
   background: rgba(var(--accent-rgb), 0.08);
-  border: 2px dashed rgba(var(--accent-rgb), 0.34);
+  border: 2px dashed var(--border-strong);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -383,9 +383,9 @@ onUnmounted(() => {
 
 .drag-card {
   min-width: 280px;
-  padding: var(--space-3) var(--space-4);
-  border-radius: var(--space-4);
-  background: var(--surface-panel-strong);
+  padding: var(--space-xl) var(--space-2xl);
+  border-radius: var(--radius-lg);
+  background: var(--surface-panel);
   box-shadow: var(--shadow-medium);
   display: flex;
   flex-direction: column;
@@ -395,12 +395,12 @@ onUnmounted(() => {
 
 .drag-card strong {
   font-size: var(--font-size-lg);
-  color: var(--color-brand);
+  color: var(--accent-primary);
 }
 
 .drag-card span {
   font-size: var(--font-size-sm);
-  color: var(--color-text-muted);
+  color: var(--text-secondary);
 }
 
 .toolbar-fields {
@@ -409,7 +409,6 @@ onUnmounted(() => {
   gap: var(--space-md);
 }
 
-/* Filter fields – matches .pen scoreFilter spec */
 .filter-search {
   position: relative;
   display: inline-flex;
@@ -417,18 +416,14 @@ onUnmounted(() => {
   width: 220px;
   height: 42px;
   padding: 0 var(--space-lg);
-  border: 1px solid var(--color-border-soft);
+  border: 1px solid var(--border-default);
   border-radius: var(--radius-sm);
   background: var(--surface-input);
-}
-
-/* Search */
-.filter-search {
   gap: 10px;
 }
 
 .filter-search-icon {
-  color: var(--color-text-muted);
+  color: var(--text-secondary);
   font-size: var(--font-size-xl);
   font-family: "Material Symbols Rounded";
   flex-shrink: 0;
@@ -438,19 +433,19 @@ onUnmounted(() => {
   flex: 1;
   border: none;
   background: transparent;
-  color: var(--color-text);
+  color: var(--text-primary);
   font-size: var(--font-size-base);
   outline: none;
   min-width: 0;
 }
 
 .filter-search input::placeholder {
-  color: var(--color-text-muted);
+  color: var(--text-tertiary);
 }
 
 .filter-search:focus-within {
-  border-color: rgba(var(--accent-rgb), 0.3);
-  box-shadow: 0 0 0 4px var(--accent-focus-ring);
+  border-color: rgba(var(--accent-rgb), 0.5);
+  box-shadow: 0 0 0 3px var(--accent-focus-ring);
 }
 
 .score-table tbody tr {
@@ -466,25 +461,25 @@ onUnmounted(() => {
 .score-cell {
   font-size: var(--font-size-2xl);
   font-weight: 700;
-  color: var(--accent-primary-strong);
+  color: var(--accent-primary);
   font-family: var(--font-mono);
 }
 
 .link-cell {
-  color: var(--color-brand);
+  color: var(--accent-primary);
 }
 
 .link-btn {
   border: 0;
   background: transparent;
-  color: var(--color-brand);
+  color: var(--accent-primary);
   cursor: pointer;
   font-size: 14px;
 }
 
 .sep {
   margin: 0 6px;
-  color: var(--color-text-muted);
+  color: var(--text-tertiary);
 }
 
 .emphasis {
@@ -492,21 +487,20 @@ onUnmounted(() => {
 }
 
 .row-alt {
-  background: var(--surface-elevated);
+  background: var(--surface-table-stripe);
 }
 
-/* Pagination */
 .pagination-row {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: var(--space-3) var(--space-4);
+  padding: var(--space-lg) var(--space-xl);
   border-top: 1px solid var(--border-default);
   background: var(--surface-panel);
 }
 
 .page-meta {
-  color: var(--color-text-muted);
+  color: var(--text-secondary);
   font-size: 13px;
 }
 
@@ -520,17 +514,17 @@ onUnmounted(() => {
   height: 32px;
   padding: 0 var(--space-sm);
   border-radius: var(--radius-xs);
-  border: 1px solid var(--color-border-soft);
-  background: var(--surface-panel-strong);
+  border: 1px solid var(--border-default);
+  background: var(--surface-panel);
   cursor: pointer;
   color: var(--text-secondary);
   font-size: 13px;
-  transition: var(--transition-base);
+  transition: var(--transition-base) var(--transition-ease);
 }
 
 .page-btn:hover:not(:disabled) {
-  background: rgba(var(--accent-rgb), 0.1);
-  border-color: var(--accent-border-strong);
+  background: var(--accent-soft);
+  border-color: var(--accent-primary);
   color: var(--accent-primary);
 }
 
@@ -559,11 +553,11 @@ onUnmounted(() => {
   width: 780px;
   max-height: 86vh;
   overflow: auto;
-  padding: var(--space-4);
+  padding: var(--space-xl);
   display: flex;
   flex-direction: column;
-  gap: var(--space-3);
-  border-radius: var(--radius-xl);
+  gap: var(--space-lg);
+  border-radius: var(--radius-lg);
 }
 
 .detail-head {
@@ -574,7 +568,7 @@ onUnmounted(() => {
 
 .detail-head h3 {
   margin: 0;
-  font-size: var(--font-size-2xl);
+  font-size: var(--font-size-title-sm);
   font-weight: 700;
 }
 
@@ -584,14 +578,14 @@ onUnmounted(() => {
   font-size: 24px;
   line-height: 1;
   cursor: pointer;
-  color: var(--color-text-muted);
+  color: var(--text-secondary);
   width: 32px;
   height: 32px;
   border-radius: var(--radius-xs);
 }
 
 .close-btn:hover {
-  background: rgba(var(--accent-rgb), 0.08);
+  background: var(--accent-softer);
 }
 
 .detail-meta {
@@ -608,11 +602,11 @@ onUnmounted(() => {
 
 .meta-field span {
   font-size: var(--font-size-xs);
-  color: var(--color-text-muted);
+  color: var(--text-secondary);
 }
 
 .subject-list {
-  border: 1px solid var(--color-border-soft);
+  border: 1px solid var(--border-default);
   border-radius: var(--radius-sm);
   padding: var(--space-md);
   display: grid;
@@ -642,12 +636,11 @@ onUnmounted(() => {
 
 .detail-loading,
 .detail-error {
-  color: var(--color-text-muted);
+  color: var(--text-secondary);
   font-size: 14px;
 }
 
 .import-status {
-  margin: -10px 4px 0;
+  margin: calc(-1 * var(--space-xs)) var(--space-xs) 0;
 }
-
 </style>

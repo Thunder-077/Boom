@@ -2084,7 +2084,7 @@ onBeforeUnmount(() => {
 .display-field,
 .summary-chip,
 .summary-box {
-  border: 1px solid var(--color-border-soft);
+  border: 1px solid var(--border-default);
   border-radius: var(--radius-md);
   background: color-mix(in srgb, var(--surface-panel) 84%, white);
   padding: var(--space-md) var(--space-md);
@@ -2114,7 +2114,7 @@ onBeforeUnmount(() => {
 .summary-label,
 .card-note,
 .page-meta {
-  color: var(--color-text-muted);
+  color: var(--text-secondary);
   font-size: var(--font-size-sm);
 }
 .warning-text {
@@ -2187,9 +2187,9 @@ onBeforeUnmount(() => {
 .framed-input {
   min-height: 40px;
   padding: 0 var(--space-md);
-  border: 1px solid var(--color-border-soft);
+  border: 1px solid var(--border-default);
   border-radius: var(--radius-sm);
-  background: var(--surface-panel-strong);
+  background: var(--surface-panel);
 }
 
 .segment-wrap {
@@ -2199,7 +2199,7 @@ onBeforeUnmount(() => {
   padding: var(--space-xs);
   background: color-mix(in srgb, var(--surface-panel) 76%, white);
   border-radius: var(--radius-md);
-  border: 1px solid var(--color-border-soft);
+  border: 1px solid var(--border-default);
 }
 
 .segment-btn {
@@ -2432,7 +2432,7 @@ onBeforeUnmount(() => {
 }
 
 .custom-rule-summary {
-  color: var(--color-text-muted);
+  color: var(--text-secondary);
   font-size: var(--font-size-sm);
 }
 
@@ -2449,7 +2449,7 @@ onBeforeUnmount(() => {
   gap: var(--space-lg);
   padding: var(--space-lg) 16px;
   border-radius: var(--radius-md);
-  border: 1px solid var(--color-border-soft);
+  border: 1px solid var(--border-default);
   background: color-mix(in srgb, var(--surface-panel) 84%, white);
 }
 
@@ -2466,7 +2466,7 @@ onBeforeUnmount(() => {
 }
 
 .compact-rule-task {
-  color: var(--color-text-muted);
+  color: var(--text-secondary);
   font-size: var(--font-size-sm);
 }
 
@@ -2495,9 +2495,9 @@ onBeforeUnmount(() => {
   padding: 0 var(--space-sm);
   border-radius: var(--radius-pill);
   font-size: var(--font-size-xs);
-  border: 1px solid var(--color-border-soft);
+  border: 1px solid var(--border-default);
   background: var(--surface-panel);
-  color: var(--color-text-muted);
+  color: var(--text-secondary);
 }
 
 .option-grid {
@@ -2512,7 +2512,7 @@ onBeforeUnmount(() => {
   align-items: flex-start;
   gap: var(--space-md);
   padding: var(--space-lg) 16px;
-  border: 1px solid color-mix(in srgb, var(--color-border-soft) 82%, var(--accent-border-soft));
+  border: 1px solid var(--border-default);
   border-radius: var(--radius-md);
   background: color-mix(in srgb, var(--surface-panel) 82%, var(--accent-surface-soft));
 }
@@ -2530,7 +2530,7 @@ onBeforeUnmount(() => {
 }
 
 .selection-toolbar-copy span {
-  color: var(--color-text-muted);
+  color: var(--text-secondary);
   font-size: var(--font-size-xs);
   line-height: 1.5;
 }
@@ -2546,7 +2546,7 @@ onBeforeUnmount(() => {
 .toolbar-toggle-btn {
   min-height: 36px;
   padding: 0 14px;
-  border: 1px solid color-mix(in srgb, var(--accent-border-soft) 70%, var(--color-border-soft));
+  border: 1px solid var(--border-default);
   border-radius: var(--radius-pill);
   background: color-mix(in srgb, var(--surface-panel) 78%, white);
   color: var(--accent-text);
@@ -2568,7 +2568,7 @@ onBeforeUnmount(() => {
 }
 
 .toolbar-selection-state {
-  color: var(--color-text-muted);
+  color: var(--text-secondary);
   font-size: var(--font-size-sm);
   white-space: nowrap;
 }
@@ -2594,9 +2594,9 @@ onBeforeUnmount(() => {
   min-width: 220px;
   min-height: 38px;
   padding: 0 var(--space-md);
-  border: 1px solid var(--color-border-soft);
+  border: 1px solid var(--border-default);
   border-radius: var(--radius-sm);
-  background: var(--surface-panel-strong);
+  background: var(--surface-panel);
   color: var(--color-text);
 }
 
@@ -2625,7 +2625,7 @@ onBeforeUnmount(() => {
   min-height: 48px;
   padding: var(--space-md) var(--space-lg);
   border-radius: var(--radius-sm);
-  border: 1px solid var(--color-border-soft);
+  border: 1px solid var(--border-default);
   background: var(--surface-panel);
 }
 
@@ -2664,7 +2664,7 @@ onBeforeUnmount(() => {
 
 .target-copy small {
   display: block;
-  color: var(--color-text-muted);
+  color: var(--text-secondary);
   font-size: var(--font-size-xs);
   line-height: 1.45;
   white-space: normal;
@@ -2682,7 +2682,7 @@ onBeforeUnmount(() => {
 
 .time-scope-datetime {
   font-size: var(--font-size-sm);
-  color: var(--color-text-muted);
+  color: var(--text-secondary);
 }
 
 .target-option-copy {
@@ -2697,7 +2697,7 @@ onBeforeUnmount(() => {
 
 .target-option-subtitle {
   font-size: var(--font-size-sm);
-  color: var(--color-text-muted);
+  color: var(--text-secondary);
   line-height: 1.45;
   white-space: normal;
 }
@@ -2709,13 +2709,13 @@ onBeforeUnmount(() => {
   gap: var(--space-sm);
   padding: var(--space-md) var(--space-lg);
   border-radius: var(--radius-sm);
-  border: 1px solid var(--color-border-soft);
+  border: 1px solid var(--border-default);
   background: var(--surface-panel);
 }
 
 .custom-rule-footer {
   padding: var(--space-lg) var(--space-xl);
-  border-top: 1px solid var(--color-border-soft);
+  border-top: 1px solid var(--border-default);
   background: var(--surface-default);
 }
 
@@ -2731,9 +2731,9 @@ onBeforeUnmount(() => {
   align-items: center;
   padding: var(--space-sm) var(--space-md);
   border-radius: var(--radius-md);
-  border: 1px dashed color-mix(in srgb, var(--color-border-soft) 86%, var(--accent-border-soft));
+  border: 1px dashed var(--border-default);
   background: color-mix(in srgb, var(--surface-panel) 82%, white);
-  color: var(--color-text-muted);
+  color: var(--text-secondary);
   font-size: var(--font-size-sm);
 }
 
@@ -2910,8 +2910,8 @@ onBeforeUnmount(() => {
 .search-bar {
   min-height: 42px;
   border-radius: var(--radius-sm);
-  border: 1px solid var(--color-border-soft);
-  background: var(--surface-panel-strong);
+  border: 1px solid var(--border-default);
+  background: var(--surface-panel);
 }
 
 .fluent-input {
@@ -2936,7 +2936,7 @@ onBeforeUnmount(() => {
 .subject-menu {
   position: absolute;
   padding: var(--space-xs);
-  border: 1px solid var(--color-border-soft);
+  border: 1px solid var(--border-default);
   border-radius: var(--radius-sm);
   background: var(--surface-input-strong);
   box-shadow: var(--shadow-strong);
@@ -2975,7 +2975,7 @@ onBeforeUnmount(() => {
 
 .menu-empty {
   padding: var(--space-sm) var(--space-md);
-  color: var(--color-text-muted);
+  color: var(--text-secondary);
   font-size: var(--font-size-sm);
 }
 
@@ -2997,7 +2997,7 @@ onBeforeUnmount(() => {
 }
 
 .class-table-row {
-  border: 1px solid var(--color-border-soft);
+  border: 1px solid var(--border-default);
   background: color-mix(in srgb, var(--surface-panel) 86%, white);
 }
 
@@ -3013,7 +3013,7 @@ onBeforeUnmount(() => {
 
 .subject-badge {
   justify-self: start;
-  border: 1px solid var(--color-border-soft);
+  border: 1px solid var(--border-default);
   background: var(--surface-elevated);
   color: var(--text-primary);
 }
@@ -3069,7 +3069,7 @@ onBeforeUnmount(() => {
   min-height: 40px;
   border-radius: var(--radius-sm);
   border: 1px solid var(--accent-border-soft);
-  background: var(--surface-panel-strong);
+  background: var(--surface-panel);
   color: var(--text-secondary);
   font-size: var(--font-size-base);
   font-weight: 700;
@@ -3106,8 +3106,8 @@ onBeforeUnmount(() => {
   width: min(560px, calc(100vw - 24px));
   padding: var(--space-2xl);
   border-radius: var(--radius-lg);
-  border: 1px solid color-mix(in srgb, var(--color-border-soft) 84%, white);
-  background: var(--surface-panel-strong);
+  border: 1px solid var(--border-default);
+  background: var(--surface-panel);
   box-shadow: var(--shadow-strong);
   z-index: 999;
 }
@@ -3115,7 +3115,7 @@ onBeforeUnmount(() => {
 .soft-panel {
   padding: var(--space-xl);
   border-radius: var(--radius-xl, 24px);
-  border: 1px solid var(--color-border-soft);
+  border: 1px solid var(--border-default);
   background: color-mix(in srgb, var(--surface-panel) 84%, white);
 }
 
@@ -3137,13 +3137,13 @@ onBeforeUnmount(() => {
 .section-header p,
 .drawer-footer p {
   margin: 0;
-  color: var(--color-text-muted);
+  color: var(--text-secondary);
   font-size: var(--font-size-xs);
 }
 
 .drawer-note {
   margin: 0;
-  color: var(--color-text-muted);
+  color: var(--text-secondary);
   font-size: var(--font-size-xs);
   line-height: 1.35;
 }
@@ -3253,7 +3253,7 @@ onBeforeUnmount(() => {
 
 .solver-summary {
   margin: 0;
-  color: var(--color-text-muted);
+  color: var(--text-secondary);
   font-size: var(--font-size-xs);
   line-height: 1.4;
 }
@@ -3268,7 +3268,7 @@ onBeforeUnmount(() => {
   gap: var(--space-md);
   padding: var(--space-md) var(--space-lg);
   border-radius: var(--radius-md);
-  border: 1px solid var(--color-border-soft);
+  border: 1px solid var(--border-default);
   background: var(--surface-panel);
   font-size: var(--font-size-base);
   line-height: 1.6;
@@ -3310,7 +3310,7 @@ onBeforeUnmount(() => {
   padding: 0;
   border: 0;
   background: transparent;
-  color: var(--color-brand);
+  color: var(--accent-primary);
   font: inherit;
   font-weight: 700;
   text-decoration: underline;
@@ -3329,7 +3329,7 @@ onBeforeUnmount(() => {
   align-items: center;
   justify-content: space-between;
   gap: var(--space-sm);
-  color: var(--color-text-muted);
+  color: var(--text-secondary);
   font-size: var(--font-size-xs);
 }
 
@@ -3370,7 +3370,7 @@ onBeforeUnmount(() => {
   min-height: auto;
   padding: var(--space-sm) var(--space-md);
   border-radius: var(--radius-sm);
-  border: 1px solid var(--color-border-soft);
+  border: 1px solid var(--border-default);
   background: var(--surface-table-content);
   color: var(--text-secondary);
   font-size: var(--font-size-sm);

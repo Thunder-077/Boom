@@ -96,39 +96,39 @@ function goToNextPage() {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: var(--space-3) var(--space-4);
+  padding: var(--space-md) var(--space-lg);
   border-top: 1px solid var(--border-default);
-  background: var(--surface-panel);
 }
 
 .pagination-info {
-  color: var(--text-secondary);
+  color: var(--text-tertiary);
   font-size: var(--font-size-sm);
 }
 
 .pagination-actions {
   display: flex;
   align-items: center;
-  gap: var(--space-sm);
+  gap: var(--space-xs);
 }
 
 .page-btn {
-  min-width: 32px;
-  height: 32px;
+  min-width: 30px;
+  height: 30px;
   padding: 0 var(--space-sm);
-  border-radius: var(--radius-xs);
-  border: 1px solid var(--border-default);
-  background: var(--surface-panel-strong);
+  border-radius: var(--radius-sm);
+  border: 1px solid transparent;
+  background: transparent;
   cursor: pointer;
   color: var(--text-secondary);
   font-size: var(--font-size-sm);
   font-family: var(--font-ui);
-  transition: all var(--transition-base) var(--transition-ease);
+  transition:
+    background-color var(--transition-base) var(--transition-ease),
+    color var(--transition-base) var(--transition-ease);
 }
 
 .page-btn:hover:not(.active) {
   background: var(--accent-fill-soft);
-  border-color: var(--accent-border-strong);
   color: var(--accent-primary);
 }
 
@@ -136,6 +136,7 @@ function goToNextPage() {
   background: var(--accent-primary);
   color: var(--color-on-primary);
   border-color: var(--accent-primary);
+  font-weight: 600;
 }
 
 .page-btn:disabled {

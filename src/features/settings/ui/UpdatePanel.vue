@@ -74,8 +74,8 @@ async function handleInstall() {
 .settings-card {
   display: flex;
   flex-direction: column;
-  gap: 18px;
-  padding: 20px;
+  gap: var(--space-lg);
+  padding: var(--space-xl);
   border-radius: var(--radius-card-large);
   background: var(--surface-nav-panel);
 }
@@ -84,48 +84,48 @@ async function handleInstall() {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
-  gap: 16px;
+  gap: var(--space-md);
 }
 
 .section-kicker {
   margin: 0;
   color: var(--text-tertiary);
-  font-size: 11px;
-  font-weight: 700;
+  font-size: var(--font-size-xs);
+  font-weight: 600;
   letter-spacing: 0.08em;
   text-transform: uppercase;
 }
 
 .settings-head h3 {
-  margin: 6px 0 8px;
-  font-size: 22px;
-  font-weight: 700;
+  margin: var(--space-sm) 0 var(--space-xs);
+  font-size: var(--font-size-title-md);
+  font-weight: 600;
   letter-spacing: -0.02em;
 }
 
 .settings-head p {
   margin: 0;
   color: var(--text-secondary);
-  font-size: 13px;
+  font-size: var(--font-size-sm);
   line-height: 1.55;
 }
 
 .settings-head .current-version {
   color: var(--text-primary);
   font-weight: 600;
-  font-size: 14px;
-  margin-top: 8px;
+  font-size: var(--font-size-base);
+  margin-top: var(--space-sm);
 }
 
 .theme-pill {
   display: inline-flex;
   align-items: center;
   min-height: 28px;
-  padding: 6px 12px;
-  border-radius: 999px;
-  font-size: 12px;
-  font-weight: 700;
-  background: rgba(var(--accent-rgb), 0.12);
+  padding: var(--space-sm) var(--space-md);
+  border-radius: var(--radius-pill);
+  font-size: var(--font-size-sm);
+  font-weight: 600;
+  background: var(--accent-soft);
   color: var(--accent-primary);
 }
 
@@ -141,20 +141,20 @@ async function handleInstall() {
 
 .update-actions {
   display: flex;
-  gap: 10px;
+  gap: var(--space-md);
 }
 
 .action-btn {
   display: inline-flex;
   align-items: center;
-  gap: 8px;
-  padding: 10px 18px;
+  gap: var(--space-sm);
+  padding: var(--space-md) var(--space-lg);
   border: none;
-  border-radius: 12px;
-  font-size: 14px;
+  border-radius: var(--radius-sm);
+  font-size: var(--font-size-base);
   font-weight: 600;
   cursor: pointer;
-  transition: opacity 0.15s ease;
+  transition: opacity var(--transition-base) var(--transition-ease);
 }
 
 .action-btn.primary {
@@ -172,34 +172,34 @@ async function handleInstall() {
 }
 
 .action-btn .material-symbols-rounded {
-  font-size: 18px;
+  font-size: var(--font-size-2xl);
 }
 
 .update-available {
   display: flex;
   flex-direction: column;
-  gap: 14px;
+  gap: var(--space-md);
 }
 
 .update-info {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: var(--space-sm);
 }
 
 .update-info h4 {
   margin: 0;
-  font-size: 16px;
-  font-weight: 700;
+  font-size: var(--font-size-xl);
+  font-weight: 600;
 }
 
 .update-body {
   margin: 0;
-  padding: 12px;
-  border-radius: 12px;
+  padding: var(--space-md);
+  border-radius: var(--radius-md);
   background: var(--surface-panel);
   color: var(--text-secondary);
-  font-size: 13px;
+  font-size: var(--font-size-sm);
   line-height: 1.6;
   white-space: pre-wrap;
   word-break: break-word;
@@ -208,27 +208,27 @@ async function handleInstall() {
 .update-downloading {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: var(--space-md);
 }
 
 .progress-bar {
   height: 8px;
-  border-radius: 4px;
+  border-radius: var(--radius-xs);
   background: var(--surface-panel);
   overflow: hidden;
 }
 
 .progress-fill {
   height: 100%;
-  border-radius: 4px;
+  border-radius: var(--radius-xs);
   background: var(--accent-primary);
-  transition: width 0.2s ease;
+  transition: width var(--transition-slow) var(--transition-ease);
 }
 
 .update-downloading p,
 .update-ready p {
   margin: 0;
   color: var(--text-secondary);
-  font-size: 13px;
+  font-size: var(--font-size-sm);
 }
 </style>

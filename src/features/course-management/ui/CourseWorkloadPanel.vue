@@ -295,7 +295,7 @@ onMounted(async () => {
 }
 
 .control-field > span {
-  color: var(--color-text-muted);
+  color: var(--text-secondary);
   font-size: var(--font-size-xs);
 }
 
@@ -303,7 +303,7 @@ onMounted(async () => {
   width: 100%;
   height: 42px;
   box-sizing: border-box;
-  border: 1px solid var(--color-border-soft);
+  border: 1px solid var(--border-default);
   border-radius: var(--radius-sm);
   background: var(--surface-panel);
   color: var(--color-text);
@@ -378,7 +378,7 @@ onMounted(async () => {
 
 .stat-cell span {
   display: block;
-  color: var(--color-text-muted);
+  color: var(--text-secondary);
   font-size: var(--font-size-xs);
 }
 
@@ -444,7 +444,7 @@ onMounted(async () => {
 .empty-cell {
   height: 160px;
   text-align: center !important;
-  color: var(--color-text-muted);
+  color: var(--text-secondary);
   cursor: default;
 }
 </style>

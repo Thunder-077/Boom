@@ -17,15 +17,8 @@ body {
   font-family: var(--font-ui);
   color: var(--text-primary);
   background-color: var(--surface-page);
-  background-image:
-    radial-gradient(circle at top left, var(--page-glow-left), transparent 26%),
-    radial-gradient(circle at 88% 12%, var(--page-glow-right), transparent 22%),
-    linear-gradient(180deg, var(--page-gradient-top) 0%, var(--surface-page) 38%, var(--surface-page-accent) 100%);
-  /* Stable rendering in desktop WebView: avoid fixed background re-composition on hover/mouse move. */
-  background-attachment: scroll;
 }
 
-/* Material Symbols 使用 ligature 文本映射图标，需全局统一字体声明。 */
 .material-symbols-rounded {
   font-family: "Material Symbols Rounded";
   font-weight: normal;
@@ -43,18 +36,6 @@ body {
   -webkit-font-feature-settings: "liga";
 }
 
-body::before {
-  content: "";
-  position: fixed;
-  inset: 0;
-  pointer-events: none;
-  background-image: linear-gradient(rgba(255, 255, 255, 0.24) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(255, 255, 255, 0.24) 1px, transparent 1px);
-  background-size: 40px 40px;
-  /* mask-image is expensive in some GPU/driver combos and may cause intermittent flashing. */
-  opacity: 0.24;
-}
-
 button,
 input,
 select,
@@ -63,8 +44,8 @@ textarea {
 }
 
 ::-webkit-scrollbar {
-  width: 8px;
-  height: 8px;
+  width: 6px;
+  height: 6px;
 }
 
 ::-webkit-scrollbar-track {
@@ -83,27 +64,15 @@ textarea {
 .card-shell {
   position: relative;
   border-radius: var(--radius-card);
-  border: 1px solid var(--color-card-line);
+  border: 1px solid var(--border-default);
   background: var(--surface-panel);
-  box-shadow: var(--shadow-soft);
   transition:
     border-color 0.2s ease,
-    box-shadow 0.2s ease,
-    background-color 0.2s ease;
-}
-
-.card-shell::before {
-  content: "";
-  position: absolute;
-  inset: 0;
-  border-radius: inherit;
-  border: 1px solid var(--color-card-highlight);
-  pointer-events: none;
+    box-shadow 0.2s ease;
 }
 
 .card-shell:hover {
   border-color: var(--border-strong);
-  box-shadow: var(--shadow-medium);
 }
 
 .glass-field,
@@ -112,33 +81,31 @@ textarea {
   background: var(--surface-input);
   color: var(--text-primary);
   transition:
-    border-color 0.18s ease,
-    box-shadow 0.18s ease,
-    background-color 0.18s ease;
+    border-color 0.15s ease,
+    box-shadow 0.15s ease;
 }
 
 .glass-field {
-  min-height: 44px;
+  min-height: 40px;
   border-radius: var(--radius-sm);
-  padding: 0 14px;
+  padding: 0 12px;
   font-size: var(--font-size-body);
 }
 
 .glass-area {
-  min-height: 132px;
-  border-radius: 18px;
-  padding: 12px 14px;
+  min-height: 120px;
+  border-radius: var(--radius-md);
+  padding: 12px;
   font-size: var(--font-size-body);
-  line-height: 1.5;
+  line-height: 1.6;
   resize: none;
   overflow-x: hidden;
   overflow-y: auto;
-  /* 为纵向滚动条预留槽位，避免滚动条视觉上挤出圆角边框。 */
   scrollbar-gutter: stable;
 }
 
 .glass-area::-webkit-scrollbar {
-  width: 8px;
+  width: 6px;
 }
 
 .glass-area::-webkit-scrollbar-track {
@@ -163,48 +130,41 @@ textarea {
 .glass-field:hover,
 .glass-area:hover {
   border-color: var(--border-strong);
-  background: var(--surface-panel-strong);
 }
 
 .glass-field:focus,
 .glass-area:focus {
   outline: none;
-  border-color: rgba(var(--accent-rgb), 0.42);
-  background: var(--surface-input-strong);
-  box-shadow: 0 0 0 4px var(--accent-focus-ring);
+  border-color: rgba(var(--accent-rgb), 0.5);
+  box-shadow: 0 0 0 3px var(--accent-focus-ring);
 }
 
 .primary-btn,
 .secondary-btn {
-  min-height: 42px;
-  padding: 0 18px;
-  border-radius: 14px;
+  min-height: 36px;
+  padding: 0 16px;
+  border-radius: var(--radius-sm);
   font-size: 14px;
   font-weight: 600;
   cursor: pointer;
   transition:
-    transform 0.18s ease,
-    box-shadow 0.18s ease,
-    border-color 0.18s ease,
-    background-color 0.18s ease,
-    color 0.18s ease;
+    border-color 0.15s ease,
+    background-color 0.15s ease,
+    color 0.15s ease;
 }
 
 .primary-btn {
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  color: var(--text-on-dark);
-  background: linear-gradient(135deg, var(--accent-primary-strong), var(--accent-primary));
-  box-shadow: 0 16px 30px rgba(var(--accent-rgb), 0.24);
+  border: none;
+  color: var(--color-on-primary);
+  background: var(--accent-primary);
 }
 
-.primary-btn:hover {
-  transform: translateY(-1px);
-  box-shadow: 0 18px 34px rgba(var(--accent-rgb), 0.3);
+.primary-btn:hover:not(:disabled) {
+  background: var(--accent-primary-strong);
 }
 
-.primary-btn:active {
-  transform: translateY(0);
-  box-shadow: 0 10px 20px rgba(var(--accent-rgb), 0.2);
+.primary-btn:active:not(:disabled) {
+  filter: brightness(0.95);
 }
 
 .secondary-btn {
@@ -213,30 +173,26 @@ textarea {
   background: var(--surface-panel);
 }
 
-.secondary-btn:hover {
-  transform: translateY(-1px);
+.secondary-btn:hover:not(:disabled) {
   border-color: var(--accent-border-strong);
-  background: var(--surface-panel-strong);
-  box-shadow: 0 10px 22px rgba(31, 60, 103, 0.1);
+  background: var(--accent-soft);
 }
 
 .primary-btn:disabled,
 .secondary-btn:disabled,
 button:disabled {
-  opacity: 0.56;
+  opacity: 0.5;
   cursor: not-allowed;
-  transform: none;
-  box-shadow: none;
 }
 
 .metric-field {
   display: flex;
   flex-direction: column;
-  gap: 10px;
-  min-height: 78px;
-  padding: 14px 16px;
+  gap: 8px;
+  min-height: 72px;
+  padding: 12px 14px;
   border: 1px solid var(--border-default);
-  border-radius: 18px;
+  border-radius: var(--radius-md);
   background: var(--surface-elevated);
 }
 
@@ -244,8 +200,7 @@ button:disabled {
   color: var(--text-secondary);
   font-size: 12px;
   font-weight: 600;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
+  letter-spacing: 0.02em;
 }
 
 .metric-value {
@@ -259,11 +214,11 @@ button:disabled {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  min-height: 28px;
-  padding: 6px 12px;
+  min-height: 24px;
+  padding: 4px 10px;
   border-radius: var(--radius-pill);
   font-size: 12px;
-  font-weight: 700;
+  font-weight: 600;
   white-space: nowrap;
 }
 
@@ -285,7 +240,7 @@ button:disabled {
 .table th,
 .table td {
   text-align: left;
-  border-bottom: 1px solid var(--color-border-soft);
+  border-bottom: 1px solid var(--border-default);
   padding: 0 16px;
   font-size: 14px;
   white-space: nowrap;
@@ -294,21 +249,18 @@ button:disabled {
 .table th {
   color: var(--text-secondary);
   font-size: 12px;
-  font-weight: 700;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-  background:
-    linear-gradient(180deg, rgba(var(--accent-rgb), 0.08), rgba(var(--accent-rgb), 0.04)),
-    linear-gradient(90deg, rgba(255, 255, 255, 0.82), rgba(255, 255, 255, 0.94));
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  background: var(--surface-table-stripe);
 }
 
 .table thead tr {
-  height: 50px;
+  height: 44px;
 }
 
 .table tbody tr {
-  height: 58px;
-  transition: background-color 0.15s ease;
+  height: 52px;
+  transition: background-color 0.1s ease;
 }
 
 .table tbody tr:nth-child(even) > td {

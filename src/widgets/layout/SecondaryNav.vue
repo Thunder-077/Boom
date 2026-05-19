@@ -1,5 +1,5 @@
 <template>
-  <aside class="secondary-nav card-shell">
+  <aside class="secondary-nav">
     <Transition name="nav-switch" appear mode="out-in">
       <div class="nav-content" :key="title">
         <div class="nav-head">
@@ -41,24 +41,17 @@ defineEmits<{
 
 <style scoped>
 .secondary-nav {
-  width: 248px;
-  padding: var(--space-6) var(--space-md) var(--space-md);
-  border-radius: 0;
+  width: 240px;
+  padding: var(--space-lg) var(--space-md) var(--space-md);
   background: var(--surface-nav-panel);
   border-right: 1px solid var(--border-default);
-  box-shadow: none;
-  position: relative;
-}
-
-.secondary-nav::before,
-.secondary-nav::after {
-  display: none;
+  flex-shrink: 0;
 }
 
 .nav-content {
   display: flex;
   flex-direction: column;
-  gap: var(--space-lg);
+  gap: var(--space-sm);
   width: 100%;
   min-height: 100%;
 }
@@ -67,24 +60,8 @@ defineEmits<{
   display: flex;
   flex-direction: column;
   gap: var(--space-xs);
-  padding: 2px 4px 0;
-  position: relative;
-}
-
-.nav-head::after {
-  content: "";
-  width: 100%;
-  height: 1px;
-  background: var(--accent-divider);
-  margin-top: var(--space-sm);
-}
-
-.eyebrow {
-  color: var(--text-tertiary);
-  font-size: var(--font-size-xs);
-  font-weight: 500;
-  letter-spacing: 0.08em;
-  text-transform: none;
+  padding: 2px 4px var(--space-md);
+  border-bottom: 1px solid var(--border-default);
 }
 
 .nav-switch-enter-active,
@@ -108,44 +85,20 @@ defineEmits<{
   font-weight: 600;
   letter-spacing: -0.01em;
   line-height: 1.3;
-}
-
-.desc {
-  margin: 0;
-  color: color-mix(in srgb, var(--text-secondary) 72%, var(--text-primary));
-  font-size: var(--font-size-xs);
-  line-height: 1.45;
-}
-
-.meta-row {
-  display: flex;
-  align-items: center;
-  padding-top: var(--space-xs);
-}
-
-.meta-pill {
-  display: inline-flex;
-  align-items: center;
-  min-height: 24px;
-  padding: 4px 10px;
-  border-radius: var(--radius-pill);
-  background: rgba(var(--accent-rgb), 0.2);
-  color: var(--accent-primary);
-  font-size: var(--font-size-xs);
-  font-weight: 700;
-  letter-spacing: 0.04em;
+  color: var(--text-primary);
 }
 
 .list {
   display: flex;
   flex-direction: column;
-  gap: var(--space-xs);
+  gap: 1px;
+  padding-top: var(--space-xs);
 }
 
 .nav-item {
   position: relative;
   overflow: hidden;
-  min-height: 36px;
+  min-height: 34px;
   padding: var(--space-sm) var(--space-md);
   border-radius: var(--radius-sm);
   border: none;
@@ -169,7 +122,7 @@ defineEmits<{
   left: 0;
   top: 50%;
   width: 3px;
-  height: 16px;
+  height: 14px;
   border-radius: var(--radius-pill);
   background: var(--accent-primary);
   opacity: 0;
@@ -177,21 +130,9 @@ defineEmits<{
   transition: opacity var(--transition-base) var(--transition-ease), transform var(--transition-base) var(--transition-ease);
 }
 
-.nav-item::after {
-  content: "";
-  position: absolute;
-  inset: 0;
-  background: transparent;
-  opacity: 0;
-}
-
 .nav-item:hover {
   background: var(--surface-nav-item-hover);
   color: var(--text-primary);
-}
-
-.nav-item:hover::after {
-  opacity: 1;
 }
 
 .nav-item:active {
@@ -211,15 +152,12 @@ defineEmits<{
 
 .nav-item.active .nav-icon {
   color: var(--accent-primary);
+  opacity: 1;
 }
 
 .nav-item.active::before {
   opacity: 1;
   transform: translateY(-50%) scaleX(1);
-}
-
-.nav-item.active::after {
-  opacity: 1;
 }
 
 .nav-icon {
@@ -237,11 +175,7 @@ defineEmits<{
     "wght" 400,
     "GRAD" 0,
     "opsz" 18;
-  opacity: 0.7;
-}
-
-.nav-item.active .nav-icon {
-  opacity: 1;
+  opacity: 0.55;
 }
 
 .placeholder {

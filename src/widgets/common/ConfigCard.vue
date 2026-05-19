@@ -17,24 +17,23 @@ defineProps<{
 
 <style scoped>
 .config-card {
-  padding: 22px;
+  padding: var(--space-xl);
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: var(--space-md);
   border-radius: var(--radius-card-large);
-  background: var(--surface-card-gradient);
 }
 
 .config-card h3 {
   margin: 0;
-  font-size: 20px;
-  font-weight: 700;
-  letter-spacing: -0.02em;
+  font-size: var(--font-size-title-md);
+  font-weight: 600;
+  letter-spacing: -0.01em;
 }
 
 .config-card p {
   margin: 0;
-  font-size: 13px;
+  font-size: var(--font-size-sm);
   color: var(--text-secondary);
   line-height: 1.5;
 }
@@ -42,6 +41,6 @@ defineProps<{
 .body {
   display: flex;
   flex-direction: column;
-  gap: 14px;
+  gap: var(--space-md);
 }
 </style>

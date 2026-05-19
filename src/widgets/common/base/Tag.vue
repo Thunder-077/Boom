@@ -42,66 +42,59 @@ const sizeClass = computed(() => `tag-${props.size}`);
   align-items: center;
   justify-content: center;
   border-radius: var(--radius-pill);
-  font-weight: 700;
+  font-weight: 600;
   white-space: nowrap;
   transition:
     background-color var(--transition-base) var(--transition-ease),
-    border-color var(--transition-base) var(--transition-ease),
-    transform var(--transition-base) var(--transition-ease);
+    color var(--transition-base) var(--transition-ease);
 }
 
 .tag-sm {
-  min-height: 24px;
-  padding: 4px 10px;
+  min-height: 22px;
+  padding: 2px 8px;
   font-size: var(--font-size-xs);
 }
 
 .tag-md {
-  min-height: 28px;
-  padding: 6px 12px;
+  min-height: 26px;
+  padding: 4px 10px;
   font-size: var(--font-size-xs);
 }
 
 .tag-lg {
-  min-height: 32px;
-  padding: 6px 14px;
+  min-height: 30px;
+  padding: 4px 12px;
   font-size: var(--font-size-sm);
 }
 
 .tag-default {
-  background: var(--accent-soft);
-  color: var(--accent-primary);
-  border: 1px solid rgba(var(--accent-rgb), 0.16);
+  background: var(--accent-fill-soft);
+  color: var(--text-secondary);
 }
 
 .tag-primary {
-  background: rgba(var(--accent-rgb), 0.12);
-  color: var(--accent-primary-strong);
-  border: 1px solid rgba(var(--accent-rgb), 0.24);
+  background: var(--accent-soft);
+  color: var(--accent-primary);
 }
 
 .tag-success {
   background: var(--color-success-soft);
   color: var(--color-success);
-  border: 1px solid rgba(var(--color-success-rgb), 0.16);
 }
 
 .tag-warning {
   background: var(--color-warning-soft);
   color: var(--color-warning);
-  border: 1px solid rgba(var(--color-warning-rgb), 0.16);
 }
 
 .tag-danger {
   background: var(--color-danger-soft);
   color: var(--color-danger);
-  border: 1px solid rgba(var(--color-danger-rgb), 0.16);
 }
 
 .tag-info {
   background: var(--accent-softer);
-  color: var(--color-info-strong);
-  border: 1px solid rgba(var(--accent-rgb), 0.12);
+  color: var(--accent-primary);
 }
 
 .tag.clickable {
@@ -109,13 +102,11 @@ const sizeClass = computed(() => `tag-${props.size}`);
 }
 
 .tag.clickable:hover {
-  transform: translateY(-1px);
+  filter: brightness(0.96);
 }
 
 .tag.clickable.active {
-  border-color: var(--accent-border-strong);
-  background: rgba(var(--accent-rgb), 0.14);
+  background: var(--accent-soft);
   color: var(--accent-primary-strong);
-  box-shadow: 0 0 0 1px rgba(var(--accent-rgb), 0.08);
 }
 </style>

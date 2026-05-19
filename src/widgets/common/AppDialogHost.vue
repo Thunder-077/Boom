@@ -64,9 +64,7 @@ import { appDialogState as state, closeAppDialog } from "../../shared/ui/appDial
   overflow: hidden;
   border: 1px solid var(--border-default);
   border-radius: 20px;
-  background:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.72), rgba(255, 255, 255, 0)),
-    var(--surface-panel-strong);
+  background: var(--surface-panel);
   box-shadow: var(--shadow-strong);
   outline: none;
 }
@@ -209,7 +207,7 @@ import { appDialogState as state, closeAppDialog } from "../../shared/ui/appDial
 
 .dialog-btn.secondary:hover {
   border-color: var(--border-strong);
-  background: var(--surface-panel-strong);
+  background: var(--surface-panel);
 }
 
 .dialog-fade-enter-active,

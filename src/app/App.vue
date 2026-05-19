@@ -30,13 +30,6 @@ import WindowTitleBar from "../widgets/layout/WindowTitleBar.vue";
 }
 
 .app-content::before {
-  content: "";
-  position: absolute;
-  inset: 0;
-  pointer-events: none;
-  background:
-    radial-gradient(circle at 18% 10%, rgba(255, 255, 255, 0.36), transparent 24%),
-    radial-gradient(circle at 78% 16%, rgba(255, 255, 255, 0.2), transparent 18%);
-  opacity: 0.58;
+  display: none;
 }
 </style>

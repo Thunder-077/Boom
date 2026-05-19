@@ -55,8 +55,6 @@ function handleClick(event: MouseEvent) {
   font-family: var(--font-ui);
   font-weight: 600;
   transition:
-    transform var(--transition-base) var(--transition-ease),
-    box-shadow var(--transition-base) var(--transition-ease),
     border-color var(--transition-base) var(--transition-ease),
     background-color var(--transition-base) var(--transition-ease),
     color var(--transition-base) var(--transition-ease);
@@ -65,74 +63,62 @@ function handleClick(event: MouseEvent) {
 
 .btn:disabled,
 .btn.disabled {
-  opacity: 0.56;
+  opacity: 0.5;
   cursor: not-allowed;
-  transform: none !important;
-  box-shadow: none !important;
 }
 
 .btn-sm {
-  min-height: 32px;
+  min-height: 30px;
   padding: 0 var(--space-md);
   font-size: var(--font-size-sm);
-  border-radius: var(--radius-xs);
 }
 
 .btn-md {
-  min-height: 42px;
-  padding: 0 var(--space-4);
+  min-height: 36px;
+  padding: 0 var(--space-lg);
   font-size: var(--font-size-base);
-  border-radius: var(--radius-sm);
 }
 
 .btn-lg {
-  min-height: 48px;
-  padding: 0 var(--space-5);
-  font-size: var(--font-size-lg);
-  border-radius: var(--radius-md);
+  min-height: 42px;
+  padding: 0 var(--space-xl);
+  font-size: var(--font-size-base);
 }
 
 .btn-primary {
-  border-color: rgba(255, 255, 255, 0.12);
-  color: var(--text-on-dark);
-  background: linear-gradient(135deg, var(--accent-primary-strong), var(--accent-primary));
-  box-shadow: 0 16px 30px rgba(var(--accent-rgb), 0.24);
+  border-color: transparent;
+  color: var(--color-on-primary);
+  background: var(--accent-primary);
 }
 
 .btn-primary:hover:not(:disabled):not(.loading) {
-  transform: translateY(-1px);
-  box-shadow: 0 18px 34px rgba(var(--accent-rgb), 0.3);
+  background: var(--accent-primary-strong);
 }
 
 .btn-primary:active:not(:disabled) {
-  transform: translateY(0);
-  box-shadow: 0 10px 20px rgba(var(--accent-rgb), 0.2);
+  filter: brightness(0.95);
 }
 
 .btn-secondary {
   border-color: var(--border-default);
-  color: var(--accent-primary);
+  color: var(--text-primary);
   background: var(--surface-panel);
 }
 
 .btn-secondary:hover:not(:disabled):not(.loading) {
-  transform: translateY(-1px);
-  border-color: var(--accent-border-strong);
-  background: var(--surface-panel-strong);
-  box-shadow: 0 10px 22px rgba(31, 60, 103, 0.1);
+  border-color: var(--border-strong);
+  background: var(--surface-panel);
 }
 
 .btn-danger {
-  border-color: rgba(209, 52, 56, 0.24);
+  border-color: var(--border-default);
   color: var(--color-danger);
   background: var(--surface-panel);
 }
 
 .btn-danger:hover:not(:disabled):not(.loading) {
-  transform: translateY(-1px);
   border-color: var(--color-danger-action-strong);
   background: var(--color-danger-soft);
-  box-shadow: 0 10px 22px rgba(var(--color-danger-rgb), 0.12);
 }
 
 .btn-ghost {
@@ -143,7 +129,7 @@ function handleClick(event: MouseEvent) {
 
 .btn-ghost:hover:not(:disabled):not(.loading) {
   background: var(--accent-fill-soft);
-  color: var(--accent-primary);
+  color: var(--text-primary);
 }
 
 .btn-content {
@@ -159,8 +145,8 @@ function handleClick(event: MouseEvent) {
 }
 
 .btn-spinner {
-  width: 16px;
-  height: 16px;
+  width: 14px;
+  height: 14px;
   border: 2px solid rgba(255, 255, 255, 0.3);
   border-top-color: currentColor;
   border-radius: 50%;

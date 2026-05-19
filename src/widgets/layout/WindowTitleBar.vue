@@ -10,19 +10,18 @@
       </div>
     </div>
     <div class="window-controls">
-      <button class="win-btn" type="button" aria-label="最小化窗口" data-tooltip="最小化" @click="minimizeWindow">
+      <button class="win-btn" type="button" aria-label="最小化窗口" @click="minimizeWindow">
         <span class="material-symbols-rounded" aria-hidden="true">remove</span>
       </button>
       <button
         class="win-btn"
         type="button"
         :aria-label="isMaximized ? '还原窗口' : '最大化窗口'"
-        :data-tooltip="isMaximized ? '还原' : '最大化'"
         @click="toggleMaximize"
       >
         <span class="material-symbols-rounded" aria-hidden="true">{{ isMaximized ? "filter_none" : "crop_square" }}</span>
       </button>
-      <button class="win-btn close" type="button" aria-label="关闭窗口" data-tooltip="关闭" @click="closeWindow">
+      <button class="win-btn close" type="button" aria-label="关闭窗口" @click="closeWindow">
         <span class="material-symbols-rounded" aria-hidden="true">close</span>
       </button>
     </div>
@@ -105,13 +104,13 @@ onBeforeUnmount(() => {
   align-items: center;
   justify-content: space-between;
   padding-left: 12px;
-  border-bottom: 1px solid var(--surface-titlebar-border);
+  border-bottom: 1px solid var(--border-default);
   background: var(--surface-titlebar);
   user-select: none;
 }
 
 .window-titlebar.unfocused {
-  opacity: 0.96;
+  opacity: 0.92;
 }
 
 .drag-zone {
@@ -124,8 +123,8 @@ onBeforeUnmount(() => {
 }
 
 .app-icon {
-  width: 28px;
-  height: 28px;
+  width: 20px;
+  height: 20px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -135,7 +134,7 @@ onBeforeUnmount(() => {
 .app-logo {
   width: 100%;
   height: 100%;
-  object-fit: cover;
+  object-fit: contain;
   display: block;
 }
 
@@ -143,24 +142,24 @@ onBeforeUnmount(() => {
   min-width: 0;
   display: flex;
   align-items: baseline;
-  gap: 10px;
+  gap: 8px;
 }
 
 .app-title {
-  color: var(--surface-titlebar-title);
+  color: var(--text-primary);
   font-family: "Bangers", var(--font-ui);
-  font-size: 20px;
+  font-size: 16px;
   font-weight: 400;
-  letter-spacing: 0.08em;
+  letter-spacing: 0.06em;
   line-height: 1;
   white-space: nowrap;
 }
 
 .app-subtitle {
-  color: var(--surface-titlebar-subtitle);
+  color: var(--text-tertiary);
   font-size: 11px;
-  font-weight: 600;
-  letter-spacing: 0.04em;
+  font-weight: 500;
+  letter-spacing: 0.02em;
   white-space: nowrap;
 }
 
@@ -171,62 +170,32 @@ onBeforeUnmount(() => {
 }
 
 .win-btn {
-  position: relative;
   width: 46px;
   border: 0;
   padding: 0;
   margin: 0;
   background: transparent;
-  color: var(--text-secondary);
+  color: var(--text-tertiary);
   cursor: pointer;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  transition: background-color 0.14s ease, color 0.14s ease;
-}
-
-.win-btn::before {
-  content: attr(data-tooltip);
-  position: absolute;
-  left: 50%;
-  top: calc(100% + 8px);
-  transform: translate(-50%, -2px);
-  opacity: 0;
-  pointer-events: none;
-  padding: 6px 9px;
-  border-radius: 8px;
-  border: 1px solid var(--border-default);
-  background: color-mix(in srgb, var(--surface-panel-strong) 88%, white 12%);
-  color: var(--text-primary);
-  box-shadow: 0 6px 16px rgba(20, 36, 64, 0.14);
-  font-size: 12px;
-  font-weight: 500;
-  line-height: 1;
-  letter-spacing: 0;
-  white-space: nowrap;
-  z-index: 22;
-  transition: opacity 0.14s ease, transform 0.14s ease;
-}
-
-.win-btn:hover::before,
-.win-btn:focus-visible::before {
-  opacity: 1;
-  transform: translate(-50%, 0);
+  transition: background-color var(--transition-base) var(--transition-ease), color var(--transition-base) var(--transition-ease);
 }
 
 .win-btn .material-symbols-rounded {
   font-family: "Material Symbols Rounded";
-  font-size: 18px;
+  font-size: 16px;
 }
 
 .win-btn:hover {
-  background: var(--surface-titlebar-hover);
-  color: var(--accent-primary);
+  background: var(--surface-nav-item-hover);
+  color: var(--text-secondary);
 }
 
 .win-btn.close:hover {
   background: var(--color-danger);
-  color: var(--surface-table-content);
+  color: #ffffff;
 }
 
 .win-btn:active {

@@ -554,7 +554,7 @@ watch(
 }
 
 .control-field > span {
-  color: var(--color-text-muted);
+  color: var(--text-secondary);
   font-size: var(--font-size-xs);
 }
 
@@ -562,10 +562,10 @@ watch(
   width: 100%;
   height: 42px;
   box-sizing: border-box;
-  border: 1px solid var(--color-border-soft);
+  border: 1px solid var(--border-default);
   border-radius: var(--radius-sm);
   background: var(--surface-panel);
-  color: var(--color-text);
+  color: var(--text-primary);
   padding: 0 var(--space-md);
   font-size: var(--font-size-sm);
   outline: none;
@@ -596,7 +596,7 @@ watch(
 }
 
 .period-picker-head > span {
-  color: var(--color-text-muted);
+  color: var(--text-secondary);
   font-size: var(--font-size-xs);
 }
 
@@ -609,14 +609,14 @@ watch(
 .period-actions button,
 .period-buttons button {
   height: 30px;
-  border: 1px solid var(--color-border-soft);
+  border: 1px solid var(--border-default);
   border-radius: var(--radius-xs);
   background: var(--surface-table-content);
   color: var(--text-secondary);
   padding: 0 var(--space-sm);
   cursor: pointer;
   font-size: var(--font-size-xs);
-  font-weight: 700;
+  font-weight: 600;
 }
 
 .period-actions button:disabled {
@@ -628,7 +628,7 @@ watch(
   min-height: 36px;
   display: flex;
   align-items: center;
-  color: var(--color-text-muted);
+  color: var(--text-secondary);
   font-size: var(--font-size-sm);
 }
 
@@ -710,7 +710,7 @@ watch(
   position: sticky;
   top: 0;
   z-index: 10;
-  background: var(--surface-panel-strong);
+  background: var(--surface-panel);
   color: var(--text-secondary);
   font-weight: 700;
 }
@@ -719,7 +719,7 @@ watch(
 .change-main span,
 .change-main small {
   display: block;
-  color: var(--color-text-muted);
+  color: var(--text-secondary);
   font-size: var(--font-size-xs);
   margin-top: var(--space-xs);
 }
@@ -773,7 +773,7 @@ watch(
 .empty-cell {
   height: 120px;
   text-align: center !important;
-  color: var(--color-text-muted);
+  color: var(--text-secondary);
 }
 
 .status-pill {
@@ -784,7 +784,7 @@ watch(
   padding: 0 var(--space-sm);
   border-radius: var(--radius-pill);
   background: var(--surface-table-stripe);
-  color: var(--color-text-muted);
+  color: var(--text-secondary);
   font-size: var(--font-size-xs);
   font-weight: 700;
   white-space: nowrap;
@@ -834,7 +834,7 @@ watch(
 .expand-icon {
   font-size: var(--font-size-xl);
   transition: transform var(--transition-base);
-  color: var(--color-text-muted);
+  color: var(--text-secondary);
 }
 
 .teacher-group-header.expanded .expand-icon {
@@ -848,7 +848,7 @@ watch(
 .group-stats {
   font-size: var(--font-size-xs);
   font-weight: 400;
-  color: var(--color-text-muted);
+  color: var(--text-secondary);
 }
 
 .teacher-group-body {
@@ -915,7 +915,7 @@ watch(
   gap: var(--space-md);
   align-items: center;
   justify-content: center;
-  color: var(--color-text-muted);
+  color: var(--text-secondary);
 }
 
 .empty-state .material-symbols-rounded {

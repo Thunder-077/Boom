@@ -22,32 +22,31 @@ defineProps<{
 
 <style scoped>
 .toolbar {
-  min-height: 84px;
+  min-height: 56px;
   display: flex;
   align-items: center;
-  gap: 12px;
-  padding: 18px 20px;
+  gap: var(--space-md);
+  padding: var(--space-md) var(--space-lg);
   border-radius: var(--radius-card-large);
-  background: var(--surface-toolbar-gradient);
 }
 
 .chip {
-  height: 42px;
-  min-width: 150px;
-  padding: 0 14px;
-  border: 1px solid var(--color-border-soft);
-  border-radius: 16px;
+  height: 36px;
+  min-width: 140px;
+  padding: 0 var(--space-md);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-sm);
   background: var(--surface-chip);
   display: inline-flex;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
-  font-size: 14px;
+  gap: var(--space-md);
+  font-size: var(--font-size-sm);
   color: var(--text-secondary);
 }
 
 .value {
   color: var(--text-primary);
-  font-weight: 700;
+  font-weight: 600;
 }
 </style>

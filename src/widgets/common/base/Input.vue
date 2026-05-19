@@ -92,9 +92,8 @@ function handleBlur(event: FocusEvent) {
 
 .input-label {
   color: var(--text-secondary);
-  font-size: var(--font-size-xs);
-  font-weight: 700;
-  letter-spacing: 0.02em;
+  font-size: var(--font-size-sm);
+  font-weight: 600;
 }
 
 .input-field-wrap {
@@ -106,8 +105,7 @@ function handleBlur(event: FocusEvent) {
   background: var(--surface-input);
   transition:
     border-color var(--transition-base) var(--transition-ease),
-    box-shadow var(--transition-base) var(--transition-ease),
-    background-color var(--transition-base) var(--transition-ease);
+    box-shadow var(--transition-base) var(--transition-ease);
 }
 
 .input-field {
@@ -125,12 +123,11 @@ function handleBlur(event: FocusEvent) {
 
 .input-field:disabled {
   cursor: not-allowed;
-  opacity: 0.6;
+  opacity: 0.5;
 }
 
 .input-sm .input-field-wrap {
-  min-height: 36px;
-  border-radius: var(--radius-xs);
+  min-height: 32px;
 }
 
 .input-sm .input-field {
@@ -139,24 +136,21 @@ function handleBlur(event: FocusEvent) {
 }
 
 .input-md .input-field-wrap {
-  min-height: 44px;
-  border-radius: var(--radius-sm);
+  min-height: 38px;
 }
 
 .input-md .input-field {
-  padding: 0 var(--space-3);
+  padding: 0 var(--space-lg);
   font-size: var(--font-size-base);
 }
 
 .input-lg .input-field-wrap {
-  min-height: 52px;
-  border-radius: var(--radius-md);
+  min-height: 44px;
 }
 
 .input-lg .input-field {
-  padding: 0 var(--space-4);
-  font-size: var(--font-size-lg);
-  font-weight: 600;
+  padding: 0 var(--space-xl);
+  font-size: var(--font-size-base);
 }
 
 .input-prefix,
@@ -177,9 +171,8 @@ function handleBlur(event: FocusEvent) {
 }
 
 .input-wrapper.focused .input-field-wrap {
-  border-color: rgba(var(--accent-rgb), 0.42);
-  background: var(--surface-input-strong);
-  box-shadow: 0 0 0 4px var(--accent-focus-ring);
+  border-color: rgba(var(--accent-rgb), 0.5);
+  box-shadow: 0 0 0 3px var(--accent-focus-ring);
 }
 
 .input-wrapper.disabled .input-field-wrap {
@@ -189,7 +182,6 @@ function handleBlur(event: FocusEvent) {
 
 .input-wrapper .input-field-wrap:hover:not(.focused):not(.disabled) {
   border-color: var(--border-strong);
-  background: var(--surface-panel-strong);
 }
 
 .input-error {

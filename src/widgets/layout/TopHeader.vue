@@ -22,55 +22,56 @@ defineProps<{
 
 <style scoped>
 .header {
-  min-height: 96px;
+  min-height: 88px;
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
-  gap: 16px;
-  padding: 8px 6px 0;
+  gap: var(--space-lg);
+  padding: var(--space-sm) var(--space-xs) 0;
 }
 
 .header.compact {
-  min-height: 82px;
+  min-height: 72px;
 }
 
 .left {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: var(--space-sm);
 }
 
 .crumb {
   margin: 0;
   color: var(--text-tertiary);
-  font-size: 12px;
-  font-weight: 700;
-  letter-spacing: 0.1em;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
   text-transform: uppercase;
 }
 
 .title {
   margin: 0;
-  font-size: clamp(30px, 3vw, 40px);
+  font-size: clamp(26px, 2.8vw, 36px);
   font-weight: 700;
-  letter-spacing: -0.03em;
+  letter-spacing: -0.025em;
   color: var(--text-primary);
+  line-height: 1.2;
 }
 
 .summary {
-  max-width: 720px;
+  max-width: 640px;
   margin: 0;
   color: var(--text-secondary);
-  font-size: 13px;
-  line-height: 1.5;
+  font-size: var(--font-size-sm);
+  line-height: 1.55;
 }
 
 .right {
   display: flex;
   align-items: center;
-  gap: 12px;
-  min-height: 44px;
-  padding-top: 10px;
+  gap: var(--space-md);
+  min-height: 40px;
+  padding-top: var(--space-sm);
   flex-shrink: 0;
 }
 </style>

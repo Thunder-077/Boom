@@ -456,7 +456,7 @@ onUnmounted(() => {
   grid-template-columns: repeat(3, 1fr);
   gap: var(--space-xs);
   padding: var(--space-xs);
-  border: 1px solid var(--color-border-soft);
+  border: 1px solid var(--border-default);
   border-radius: var(--radius-sm);
   background: var(--surface-panel);
 }
@@ -494,7 +494,7 @@ onUnmounted(() => {
   padding: var(--space-md);
   border: 1px solid var(--border-default);
   border-radius: var(--radius-sm);
-  background: var(--surface-panel-strong);
+  background: var(--surface-panel);
 }
 
 .import-status {
@@ -530,7 +530,7 @@ onUnmounted(() => {
 }
 
 .control-field > span {
-  color: var(--color-text-muted);
+  color: var(--text-secondary);
   font-size: var(--font-size-xs);
 }
 
@@ -538,10 +538,10 @@ onUnmounted(() => {
   width: 100%;
   height: 42px;
   box-sizing: border-box;
-  border: 1px solid var(--color-border-soft);
+  border: 1px solid var(--border-default);
   border-radius: var(--radius-sm);
   background: var(--surface-panel);
-  color: var(--color-text);
+  color: var(--text-primary);
   padding: 0 var(--space-md);
   font-size: var(--font-size-sm);
   outline: none;
@@ -568,9 +568,9 @@ onUnmounted(() => {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 5px;
+  gap: var(--space-xs);
   color: var(--color-on-primary);
-  font-weight: 700;
+  font-weight: 600;
   font-size: var(--font-size-sm);
   cursor: pointer;
   white-space: nowrap;
@@ -608,7 +608,7 @@ onUnmounted(() => {
   width: fit-content;
   gap: var(--space-xs);
   padding: var(--space-xs);
-  border: 1px solid var(--color-border-soft);
+  border: 1px solid var(--border-default);
   border-radius: var(--radius-sm);
   background: var(--surface-panel);
 }
@@ -622,7 +622,7 @@ onUnmounted(() => {
   color: var(--text-secondary);
   cursor: pointer;
   font-size: var(--font-size-sm);
-  font-weight: 700;
+  font-weight: 600;
 }
 
 .week-switch button.active {
@@ -668,7 +668,7 @@ onUnmounted(() => {
   display: flex;
   align-items: center;
   justify-content: center;
-  font-weight: 700;
+  font-weight: 600;
   color: var(--text-secondary);
   background: rgba(var(--accent-rgb), 0.08);
 }
@@ -683,9 +683,9 @@ onUnmounted(() => {
 }
 
 .section-cell span {
-  color: var(--color-text);
+  color: var(--text-primary);
   font-size: var(--font-size-lg);
-  font-weight: 700;
+  font-weight: 600;
   writing-mode: vertical-rl;
   text-orientation: upright;
   letter-spacing: 0.16em;
@@ -702,7 +702,7 @@ onUnmounted(() => {
 }
 
 .period-cell strong {
-  color: var(--color-text);
+  color: var(--text-primary);
   font-size: var(--font-size-base);
 }
 
@@ -711,12 +711,12 @@ onUnmounted(() => {
   padding: var(--space-sm);
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: var(--space-xs);
 }
 
 .lesson {
   min-height: 54px;
-  padding: var(--space-sm) 10px;
+  padding: var(--space-sm) var(--space-md);
   border-radius: var(--radius-xs);
   background: var(--period-lesson-bg, rgba(var(--accent-rgb), 0.08));
   display: flex;
@@ -756,12 +756,12 @@ onUnmounted(() => {
 
 .lesson strong {
   font-size: var(--font-size-lg);
-  color: var(--color-text);
+  color: var(--text-primary);
 }
 
 .lesson span {
   font-size: var(--font-size-xs);
-  color: var(--color-text-muted);
+  color: var(--text-secondary);
   word-break: break-word;
 }
 
@@ -772,11 +772,11 @@ onUnmounted(() => {
   gap: var(--space-md);
   align-items: center;
   justify-content: center;
-  color: var(--color-text-muted);
+  color: var(--text-secondary);
 }
 
 .empty-state .material-symbols-rounded {
-  font-size: 42px;
+  font-size: var(--font-size-2xl);
 }
 
 .drag-overlay {
@@ -796,7 +796,7 @@ onUnmounted(() => {
   min-width: 320px;
   padding: var(--space-xl) var(--space-2xl);
   border-radius: var(--radius-md);
-  background: var(--surface-panel-strong);
+  background: var(--surface-panel);
   box-shadow: var(--shadow-medium);
   display: flex;
   flex-direction: column;
@@ -806,11 +806,11 @@ onUnmounted(() => {
 
 .drag-card strong {
   font-size: var(--font-size-lg);
-  color: var(--color-brand);
+  color: var(--accent-primary);
 }
 
 .drag-card span {
   font-size: var(--font-size-sm);
-  color: var(--color-text-muted);
+  color: var(--text-secondary);
 }
 </style>

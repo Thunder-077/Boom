@@ -300,20 +300,21 @@ onUnmounted(() => {
   align-items: center;
   justify-content: space-between;
   width: 100%;
-  min-height: 42px;
-  padding: 0 34px 0 14px;
-  border-radius: 14px;
-  border: 1px solid var(--color-border-soft);
-  background: var(--surface-panel);
-  cursor: text;
-  font-size: 14px;
-  color: var(--color-text);
-  transition: all 0.2s ease;
+  min-height: 38px;
+  padding: 0 32px 0 var(--space-md);
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-default);
+  background: var(--surface-input);
+  cursor: pointer;
+  font-size: var(--font-size-base);
+  color: var(--text-primary);
+  transition:
+    border-color var(--transition-base) var(--transition-ease),
+    box-shadow var(--transition-base) var(--transition-ease);
 }
 
 .fluent-searchable-trigger {
-  padding-right: 34px;
-  padding-left: 14px;
+  cursor: text;
 }
 
 .fluent-searchable-input {
@@ -321,14 +322,15 @@ onUnmounted(() => {
   border: 0;
   background: transparent;
   outline: none;
-  font-size: 14px;
-  color: var(--color-text);
+  font-size: var(--font-size-base);
+  color: var(--text-primary);
+  font-family: var(--font-ui);
   width: 100%;
-  min-height: 42px;
+  min-height: 38px;
 }
 
 .fluent-searchable-input::placeholder {
-  color: var(--color-text-muted);
+  color: var(--text-tertiary);
 }
 
 .fluent-value {
@@ -338,7 +340,7 @@ onUnmounted(() => {
 }
 
 .fluent-value.placeholder {
-  color: var(--color-text-muted);
+  color: var(--text-tertiary);
 }
 
 .combo-icon {
@@ -347,9 +349,9 @@ onUnmounted(() => {
   top: 50%;
   transform: translateY(-50%);
   font-size: 18px;
-  color: var(--text-secondary);
+  color: var(--text-tertiary);
   pointer-events: none;
-  transition: transform 0.2s ease;
+  transition: transform var(--transition-base) var(--transition-ease);
 }
 
 .fluent-combo.open .combo-icon {
@@ -358,13 +360,12 @@ onUnmounted(() => {
 
 .fluent-combo:focus-within .fluent-trigger,
 .fluent-combo.open .fluent-trigger {
-  border-color: var(--accent-border-strong);
+  border-color: rgba(var(--accent-rgb), 0.5);
   box-shadow: 0 0 0 3px var(--accent-focus-ring);
-  background: var(--surface-input-strong);
 }
 
 .fluent-combo.disabled .fluent-trigger {
-  opacity: 0.6;
+  opacity: 0.5;
   cursor: not-allowed;
   background: var(--surface-elevated);
 }
@@ -374,68 +375,68 @@ onUnmounted(() => {
 .teleported-fluent-menu {
   position: fixed;
   max-height: 240px;
-  padding: 6px;
-  border: 1px solid var(--color-border-soft);
-  border-radius: 14px;
-  background: var(--surface-input-strong);
+  padding: 4px;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  background: var(--surface-panel);
   box-shadow: var(--shadow-strong);
-  backdrop-filter: blur(20px);
   overflow-y: auto;
   z-index: 99999;
-  animation: slide-down 0.15s cubic-bezier(0.25, 0.8, 0.25, 1) forwards;
+  animation: menu-appear 0.12s var(--transition-ease) forwards;
   transform-origin: top;
   box-sizing: border-box;
 }
 
-@keyframes slide-down {
+@keyframes menu-appear {
   from {
     opacity: 0;
-    transform: scaleY(0.95);
+    transform: scaleY(0.96) translateY(-4px);
   }
   to {
     opacity: 1;
-    transform: scaleY(1);
+    transform: scaleY(1) translateY(0);
   }
 }
 
 .teleported-fluent-menu .fluent-option {
   width: 100%;
-  min-height: 38px;
+  min-height: 34px;
   border: 0;
-  border-radius: 10px;
+  border-radius: var(--radius-sm);
   background: transparent;
   text-align: left;
-  padding: 8px 12px;
+  padding: 6px var(--space-md);
   cursor: pointer;
-  font-size: 13px;
+  font-size: var(--font-size-sm);
   color: var(--text-primary);
-  transition: all 0.15s ease;
+  transition:
+    background-color var(--transition-fast) var(--transition-ease),
+    color var(--transition-fast) var(--transition-ease);
   display: flex;
   align-items: center;
   box-sizing: border-box;
+  font-family: var(--font-ui);
 }
 
 .teleported-fluent-menu .fluent-option:hover {
-  background: rgba(var(--accent-rgb), 0.12);
+  background: var(--accent-fill-soft);
   color: var(--accent-primary);
 }
 
 .teleported-fluent-menu .fluent-option.selected {
-  background: rgba(var(--accent-rgb), 0.12);
+  background: var(--accent-soft);
   color: var(--accent-primary);
   font-weight: 600;
 }
 
 .teleported-fluent-menu .fluent-option.highlighted {
-  background: rgba(var(--accent-rgb), 0.08);
-  outline: 2px solid rgba(var(--accent-rgb), 0.3);
-  outline-offset: -2px;
+  background: var(--accent-fill-soft);
 }
 
 .teleported-fluent-menu .menu-empty {
-  padding: 10px 12px;
-  color: var(--color-text-muted);
-  font-size: 13px;
+  padding: var(--space-sm) var(--space-md);
+  color: var(--text-tertiary);
+  font-size: var(--font-size-sm);
   text-align: center;
 }
 </style>

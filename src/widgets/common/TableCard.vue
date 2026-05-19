@@ -25,55 +25,52 @@ defineProps<{
 
 <style scoped>
 .table-card {
-  padding: 22px;
+  padding: var(--space-xl);
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: var(--space-lg);
   border-radius: var(--radius-card-large);
-  background: var(--surface-card-gradient);
 }
 
 .head {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
-  gap: 16px;
+  gap: var(--space-lg);
 }
 
 .copy {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: var(--space-sm);
 }
 
 .meta-wrap {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: var(--space-md);
   flex-wrap: wrap;
   justify-content: flex-end;
 }
 
 .head h3 {
   margin: 0;
-  font-size: 20px;
-  font-weight: 700;
-  letter-spacing: -0.02em;
+  font-size: var(--font-size-title-md);
+  font-weight: 600;
+  letter-spacing: -0.01em;
 }
 
 .head p {
   margin: 0;
-  color: var(--text-secondary);
-  font-size: 12px;
+  color: var(--text-tertiary);
+  font-size: var(--font-size-sm);
   font-weight: 600;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
 }
 
 .content {
   overflow: hidden;
-  border-radius: 18px;
-  border: 1px solid var(--color-border-soft);
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-default);
   background: var(--surface-table-content);
 }
 </style>
