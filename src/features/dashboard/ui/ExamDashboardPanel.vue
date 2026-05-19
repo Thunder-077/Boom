@@ -145,58 +145,53 @@
       </section>
 
       <section class="overview-card card-shell">
-        <div class="new-overview-head">
-          <h3>配置与结果</h3>
-        </div>
+        <h2 class="ov-main-title">配置与结果</h2>
 
-        <div class="capacity-section">
-          <h4 class="section-title">考场容量参数</h4>
-          <div class="capacity-grid">
-            <div class="capacity-item">
-              <div class="capacity-content">
-                <span class="capacity-label">考场默认容量</span>
-                <div class="capacity-value-row">
-                  <input v-model.number="capacityForm.defaultCapacity" class="capacity-input" type="number" min="1" />
-                  <span class="capacity-unit">人</span>
-                </div>
-              </div>
+        <h3 class="ov-section-title">考场容量参数</h3>
+        <div class="ov-capacity-grid">
+          <div class="ov-capacity-box">
+            <div class="ov-box-label">考场默认容量</div>
+            <div class="ov-box-value">
+              <input v-model.number="capacityForm.defaultCapacity" class="ov-capacity-input" type="number" min="1" />
+              <span class="ov-box-unit">人</span>
             </div>
-            <div class="capacity-item">
-              <div class="capacity-content">
-                <span class="capacity-label">考场最大容量</span>
-                <div class="capacity-value-row">
-                  <input v-model.number="capacityForm.maxCapacity" class="capacity-input" type="number" min="1" />
-                  <span class="capacity-unit">人</span>
-                </div>
-              </div>
+          </div>
+          <div class="ov-capacity-box">
+            <div class="ov-box-label">考场最大容量</div>
+            <div class="ov-box-value">
+              <input v-model.number="capacityForm.maxCapacity" class="ov-capacity-input" type="number" min="1" />
+              <span class="ov-box-unit">人</span>
             </div>
           </div>
         </div>
 
-        <div class="results-section">
-          <h4 class="section-title">结果中心</h4>
-          <div class="results-list">
-            <div class="result-item">
-              <span class="result-label">任务状态</span>
-              <span class="result-value status-badge" :class="getStatusClass()">{{ completeBadgeText }}</span>
-            </div>
-            <div class="result-item">
-              <span class="result-label">已生成结果</span>
-              <span class="result-value">{{ store.viewState.overview.generatedAt ? "可导出" : "未生成" }}</span>
-            </div>
-            <div class="result-item">
-              <span class="result-label">结果摘要</span>
-              <button v-if="store.viewState.lastExportFolderPath" class="result-link" type="button" @click="openExportFolder">{{ exportFileName }}</button>
-              <span v-else class="result-value">尚未导出分配文件</span>
-            </div>
+        <hr class="ov-divider" />
+
+        <h3 class="ov-section-title">结果中心</h3>
+        <div class="ov-status-list">
+          <div class="ov-status-item">
+            <span class="ov-status-label">任务状态</span>
+            <span class="ov-badge" :class="getStatusClass()">{{ completeBadgeText }}</span>
+          </div>
+          <div class="ov-status-item">
+            <span class="ov-status-label">已生成结果</span>
+            <span class="ov-status-value">{{ store.viewState.overview.generatedAt ? "可导出" : "未生成" }}</span>
+          </div>
+          <div class="ov-status-item">
+            <span class="ov-status-label">结果摘要</span>
+            <button v-if="store.viewState.lastExportFolderPath" class="ov-result-link" type="button" @click="openExportFolder">{{ exportFileName }}</button>
+            <span v-else class="ov-status-value ov-status-muted">尚未导出分配文件</span>
           </div>
         </div>
 
-        <div class="export-section">
-          <button class="export-btn-large" :disabled="store.viewState.exporting || !store.viewState.overview.generatedAt" @click="exportBundle">
-            {{ store.viewState.exporting ? "导出中..." : "导出分配结果" }}
-          </button>
-        </div>
+        <button class="ov-btn-block" :disabled="store.viewState.exporting || !store.viewState.overview.generatedAt" @click="exportBundle">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+            <polyline points="7 10 12 15 17 10"></polyline>
+            <line x1="12" y1="15" x2="12" y2="3"></line>
+          </svg>
+          {{ store.viewState.exporting ? "导出中..." : "导出分配结果" }}
+        </button>
       </section>
     </div>
   </section>
@@ -938,209 +933,225 @@ onUnmounted(() => {
   flex: 1;
   display: flex;
   flex-direction: column;
-  gap: var(--space-lg);
-  padding: var(--space-xl);
-  border-radius: var(--radius-lg);
-  border: 1px solid var(--border-default);
-  background: var(--surface-panel);
+  padding: 32px;
+  border-radius: 12px;
+  border: 1px solid #edf2f7;
+  background: #ffffff;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.03);
 }
 
-.new-overview-head {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-xs);
-}
-
-.new-overview-head h3 {
-  margin: 0;
-  font-size: var(--font-size-title-md);
+/* --- 主标题 with 蓝色竖条指示器 --- */
+.ov-main-title {
+  font-size: 20px;
   font-weight: 600;
-  letter-spacing: -0.01em;
-  color: var(--text-primary);
-}
-
-.new-overview-head p {
-  margin: 0;
-  color: var(--text-secondary);
-  font-size: var(--font-size-sm);
-  line-height: 1.55;
-}
-
-.capacity-section,
-.results-section {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-md);
-  padding-top: var(--space-md);
-}
-
-.capacity-section {
-  padding-bottom: var(--space-lg);
-  border-bottom: 1px solid var(--border-default);
-}
-
-.section-title {
-  margin: 0;
-  font-size: var(--font-size-base);
-  font-weight: 600;
-  color: var(--text-primary);
-}
-
-.capacity-grid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: var(--space-md);
-}
-
-.capacity-item {
+  color: #0f172a;
+  margin: 0 0 28px 0;
   display: flex;
   align-items: center;
-  gap: var(--space-md);
-  padding: var(--space-md) var(--space-lg);
-  border-radius: var(--radius-sm);
-  border: 1px solid var(--border-default);
-  background: var(--surface-panel);
 }
 
-.capacity-content {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-xs);
-  min-width: 0;
-  flex: 1;
+.ov-main-title::before {
+  content: '';
+  display: inline-block;
+  width: 4px;
+  height: 18px;
+  background: #3182ce;
+  border-radius: 2px;
+  margin-right: 12px;
 }
 
-.capacity-label {
-  color: var(--text-secondary);
-  font-size: var(--font-size-sm);
+/* --- 子模块标题 --- */
+.ov-section-title {
+  font-size: 15px;
   font-weight: 600;
+  color: #334155;
+  margin: 0 0 16px 0;
 }
 
-.capacity-value-row {
-  display: inline-flex;
+/* --- 容量参数区 --- */
+.ov-capacity-grid {
+  display: flex;
+  gap: 16px;
+  margin-bottom: 24px;
+}
+
+.ov-capacity-box {
+  flex: 1;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  padding: 16px;
+  transition: all 0.2s ease;
+}
+
+.ov-capacity-box:hover {
+  background: #ffffff;
+  border-color: #cbd5e0;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04);
+}
+
+.ov-box-label {
+  font-size: 13px;
+  color: #64748b;
+  margin-bottom: 8px;
+  font-weight: 500;
+}
+
+.ov-box-value {
+  display: flex;
   align-items: baseline;
-  gap: var(--space-xs);
-  line-height: 1.2;
+  gap: 4px;
 }
 
-.capacity-input {
+.ov-capacity-input {
   border: 0;
   padding: 0;
   background: transparent;
-  color: var(--text-primary);
-  font-size: var(--font-size-title-lg);
+  color: #0f172a;
+  font-size: 28px;
   font-weight: 700;
   width: 60px;
-  font-family: var(--font-mono);
+  font-family: inherit;
 }
 
-.capacity-input:focus {
+.ov-capacity-input:focus {
   outline: none;
 }
 
-.capacity-unit {
-  color: var(--text-tertiary);
-  font-size: var(--font-size-base);
-  font-weight: 500;
+.ov-capacity-input::-webkit-outer-spin-button,
+.ov-capacity-input::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
 }
 
-.results-list {
-  display: flex;
-  flex-direction: column;
-  gap: 0;
-  border-radius: var(--radius-sm);
-  border: 1px solid var(--border-default);
-  background: var(--surface-panel);
+.ov-capacity-input[type="number"] {
+  -moz-appearance: textfield;
+  appearance: textfield;
+}
+
+.ov-box-unit {
+  font-size: 14px;
+  font-weight: 500;
+  color: #94a3b8;
+}
+
+/* --- 分割线 --- */
+.ov-divider {
+  height: 1px;
+  background-color: #e2e8f0;
+  border: none;
+  margin: 0 0 24px 0;
+}
+
+/* --- 结果中心列表 --- */
+.ov-status-list {
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
   overflow: hidden;
+  margin-bottom: 28px;
 }
 
-.result-item {
+.ov-status-item {
   display: flex;
+  justify-content: space-between;
   align-items: center;
-  gap: var(--space-md);
-  padding: var(--space-md) var(--space-lg);
+  padding: 14px 16px;
+  background-color: #ffffff;
+  border-bottom: 1px solid #f1f5f9;
+  font-size: 14px;
 }
 
-.result-item + .result-item {
-  border-top: 1px solid var(--border-default);
+.ov-status-item:last-child {
+  border-bottom: none;
 }
 
-.result-label {
-  color: var(--text-secondary);
-  font-size: var(--font-size-sm);
+.ov-status-label {
+  color: #64748b;
+}
+
+.ov-status-value {
+  color: #0f172a;
   font-weight: 500;
-  flex: 1;
 }
 
-.result-value {
-  color: var(--text-primary);
-  font-size: var(--font-size-sm);
-  font-weight: 600;
-  text-align: right;
+.ov-status-muted {
+  color: #64748b;
+  font-weight: normal;
 }
 
-.status-badge {
-  padding: 2px var(--space-sm);
-  border-radius: var(--radius-sm);
-  font-size: var(--font-size-xs);
+/* --- 状态标签 Pill Badge --- */
+.ov-badge {
+  padding: 4px 10px;
+  border-radius: 20px;
+  font-size: 12px;
   font-weight: 600;
 }
 
-.status-success {
-  background: var(--color-success-soft);
-  color: var(--color-success);
+.ov-badge.status-pending {
+  background-color: #fffbeb;
+  color: #d97706;
+  border: 1px solid #fde68a;
 }
 
-.status-pending {
-  background: var(--color-warning-soft);
-  color: var(--color-warning);
+.ov-badge.status-success {
+  background-color: #ecfdf5;
+  color: #059669;
+  border: 1px solid #a7f3d0;
 }
 
-.status-error {
-  background: var(--color-danger-soft);
-  color: var(--color-danger);
+.ov-badge.status-error {
+  background-color: #fef2f2;
+  color: #dc2626;
+  border: 1px solid #fecaca;
 }
 
-.result-link {
+/* --- 结果链接 --- */
+.ov-result-link {
   border: 0;
   padding: 0;
   background: transparent;
-  color: var(--accent-primary);
+  color: #3182ce;
   font: inherit;
   font-weight: 600;
   text-decoration: underline;
+  text-underline-offset: 2px;
   cursor: pointer;
   text-align: right;
 }
 
-.export-section {
-  margin-top: var(--space-xs);
+.ov-result-link:hover {
+  color: #2563eb;
 }
 
-.export-btn-large {
+/* --- 底部操作按钮 --- */
+.ov-btn-block {
   width: 100%;
-  min-height: 44px;
-  padding: 0 var(--space-xl);
-  border-radius: var(--radius-sm);
-  border: none;
-  background: var(--accent-primary);
-  color: var(--color-on-primary);
-  font-size: var(--font-size-base);
+  padding: 12px 0;
+  border-radius: 8px;
+  font-size: 15px;
   font-weight: 600;
-  cursor: pointer;
-  display: inline-flex;
-  align-items: center;
+  text-align: center;
+  border: none;
+  transition: all 0.2s;
+  display: flex;
   justify-content: center;
-  gap: var(--space-sm);
-  transition: background-color var(--transition-base) var(--transition-ease);
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
 }
 
-.export-btn-large:hover:not(:disabled) {
-  background: var(--accent-primary-strong);
+.ov-btn-block:not(:disabled) {
+  background-color: #3b82f6;
+  color: #ffffff;
 }
 
-.export-btn-large:disabled {
-  opacity: 0.5;
+.ov-btn-block:not(:disabled):hover {
+  background-color: #2563eb;
+}
+
+.ov-btn-block:disabled {
+  background-color: #bfdbfe;
+  color: #ffffff;
   cursor: not-allowed;
 }
 

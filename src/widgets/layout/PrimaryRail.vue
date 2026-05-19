@@ -12,7 +12,7 @@
         <span class="material-symbols-rounded" aria-hidden="true">menu</span>
       </button>
     </div>
-    <div class="rail-nav">
+    <div class="nav-group">
       <button
         v-for="item in items"
         :key="item.key"
@@ -27,7 +27,7 @@
         <span class="sr-only">{{ item.label }}</span>
       </button>
     </div>
-    <div class="rail-footer">
+    <div class="nav-bottom">
       <button
         type="button"
         class="rail-btn"
@@ -63,15 +63,16 @@ defineEmits<{
 <style scoped>
 .primary-rail {
   position: relative;
-  z-index: 3;
-  width: 56px;
-  padding: var(--space-md) var(--space-xs);
+  z-index: 2;
+  width: 72px;
+  height: 100%;
+  padding: 24px 0;
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: var(--space-lg);
-  background: var(--surface-nav-panel);
-  border-right: 1px solid var(--border-default);
+  gap: 0;
+  background: #ffffff;
+  border-right: 1px solid #f0f0f0;
   flex-shrink: 0;
 }
 
@@ -80,56 +81,53 @@ defineEmits<{
   display: flex;
   align-items: center;
   justify-content: center;
-  padding-bottom: var(--space-sm);
 }
 
-.rail-nav {
+.nav-group {
   width: 100%;
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 2px;
+  gap: 4px;
 }
 
-.rail-footer {
+.nav-bottom {
   width: 100%;
   margin-top: auto;
-  padding-top: var(--space-sm);
   display: flex;
   justify-content: center;
 }
 
 .toggle-btn {
   position: relative;
-  width: 32px;
-  height: 32px;
+  width: 44px;
+  height: 44px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   border: 0;
-  border-radius: var(--radius-sm);
+  border-radius: 8px;
   background: transparent;
-  color: var(--text-tertiary);
+  color: #6b7280;
   cursor: pointer;
-  transition:
-    background-color var(--transition-base) var(--transition-ease),
-    color var(--transition-base) var(--transition-ease);
+  transition: background 0.18s ease, color 0.18s ease;
+  margin-bottom: 20px;
 }
 
 .toggle-btn:hover {
-  background: var(--surface-nav-item-hover);
-  color: var(--text-secondary);
+  background-color: #f0f0f1;
+  color: #374151;
 }
 
 .toggle-btn:focus-visible {
   outline: none;
-  background: var(--surface-nav-item-hover);
-  color: var(--text-primary);
+  background-color: #f0f0f1;
+  color: #374151;
 }
 
 .toggle-btn .material-symbols-rounded {
   font-family: "Material Symbols Rounded";
-  font-size: 18px;
+  font-size: 22px;
 }
 
 .toggle-btn::before {
@@ -162,19 +160,17 @@ defineEmits<{
 
 .rail-btn {
   position: relative;
-  width: 36px;
-  height: 36px;
+  width: 44px;
+  height: 44px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   border: none;
-  border-radius: var(--radius-sm);
+  border-radius: 8px;
   background: transparent;
-  color: var(--text-tertiary);
+  color: #6b7280;
   cursor: pointer;
-  transition:
-    background-color var(--transition-base) var(--transition-ease),
-    color var(--transition-base) var(--transition-ease);
+  transition: background 0.18s ease, color 0.18s ease;
 }
 
 .rail-btn::before {
@@ -206,8 +202,8 @@ defineEmits<{
 }
 
 .rail-btn:hover {
-  background: var(--surface-nav-item-hover);
-  color: var(--text-secondary);
+  background: #f0f0f1;
+  color: #374151;
 }
 
 .rail-btn:active {
@@ -216,24 +212,37 @@ defineEmits<{
 
 .rail-btn:focus-visible {
   outline: none;
-  background: var(--surface-nav-item-hover);
-  color: var(--text-primary);
+  background: #f0f0f1;
+  color: #374151;
 }
 
 .rail-btn.active {
-  background: var(--surface-nav-item-active);
-  color: var(--text-primary);
+  background: #f0f0f1;
+  color: #111827;
+  box-shadow: none;
+}
+
+.rail-btn.active::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 3px;
+  height: 20px;
+  border-radius: 0 3px 3px 0;
+  background: #3b82f6;
 }
 
 .icon {
   position: relative;
   z-index: 1;
-  width: 18px;
-  height: 18px;
+  width: 20px;
+  height: 20px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  font-size: 18px;
+  font-size: 20px;
   line-height: 1;
   font-variation-settings:
     "FILL" 0,
@@ -243,6 +252,7 @@ defineEmits<{
 }
 
 .rail-btn.active .icon {
+  color: #111827;
   font-variation-settings:
     "FILL" 1,
     "wght" 500,

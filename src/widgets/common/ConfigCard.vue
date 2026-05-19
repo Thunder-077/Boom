@@ -29,6 +29,19 @@ defineProps<{
   font-size: var(--font-size-title-md);
   font-weight: 600;
   letter-spacing: -0.01em;
+  display: flex;
+  align-items: center;
+}
+
+.config-card h3::before {
+  content: '';
+  display: inline-block;
+  width: 4px;
+  height: 18px;
+  background: var(--accent-primary);
+  border-radius: 2px;
+  margin-right: 10px;
+  flex-shrink: 0;
 }
 
 .config-card p {

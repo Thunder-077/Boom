@@ -158,7 +158,7 @@ const railItems: RailItem[] = [
 
 const activeRail = computed(() => {
   if (activeSection.value === "appearance" || activeSection.value === "update") {
-    return "dashboard";
+    return "";
   }
   if (activeSection.value === "scores") {
     return "students";
@@ -236,10 +236,17 @@ function openSettings() {
 
 <style scoped>
 .page-bg {
-  min-height: 100%;
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
   width: 100%;
   display: flex;
   justify-content: flex-start;
-  align-items: flex-start;
+  align-items: stretch;
+  background-color: #f3f4f6;
+}
+
+.page-bg :deep(.page-shell) {
+  min-width: 0;
 }
 </style>

@@ -2,22 +2,24 @@
   <section class="panel">
     <div class="grid-two top-grid">
       <ConfigCard class="top-card exam-count-card" title="监考人数配置">
-        <div class="card-stack">
-          <label class="display-field count-field" for="exam-room-required-count">
-            <span class="field-label">每个考场监考老师人数</span>
-            <div class="field-value-row">
-              <input
-                id="exam-room-required-count"
-                class="value-input count-input"
-                v-model.number="defaultExamRoomRequiredCount"
-                type="number"
-                min="1"
-                @blur="handleSaveConfig"
-                @keyup.enter="handleSaveConfig"
-              />
-              <strong class="field-value-text">人</strong>
-            </div>
-          </label>
+        <div class="exam-count-content">
+          <button class="count-btn" type="button" :disabled="defaultExamRoomRequiredCount <= 1" @click="decreaseCount" aria-label="减少人数">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <line x1="5" y1="12" x2="19" y2="12"></line>
+            </svg>
+          </button>
+          
+          <div class="count-display">
+            <span class="count-number">{{ defaultExamRoomRequiredCount }}</span>
+            <span class="count-unit">人</span>
+          </div>
+          
+          <button class="count-btn" type="button" @click="increaseCount" aria-label="增加人数">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <line x1="12" y1="5" x2="12" y2="19"></line>
+              <line x1="5" y1="12" x2="19" y2="12"></line>
+            </svg>
+          </button>
         </div>
       </ConfigCard>
 
@@ -28,33 +30,60 @@
             <button class="segment-btn" :class="{ active: !middleManagerDefaultEnabled }" type="button" @click="setMiddleManagerDefaultEnabled(false)">不参与监考</button>
           </div>
           <div class="footer-row middle-footer">
-            <span class="exception-pill">已设置 {{ middleManagerExceptionCount }} 位例外人员</span>
-            <button class="secondary-btn drawer-trigger" type="button" @click="openMiddleManagerDrawer">配置例外</button>
+            <div class="exception-tag">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path>
+                <circle cx="9" cy="7" r="4"></circle>
+                <path d="M23 21v-2a4 4 0 0 0-3-3.87"></path>
+                <path d="M16 3.13a4 4 0 0 1 0 7.75"></path>
+              </svg>
+              已设置 {{ middleManagerExceptionCount }} 位例外人员
+            </div>
+            <button class="drawer-trigger exception-btn" type="button" @click="openMiddleManagerDrawer">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="12" cy="12" r="3"></circle>
+                <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
+              </svg>
+              配置例外
+            </button>
           </div>
         </div>
       </ConfigCard>
     </div>
 
-    <ConfigCard class="exclude-card" title="自定义排班规则">
-      <div class="footer-row" style="margin-bottom: 16px;">
-        <div class="custom-rule-overview">
-          <p class="card-note">当前已配置 {{ store.viewState.customRules.length }} 条规则</p>
-          <div v-if="store.viewState.customRules.length > 0" class="custom-rule-overview-tags">
-            <span class="rule-tag">{{ excludeCustomRuleCount }} 条禁排</span>
-            <span class="rule-tag">{{ requireCustomRuleCount }} 条指定安排</span>
+    <section class="schedule-card exclude-card">
+      <div class="schedule-card-header">
+        <div class="schedule-header-info">
+          <div class="schedule-title-bar">
+            <span class="schedule-title-line"></span>
+            <h2 class="schedule-card-title">自定义排班规则</h2>
           </div>
+          <div class="schedule-card-subtitle">当前已配置 <strong>{{ store.viewState.customRules.length }}</strong> 条规则</div>
         </div>
-        <button class="primary-btn drawer-trigger" type="button" @click="openCustomRuleDrawer">添加排班规则</button>
+        <button class="schedule-btn-primary drawer-trigger" type="button" @click="openCustomRuleDrawer">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <line x1="12" y1="5" x2="12" y2="19"></line>
+            <line x1="5" y1="12" x2="19" y2="12"></line>
+          </svg>
+          添加排班规则
+        </button>
       </div>
 
-      <div v-if="store.viewState.customRules.length === 0" class="empty-box empty-box-guide">
-        <span class="material-symbols-rounded empty-box-icon" aria-hidden="true">playlist_add</span>
-        <div class="empty-box-copy">
-          <strong>暂未添加排班规则</strong>
-          <span>点击上方按钮添加规则。</span>
+      <div v-if="store.viewState.customRules.length === 0" class="schedule-empty-state">
+        <div class="schedule-empty-icon">
+          <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <line x1="8" y1="6" x2="21" y2="6"></line>
+            <line x1="8" y1="12" x2="21" y2="12"></line>
+            <line x1="8" y1="18" x2="21" y2="18"></line>
+            <line x1="3" y1="6" x2="3.01" y2="6"></line>
+            <line x1="3" y1="12" x2="3.01" y2="12"></line>
+            <line x1="3" y1="18" x2="3.01" y2="18"></line>
+          </svg>
         </div>
+        <h3 class="schedule-empty-title">暂未添加排班规则</h3>
+        <p class="schedule-empty-desc">点击右上方按钮添加规则，开始管理您的排班。</p>
       </div>
-      <div v-else class="compact-rule-list">
+      <div v-else class="compact-rule-list schedule-rule-list">
         <div v-for="(item, index) in store.viewState.customRules" :key="index" class="compact-rule-item">
           <div class="compact-rule-main">
             <div class="compact-rule-header">
@@ -75,52 +104,83 @@
           </div>
         </div>
       </div>
-    </ConfigCard>
+    </section>
 
     <div class="grid-two summary-grid-row">
-      <ConfigCard class="summary-card self-study-card" title="全员自习">
-        <div class="card-stack">
-          <div class="summary-grid">
-            <div class="summary-chip time-summary-chip">
-              <span class="field-label">时间范围</span>
-              <strong class="summary-value time-summary-value">
-                <span class="time-summary-date">{{ selfStudyMonthDay }}</span>
-                <span class="time-summary-range">{{ selfStudyStartTime }} - {{ selfStudyEndTime }}</span>
-              </strong>
-            </div>
-            <div class="summary-chip">
-              <span class="field-label">已配置班级</span>
-              <strong class="summary-value">{{ configuredClassCount }} 个</strong>
-            </div>
-            <div class="summary-chip pending-chip">
-              <span class="field-label pending-text">待补充</span>
-              <strong class="summary-value pending-text">{{ pendingClassCount }} 个班级</strong>
-            </div>
-          </div>
-          <div class="footer-row self-study-footer">
-            <p class="card-note self-study-note">{{ selfStudySummaryText }}</p>
-            <button class="primary-btn drawer-trigger" type="button" @click="openSelfStudyDrawer">配置班级科目</button>
+      <section class="study-card summary-card self-study-card">
+        <div class="study-card-header">
+          <div class="study-title-bar">
+            <span class="study-title-line"></span>
+            <h2 class="study-card-title">全员自习</h2>
           </div>
         </div>
-      </ConfigCard>
+        <div class="study-data-grid">
+          <div class="study-data-item">
+            <div class="study-data-label">时间范围</div>
+            <div class="study-data-value study-data-time">{{ selfStudyMonthDay }} {{ selfStudyStartTime }} - {{ selfStudyEndTime }}</div>
+          </div>
+          <div class="study-data-item">
+            <div class="study-data-label">已配置班级</div>
+            <div class="study-data-value">{{ configuredClassCount }} <span class="study-data-unit">个</span></div>
+          </div>
+          <div class="study-data-item warning">
+            <div class="study-data-label">待补充</div>
+            <div class="study-data-value">{{ pendingClassCount }} <span class="study-data-unit">个班级</span></div>
+          </div>
+        </div>
+        <div class="study-card-footer">
+          <span class="study-status-text" :class="{ pending: pendingClassCount > 0 }">
+            <span class="material-symbols-rounded study-status-icon" aria-hidden="true">{{ pendingClassCount > 0 ? "error" : "check_circle" }}</span>
+            {{ selfStudySummaryText }}
+          </span>
+          <button class="study-btn-primary drawer-trigger" type="button" @click="openSelfStudyDrawer">
+            <span class="material-symbols-rounded" aria-hidden="true">tune</span>
+            配置班级科目
+          </button>
+        </div>
+      </section>
 
-      <ConfigCard class="summary-card allowance-card" title="监考津贴">
-        <div class="card-stack">
-          <div class="subsidy-row">
-            <label class="display-field">
-              <span class="field-label">场内监考津贴</span>
-              <div class="field-value-row">
-                <input class="value-input subsidy-input" type="number" min="0" step="0.1" v-model.number="indoorAllowancePerMinute" @blur="handleSaveConfig" @keyup.enter="handleSaveConfig" />
-                <strong class="field-value-text">元 / 分钟</strong>
-              </div>
-            </label>
-            <label class="display-field">
-              <span class="field-label">场外监考津贴</span>
-              <div class="field-value-row">
-                <input class="value-input subsidy-input" type="number" min="0" step="0.1" v-model.number="outdoorAllowancePerMinute" @blur="handleSaveConfig" @keyup.enter="handleSaveConfig" />
-                <strong class="field-value-text">元 / 分钟</strong>
-              </div>
-            </label>
+      <ConfigCard class="summary-card allowance-card">
+        <div class="allowance-title-bar">
+          <span class="allowance-title-line"></span>
+          <span class="allowance-title-text">监考津贴</span>
+        </div>
+        <div class="allowance-items-container">
+          <div class="allowance-item allowance-item-indoor">
+            <div class="allowance-item-label">
+              <span class="allowance-dot allowance-dot-inside"></span>
+              场内监考津贴
+            </div>
+            <div class="allowance-item-value">
+              <input
+                class="allowance-value-input"
+                type="number"
+                min="0"
+                step="0.1"
+                v-model.number="indoorAllowancePerMinute"
+                @blur="handleSaveConfig"
+                @keyup.enter="handleSaveConfig"
+              />
+              <span class="allowance-value-unit">元 / 分钟</span>
+            </div>
+          </div>
+          <div class="allowance-item allowance-item-outdoor">
+            <div class="allowance-item-label">
+              <span class="allowance-dot allowance-dot-outside"></span>
+              场外监考津贴
+            </div>
+            <div class="allowance-item-value">
+              <input
+                class="allowance-value-input"
+                type="number"
+                min="0"
+                step="0.1"
+                v-model.number="outdoorAllowancePerMinute"
+                @blur="handleSaveConfig"
+                @keyup.enter="handleSaveConfig"
+              />
+              <span class="allowance-value-unit">元 / 分钟</span>
+            </div>
           </div>
         </div>
       </ConfigCard>
@@ -1187,6 +1247,18 @@ function handleSaveConfig() {
   void saveConfig();
 }
 
+function increaseCount() {
+  defaultExamRoomRequiredCount.value += 1;
+  void saveConfig();
+}
+
+function decreaseCount() {
+  if (defaultExamRoomRequiredCount.value > 1) {
+    defaultExamRoomRequiredCount.value -= 1;
+    void saveConfig();
+  }
+}
+
 function openSelfStudyDrawer() {
   middleManagerDrawerOpen.value = false;
   resetSelfStudyDraftState();
@@ -1923,7 +1995,10 @@ onBeforeUnmount(() => {
   flex-direction: column;
   gap: var(--space-2xl);
   isolation: isolate;
-  min-width: 1240px;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  min-height: 0;
 }
 
 .section-kicker {
@@ -1948,7 +2023,13 @@ onBeforeUnmount(() => {
 
 .summary-grid-row {
   align-items: stretch;
-  grid-template-columns: minmax(0, 1fr) 440px;
+  grid-template-columns: minmax(0, 1fr) minmax(300px, 420px);
+}
+
+@media (max-width: 1100px) {
+  .summary-grid-row {
+    grid-template-columns: 1fr;
+  }
 }
 
 .top-card {
@@ -1976,14 +2057,12 @@ onBeforeUnmount(() => {
 
 .exam-count-card :deep(.body),
 .middle-manager-card :deep(.body),
-.self-study-card :deep(.body),
 .allowance-card :deep(.body) {
   height: 100%;
 }
 
 .exam-count-card .card-stack,
 .middle-manager-card .card-stack,
-.self-study-card .card-stack,
 .allowance-card .card-stack {
   height: 100%;
 }
@@ -1994,11 +2073,83 @@ onBeforeUnmount(() => {
 
 .exam-count-card :deep(.body) {
   gap: var(--space-md);
+  height: 100%;
 }
 
-.exam-count-card .card-stack {
-  gap: var(--space-md);
-  justify-content: space-between;
+.exam-count-content {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 40px;
+  height: 100%;
+  min-height: 120px;
+  padding: var(--space-md) 0;
+}
+
+.count-display {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-width: 80px;
+}
+
+.count-number {
+  font-size: 56px;
+  font-weight: 700;
+  line-height: 1;
+  color: var(--text-primary);
+  letter-spacing: -1px;
+}
+
+.count-unit {
+  font-size: 15px;
+  font-weight: 500;
+  color: var(--text-secondary);
+  margin-top: 8px;
+}
+
+.count-btn {
+  width: 52px;
+  height: 52px;
+  border-radius: 14px;
+  background-color: var(--surface-panel);
+  border: 1px solid var(--border-default);
+  color: var(--text-secondary);
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  cursor: pointer;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.02);
+  transition: all 0.2s ease;
+}
+
+.count-btn svg {
+  transition: transform 0.2s;
+}
+
+.count-btn:hover:not(:disabled) {
+  border-color: var(--accent-border-strong);
+  background-color: color-mix(in srgb, var(--surface-panel) 82%, white);
+  color: var(--text-primary);
+  transform: translateY(-1px);
+  box-shadow: 0 4px 10px rgba(0, 0, 0, 0.05);
+}
+
+.count-btn:active:not(:disabled) {
+  transform: translateY(0);
+  background-color: var(--surface-elevated);
+  box-shadow: none;
+}
+
+.count-btn:active:not(:disabled) svg {
+  transform: scale(0.9);
+}
+
+.count-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+  box-shadow: none;
 }
 
 .middle-manager-card :deep(.config-card) {
@@ -2010,26 +2161,166 @@ onBeforeUnmount(() => {
 }
 
 .middle-manager-card .card-stack {
-  gap: var(--space-md);
+  gap: 28px;
   justify-content: space-between;
 }
 
-.self-study-card :deep(.config-card) {
-  gap: var(--space-md);
+.study-card {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  background: #ffffff;
+  border-radius: 12px;
+  border: 1px solid #e5e7eb;
+  box-shadow:
+    0 4px 6px -1px rgba(0, 0, 0, 0.05),
+    0 2px 4px -1px rgba(0, 0, 0, 0.03);
+  overflow: hidden;
 }
 
-.self-study-card :deep(.body) {
-  gap: var(--space-md);
+.study-card-header {
+  padding: 24px 24px 16px;
 }
 
-.exclude-card :deep(.config-card) {
-  position: relative;
-  z-index: 80;
-  overflow: visible;
+.study-title-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
 
-.exclude-card :deep(.body) {
-  overflow: visible;
+.study-title-line {
+  display: inline-block;
+  width: 4px;
+  height: 16px;
+  background: var(--accent-primary);
+  border-radius: 2px;
+}
+
+.study-card-title {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 600;
+  color: #111827;
+}
+
+.study-data-grid {
+  display: flex;
+  gap: 16px;
+  padding: 0 24px 24px;
+}
+
+.study-data-item {
+  flex: 1;
+  background: #f9fafb;
+  border: 1px solid #f3f4f6;
+  border-radius: 8px;
+  padding: 16px 20px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+}
+
+.study-data-item.warning {
+  background: #fffbeb;
+  border-color: #fde68a;
+}
+
+.study-data-item.warning .study-data-label {
+  color: #d97706;
+}
+
+.study-data-item.warning .study-data-value {
+  color: #b45309;
+}
+
+.study-data-item.warning .study-data-unit {
+  color: #d97706;
+}
+
+.study-data-label {
+  font-size: 13px;
+  color: #6b7280;
+  margin-bottom: 8px;
+  font-weight: 500;
+}
+
+.study-data-value {
+  font-size: 24px;
+  font-weight: 700;
+  color: #1f2937;
+  display: flex;
+  align-items: baseline;
+  gap: 4px;
+}
+
+.study-data-time {
+  font-size: 18px;
+  letter-spacing: 0.5px;
+}
+
+.study-data-unit {
+  font-size: 14px;
+  font-weight: 500;
+  color: #9ca3af;
+}
+
+.study-card-footer {
+  margin-top: auto;
+  padding: 16px 24px;
+  border-top: 1px solid #e5e7eb;
+  background: #f9fafb;
+  border-radius: 0 0 12px 12px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 16px;
+}
+
+.study-status-text {
+  font-size: 14px;
+  color: #059669;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 500;
+  min-width: 0;
+}
+
+.study-status-text.pending {
+  color: #d97706;
+}
+
+.study-status-icon {
+  font-size: 18px;
+  flex-shrink: 0;
+}
+
+.study-btn-primary {
+  flex-shrink: 0;
+  background-color: #2563eb;
+  color: #ffffff;
+  border: none;
+  border-radius: 6px;
+  padding: 10px 20px;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  transition: background-color 0.2s, transform 0.1s;
+}
+
+.study-btn-primary:hover {
+  background-color: #1d4ed8;
+}
+
+.study-btn-primary:active {
+  transform: scale(0.98);
+}
+
+.study-btn-primary .material-symbols-rounded {
+  font-size: 16px;
 }
 
 .exclude-card {
@@ -2037,47 +2328,268 @@ onBeforeUnmount(() => {
   z-index: 80;
 }
 
-.self-study-card .card-stack {
-  gap: var(--space-md);
-  justify-content: space-between;
+.schedule-card {
+  width: 100%;
+  background: #ffffff;
+  border-radius: 12px;
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.04);
+  border: 1px solid #edf2f7;
+  box-sizing: border-box;
+  overflow: hidden;
 }
 
-.allowance-card :deep(.config-card) {
-  gap: var(--space-md);
-  width: 100%;
+.schedule-card-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 16px;
+  padding: 24px 32px;
+  border-bottom: 1px solid #f1f5f9;
+}
+
+.schedule-header-info {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
   min-width: 0;
 }
 
-.allowance-card :deep(.body) {
-  gap: var(--space-md);
-  width: 100%;
+.schedule-title-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
 
-.allowance-card .card-stack {
-  gap: var(--space-md);
-  justify-content: space-between;
+.schedule-title-line {
+  display: inline-block;
+  width: 4px;
+  height: 16px;
+  background: var(--accent-primary);
+  border-radius: 2px;
+}
+
+.schedule-card-title {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 600;
+  color: #1a202c;
+}
+
+.schedule-card-subtitle {
+  margin: 0;
+  font-size: 13px;
+  color: #718096;
+}
+
+.schedule-card-subtitle strong {
+  color: #e53e3e;
+  font-weight: 600;
+  margin: 0 4px;
+}
+
+.schedule-btn-primary {
+  flex-shrink: 0;
+  background-color: #2563eb;
+  color: #ffffff;
+  border: none;
+  border-radius: 6px;
+  padding: 10px 20px;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  transition: background-color 0.2s, transform 0.1s;
+}
+
+.schedule-btn-primary:hover {
+  background-color: #1d4ed8;
+}
+
+.schedule-btn-primary:active {
+  transform: scale(0.98);
+}
+
+.schedule-btn-primary svg {
+  color: inherit;
+}
+
+.schedule-empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-xl) var(--space-lg);
+  background-color: #f8fafc;
+  border-radius: 0 0 12px 12px;
+}
+
+.schedule-empty-icon {
+  width: 64px;
+  height: 64px;
+  background-color: #ebf8ff;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-bottom: 16px;
+}
+
+.schedule-empty-icon svg {
+  color: #3182ce;
+}
+
+.schedule-empty-title {
+  margin: 0 0 8px;
+  font-size: 16px;
+  font-weight: 600;
+  color: #2d3748;
+}
+
+.schedule-empty-desc {
+  margin: 0;
+  font-size: 14px;
+  color: #a0aec0;
+}
+
+.schedule-rule-list {
+  padding: 20px 32px 24px;
 }
 
 .allowance-card {
-  width: 440px;
-  max-width: 440px;
-  justify-self: start;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  justify-self: stretch;
+  box-sizing: border-box;
 }
 
-.allowance-card .subsidy-row {
-  grid-template-columns: repeat(2, max-content);
-  gap: var(--space-2xl);
-  max-width: none;
+.allowance-card :deep(.config-card) {
+  gap: 0;
+  min-width: 0;
+  max-width: 100%;
 }
 
-.allowance-card .display-field {
+.allowance-card :deep(.config-card) h3 {
+  display: none;
+}
+
+.allowance-card :deep(.body) {
+  display: block !important;
+  flex-direction: unset !important;
+  gap: 0 !important;
+}
+
+.allowance-title-bar {
+  display: flex;
+  align-items: center;
+  margin-bottom: 20px;
+}
+
+.allowance-title-line {
+  display: inline-block;
+  width: 4px;
+  height: 16px;
+  background: var(--accent-primary);
+  border-radius: 2px;
+  margin-right: 10px;
+}
+
+.allowance-title-text {
+  font-size: var(--font-size-title-sm);
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.allowance-items-container {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.allowance-item {
+  min-width: 0;
+  background: var(--surface-page-accent);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-sm);
+  padding: 14px 16px;
+  transition: all 0.2s ease;
+}
+
+.allowance-item:hover {
+  border-color: var(--border-strong);
+  background: var(--surface-panel);
+  box-shadow: var(--shadow-medium);
+  transform: translateY(-1px);
+}
+
+.allowance-item-label {
+  font-size: 13px;
+  color: var(--text-secondary);
+  margin-bottom: 8px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  line-height: 1.35;
+}
+
+.allowance-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.allowance-dot-inside {
+  background-color: var(--color-success);
+}
+
+.allowance-dot-outside {
+  background-color: var(--color-warning);
+}
+
+.allowance-item-value {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 4px;
+  min-width: 0;
+}
+
+.allowance-value-input {
+  font-size: clamp(22px, 5vw, 28px);
+  font-weight: 700;
+  color: var(--text-primary);
+  border: none;
+  background: transparent;
+  padding: 0;
   width: auto;
-  min-height: 74px;
-  padding: var(--space-md) var(--space-sm) var(--space-md) var(--space-md);
+  min-width: 2.5ch;
+  max-width: calc(100% - 4.8em);
+  flex: 0 1 auto;
+  font-family: inherit;
 }
 
-.allowance-card .field-value-row {
-  gap: var(--space-xs);
+.allowance-value-input::-webkit-outer-spin-button,
+.allowance-value-input::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
+.allowance-value-input[type="number"] {
+  -moz-appearance: textfield;
+  appearance: textfield;
+}
+
+.allowance-value-input:focus {
+  outline: none;
+}
+
+.allowance-value-unit {
+  font-size: var(--font-size-body);
+  font-weight: 500;
+  color: var(--text-tertiary);
   white-space: nowrap;
 }
 
@@ -2193,32 +2705,35 @@ onBeforeUnmount(() => {
 }
 
 .segment-wrap {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: var(--space-sm);
-  padding: var(--space-xs);
-  background: color-mix(in srgb, var(--surface-panel) 76%, white);
-  border-radius: var(--radius-md);
-  border: 1px solid var(--border-default);
+  display: flex;
+  background-color: #f1f5f9;
+  padding: 4px;
+  border-radius: 8px;
 }
 
 .segment-btn {
-  min-height: 44px;
-  border: 2px solid transparent;
-  border-radius: var(--radius-sm);
+  flex: 1;
+  padding: 10px 0;
+  text-align: center;
+  border: none;
+  border-radius: 6px;
   background: transparent;
   color: var(--text-secondary);
-  font-size: var(--font-size-lg);
-  font-weight: 700;
+  font-size: 15px;
+  font-weight: 500;
   cursor: pointer;
-  transition: all var(--transition-base);
+  transition: all 0.2s ease;
+}
+
+.segment-btn:hover:not(.active) {
+  color: var(--text-primary);
 }
 
 .segment-btn.active {
-  background: rgba(var(--accent-rgb), 0.12);
+  background-color: var(--surface-panel);
   color: var(--accent-primary);
-  border-color: var(--accent-primary);
-  box-shadow: 0 2px 8px rgba(var(--accent-rgb), 0.18), inset 0 1px 0 rgba(255, 255, 255, 0.5);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1), 0 1px 2px rgba(0, 0, 0, 0.06);
+  font-weight: 600;
 }
 
 .summary-box,
@@ -2303,6 +2818,44 @@ onBeforeUnmount(() => {
   background: rgba(var(--accent-rgb), 0.12);
   color: var(--accent-primary);
   border: 1px solid var(--accent-border-soft);
+}
+
+.exception-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background-color: #eff6ff;
+  color: #3b82f6;
+  padding: 6px 14px;
+  border-radius: 20px;
+  font-size: 13px;
+  font-weight: 500;
+  border: 1px solid #bfdbfe;
+}
+
+.exception-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background-color: #ffffff;
+  color: #475569;
+  border: 1px solid #cbd5e1;
+  padding: 8px 16px;
+  border-radius: 6px;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.exception-btn:hover {
+  border-color: #94a3b8;
+  color: #0f172a;
+  background-color: #f8fafc;
+}
+
+.exception-btn:active {
+  transform: scale(0.98);
 }
 
 .pending-pill {
@@ -2838,10 +3391,6 @@ onBeforeUnmount(() => {
   gap: var(--space-sm);
 }
 
-.self-study-card .summary-grid {
-  grid-template-columns: minmax(0, 1.18fr) minmax(0, 0.92fr) minmax(0, 0.96fr);
-}
-
 .subsidy-row {
   grid-template-columns: repeat(2, minmax(0, 1fr));
   justify-content: start;
@@ -3165,8 +3714,7 @@ onBeforeUnmount(() => {
   color: var(--text-tertiary);
 }
 
-.middle-footer,
-.self-study-footer {
+.middle-footer {
   padding-top: var(--space-xs);
 }
 

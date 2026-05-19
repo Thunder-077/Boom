@@ -694,7 +694,16 @@ onUnmounted(() => {
 </script>
 
 <style scoped>
-.draw-panel { display: flex; flex-direction: column; gap: var(--space-lg); position: relative; min-width: 1180px; }
+.draw-panel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-lg);
+  position: relative;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  min-height: 0;
+}
 .section-kicker {
   color: var(--text-tertiary);
   font-size: var(--font-size-xs);
@@ -884,5 +893,21 @@ onUnmounted(() => {
 }
 .drag-overlay { position: absolute; inset: 0; z-index: 10; border-radius: var(--radius-md); background: rgba(var(--accent-rgb), .08); border: 2px dashed var(--border-strong); display: flex; align-items: center; justify-content: center; }
 .drag-card { padding: var(--space-xl) var(--space-2xl); border-radius: var(--radius-md); background: var(--surface-panel); border: 1px solid var(--border-default); }
+
+@media (max-width: 1100px) {
+  .grid-two {
+    grid-template-columns: 1fr;
+  }
+
+  .result-summary {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 800px) {
+  .steps-rail {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
 </style>
 

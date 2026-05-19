@@ -1,0 +1,219 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<style>
+    /* 基础重置与外层容器背景 */
+    body {
+        margin: 0;
+        padding: 40px; /* 留出边距，方便预览完整的卡片效果 */
+        background-color: #f3f4f6; /* 页面灰色背景 */
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+        display: flex;
+        justify-content: center;
+    }
+
+    /* ================= 整体导航容器 ================= */
+    .sidebar-container {
+        display: flex;
+        height: 700px; /* 固定高度以展示边框，实际使用可改回 100vh 或 100% */
+        border: 1px solid #d1d5db; /* 增加全包围边框 */
+        border-radius: 12px; /* 增加外围圆角 */
+        overflow: hidden; /* 保证内部内容不溢出圆角 */
+        box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.05), 0 8px 10px -6px rgba(0, 0, 0, 0.01);
+    }
+
+    /* ================= 一级导航栏 (深色系) ================= */
+    .nav-primary {
+        width: 72px;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        padding: 24px 0;
+        background-color: #0f172a; /* 深藏青色背景 */
+        z-index: 2;
+    }
+
+    .nav-primary .nav-group {
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+        width: 100%;
+        align-items: center;
+    }
+
+    .nav-primary .nav-bottom {
+        margin-top: auto;
+    }
+
+    /* 一级导航图标按钮 */
+    .icon-btn {
+        width: 44px;
+        height: 44px;
+        border-radius: 10px;
+        border: none;
+        background: transparent;
+        color: #94a3b8; /* 默认灰蓝色图标 */
+        cursor: pointer;
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        transition: all 0.2s ease;
+    }
+
+    .icon-btn:hover {
+        background-color: #1e293b; /* 悬浮时变亮 */
+        color: #f8fafc;
+    }
+
+    /* 一级导航激活状态 */
+    .icon-btn.active {
+        background-color: #3b82f6; /* 亮蓝色高亮 */
+        color: #ffffff;
+        box-shadow: 0 4px 6px -1px rgba(59, 130, 246, 0.3); /* 蓝色微发光 */
+    }
+
+    .hamburger {
+        margin-bottom: 32px;
+        color: #cbd5e1;
+    }
+    .hamburger:hover {
+        background-color: transparent;
+        color: #ffffff;
+    }
+
+    /* ================= 二级导航栏 (浅色系) ================= */
+    .nav-secondary {
+        width: 260px;
+        display: flex;
+        flex-direction: column;
+        background-color: #ffffff;
+        border-left: 1px solid #1e293b; /* 与深色区域的分割 */
+    }
+
+    /* 二级导航头部 */
+    .sec-header {
+        padding: 28px 24px 20px;
+    }
+
+    .sec-title {
+        font-size: 20px;
+        font-weight: 600;
+        color: #111827;
+        margin: 0;
+        padding-bottom: 20px;
+        border-bottom: 1px solid #e5e7eb;
+    }
+
+    /* 二级导航列表 */
+    .sec-menu {
+        list-style: none;
+        padding: 16px 12px;
+        margin: 0;
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+    }
+
+    /* 二级导航项 */
+    .sec-item {
+        display: flex;
+        align-items: center;
+        padding: 12px 16px;
+        border-radius: 8px;
+        color: #4b5563;
+        text-decoration: none;
+        font-size: 14px;
+        font-weight: 500;
+        transition: all 0.2s;
+    }
+
+    .sec-item svg {
+        margin-right: 14px;
+        color: #9ca3af;
+        transition: color 0.2s;
+    }
+
+    .sec-item:hover {
+        background-color: #f3f4f6;
+        color: #111827;
+    }
+    .sec-item:hover svg {
+        color: #6b7280;
+    }
+
+    /* 二级导航激活状态 - 胶囊风格 */
+    .sec-item.active {
+        background-color: #eff6ff; /* 浅蓝色底 */
+        color: #2563eb; /* 深蓝色字 */
+        font-weight: 600;
+    }
+
+    .sec-item.active svg {
+        color: #2563eb;
+    }
+
+</style>
+</head>
+<body>
+
+<div class="sidebar-container">
+    <nav class="nav-primary">
+        <button class="icon-btn hamburger">
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="3" y1="12" x2="21" y2="12"></line><line x1="3" y1="6" x2="21" y2="6"></line><line x1="3" y1="18" x2="21" y2="18"></line></svg>
+        </button>
+
+        <div class="nav-group">
+            <button class="icon-btn">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path><circle cx="12" cy="7" r="4"></circle></svg>
+            </button>
+            <button class="icon-btn">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect><line x1="9" y1="9" x2="15" y2="9"></line><line x1="9" y1="15" x2="15" y2="15"></line></svg>
+            </button>
+            <button class="icon-btn">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4" width="16" height="16" rx="2" ry="2"></rect><rect x="9" y="9" width="6" height="6"></rect><line x1="9" y1="1" x2="9" y2="4"></line><line x1="15" y1="1" x2="15" y2="4"></line><line x1="9" y1="20" x2="9" y2="23"></line><line x1="15" y1="20" x2="15" y2="23"></line><line x1="20" y1="9" x2="23" y2="9"></line><line x1="20" y1="14" x2="23" y2="14"></line><line x1="1" y1="9" x2="4" y2="9"></line><line x1="1" y1="14" x2="4" y2="14"></line></svg>
+            </button>
+            <button class="icon-btn">
+                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 10v6M2 10l10-5 10 5-10 5z"></path><path d="M6 12v5c3 3 9 3 12 0v-5"></path></svg>
+            </button>
+            <button class="icon-btn active">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect><line x1="16" y1="2" x2="16" y2="6"></line><line x1="8" y1="2" x2="8" y2="6"></line><line x1="3" y1="10" x2="21" y2="10"></line><rect x="8" y="14" width="8" height="4" rx="1"></rect></svg>
+            </button>
+        </div>
+
+        <div class="nav-bottom">
+            <button class="icon-btn">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>
+            </button>
+        </div>
+    </nav>
+
+    <nav class="nav-secondary">
+        <div class="sec-header">
+            <h2 class="sec-title">考试管理</h2>
+        </div>
+        <ul class="sec-menu">
+            <li>
+                <a href="#" class="sec-item">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="21 8 21 21 3 21 3 8"></polyline><rect x="1" y="3" width="22" height="5"></rect><line x1="10" y1="12" x2="14" y2="12"></line></svg>
+                    <span>考场分配</span>
+                </a>
+            </li>
+            <li>
+                <a href="#" class="sec-item">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="16 3 21 3 21 8"></polyline><line x1="4" y1="20" x2="21" y2="3"></line><polyline points="21 16 21 21 16 21"></polyline><line x1="15" y1="15" x2="21" y2="21"></line><line x1="4" y1="4" x2="9" y2="9"></line></svg>
+                    <span>监考抽签</span>
+                </a>
+            </li>
+            <li>
+                <a href="#" class="sec-item active">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="4" y1="21" x2="4" y2="14"></line><line x1="4" y1="10" x2="4" y2="3"></line><line x1="12" y1="21" x2="12" y2="12"></line><line x1="12" y1="8" x2="12" y2="3"></line><line x1="20" y1="21" x2="20" y2="16"></line><line x1="20" y1="12" x2="20" y2="3"></line><line x1="1" y1="14" x2="7" y2="14"></line><line x1="9" y1="8" x2="15" y2="8"></line><line x1="17" y1="16" x2="23" y2="16"></line></svg>
+                    <span>监考配置</span>
+                </a>
+            </li>
+        </ul>
+    </nav>
+</div>
+
+</body>
+</html>

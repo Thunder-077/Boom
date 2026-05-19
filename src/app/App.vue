@@ -25,11 +25,19 @@ import WindowTitleBar from "../widgets/layout/WindowTitleBar.vue";
 .app-content {
   flex: 1;
   min-height: 0;
+  display: flex;
+  flex-direction: column;
   padding-top: 38px;
   position: relative;
 }
 
 .app-content::before {
   display: none;
+}
+
+.app-content > :deep(*) {
+  flex: 1;
+  min-height: 0;
+  display: flex;
 }
 </style>

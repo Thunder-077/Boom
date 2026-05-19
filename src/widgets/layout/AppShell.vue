@@ -59,7 +59,7 @@ const emit = defineEmits<{
 }>();
 
 const isSecondaryNavVisible = ref(true);
-const SECONDARY_NAV_WIDTH = 240;
+const SECONDARY_NAV_WIDTH = 260;
 const SECONDARY_NAV_DURATION_MS = 220;
 
 function handleRailSelect(key: string) {
@@ -135,54 +135,74 @@ function onAfterSecondaryLeave(element: Element) {
 
 <style scoped>
 .page-shell {
+  flex: 1;
   width: 100%;
   margin: 0;
-  min-height: 100%;
+  min-height: 0;
   display: flex;
-  padding: 24px 24px 32px 0;
+  padding: 0 24px 0 0;
   align-items: stretch;
+  box-sizing: border-box;
 }
 
 .nav-stack {
   display: flex;
   align-items: stretch;
   flex-shrink: 0;
+  align-self: stretch;
+  min-height: 0;
+  border-radius: 0;
+  box-shadow: none;
+}
+
+.nav-stack.collapsed {
+  border-right: 1px solid #e5e7eb;
 }
 
 .secondary-nav-wrapper {
   overflow: hidden;
   display: flex;
+  height: 100%;
   min-width: 0;
-  width: 240px;
+  width: 260px;
   will-change: width, opacity;
+  border-right: 1px solid #e5e7eb;
 }
 
 .content-wrap {
   flex: 1;
   min-width: 0;
+  min-height: 0;
   display: flex;
   flex-direction: column;
   gap: 24px;
-  padding-left: 24px;
+  padding: 24px 0 32px 24px;
+  overflow-x: hidden;
+  overflow-y: auto;
+}
+
+.content-wrap > :deep(*) {
+  min-width: 0;
+  max-width: 100%;
 }
 
 @media (max-width: 1280px) {
   .page-shell {
-    padding: 20px 16px 28px 0;
+    padding: 0 16px 0 0;
   }
 
   .content-wrap {
-    padding-left: 16px;
+    padding: 20px 0 28px 16px;
   }
 }
 
 @media (max-width: 1100px) {
   .page-shell {
-    padding: 16px 12px 24px 0;
+    padding: 0 12px 0 0;
   }
 
   .content-wrap {
-    padding-left: 12px;
+    padding: 16px 0 24px 12px;
   }
 }
 </style>

@@ -41,27 +41,25 @@ defineEmits<{
 
 <style scoped>
 .secondary-nav {
-  width: 240px;
-  padding: var(--space-lg) var(--space-md) var(--space-md);
-  background: var(--surface-nav-panel);
-  border-right: 1px solid var(--border-default);
+  width: 260px;
+  height: 100%;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  background: #ffffff;
+  border-left: 1px solid #e5e7eb;
   flex-shrink: 0;
 }
 
 .nav-content {
   display: flex;
   flex-direction: column;
-  gap: var(--space-sm);
   width: 100%;
   min-height: 100%;
 }
 
 .nav-head {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-xs);
-  padding: 2px 4px var(--space-md);
-  border-bottom: 1px solid var(--border-default);
+  padding: 24px 20px 16px;
 }
 
 .nav-switch-enter-active,
@@ -81,58 +79,47 @@ defineEmits<{
 
 .title {
   margin: 0;
-  font-size: var(--font-size-xl);
+  padding-bottom: 16px;
+  border-bottom: 1px solid #f0f0f0;
+  font-size: 15px;
   font-weight: 600;
-  letter-spacing: -0.01em;
+  color: #6b7280;
   line-height: 1.3;
-  color: var(--text-primary);
+  letter-spacing: 0.01em;
 }
 
 .list {
+  padding: 8px 8px;
   display: flex;
   flex-direction: column;
-  gap: 1px;
-  padding-top: var(--space-xs);
+  gap: 2px;
 }
 
 .nav-item {
-  position: relative;
-  overflow: hidden;
-  min-height: 34px;
-  padding: var(--space-sm) var(--space-md);
-  border-radius: var(--radius-sm);
+  width: 100%;
+  min-height: 36px;
+  padding: 8px 12px;
+  border-radius: 6px;
   border: none;
   background: transparent;
-  color: var(--text-secondary);
+  color: #4b5563;
   text-align: left;
   cursor: pointer;
-  font-size: var(--font-size-sm);
+  font-size: 13px;
   font-weight: 500;
-  display: inline-flex;
+  display: flex;
   align-items: center;
-  gap: var(--space-sm);
-  transition:
-    background-color var(--transition-base) var(--transition-ease),
-    color var(--transition-base) var(--transition-ease);
-}
-
-.nav-item::before {
-  content: "";
-  position: absolute;
-  left: 0;
-  top: 50%;
-  width: 3px;
-  height: 14px;
-  border-radius: var(--radius-pill);
-  background: var(--accent-primary);
-  opacity: 0;
-  transform: translateY(-50%) scaleX(0.5);
-  transition: opacity var(--transition-base) var(--transition-ease), transform var(--transition-base) var(--transition-ease);
+  gap: 10px;
+  transition: background 0.15s ease, color 0.15s ease;
 }
 
 .nav-item:hover {
-  background: var(--surface-nav-item-hover);
-  color: var(--text-primary);
+  background: #f3f4f6;
+  color: #111827;
+}
+
+.nav-item:hover .nav-icon {
+  color: #6b7280;
 }
 
 .nav-item:active {
@@ -141,23 +128,22 @@ defineEmits<{
 
 .nav-item:focus-visible {
   outline: none;
-  background: var(--surface-nav-item-hover);
+  background: #f3f4f6;
 }
 
 .nav-item.active {
-  color: var(--text-primary);
-  background: var(--surface-nav-item-active);
+  background: #f3f4f6;
+  color: #111827;
   font-weight: 600;
 }
 
 .nav-item.active .nav-icon {
-  color: var(--accent-primary);
-  opacity: 1;
-}
-
-.nav-item.active::before {
-  opacity: 1;
-  transform: translateY(-50%) scaleX(1);
+  color: #374151;
+  font-variation-settings:
+    "FILL" 1,
+    "wght" 500,
+    "GRAD" 0,
+    "opsz" 18;
 }
 
 .nav-icon {
@@ -175,7 +161,8 @@ defineEmits<{
     "wght" 400,
     "GRAD" 0,
     "opsz" 18;
-  opacity: 0.55;
+  color: #9ca3af;
+  transition: color 0.15s ease;
 }
 
 .placeholder {
