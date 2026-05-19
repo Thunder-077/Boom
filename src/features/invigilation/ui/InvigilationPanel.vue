@@ -1040,12 +1040,6 @@ const availableRuleTargetOptions = computed(() => {
 const selectedRuleTargetOptions = computed(() =>
   availableRuleTargetOptions.value.filter((option) => draftRule.value.targetIds.includes(option.id)),
 );
-const excludeCustomRuleCount = computed(() =>
-  store.viewState.customRules.filter((rule) => rule.actionType === "exclude").length,
-);
-const requireCustomRuleCount = computed(() =>
-  store.viewState.customRules.filter((rule) => rule.actionType === "require").length,
-);
 const selectedRuleTeacherName = computed(
   () => store.viewState.teachers.find((item) => item.id === draftRule.value.teacherId)?.teacherName || "",
 );
