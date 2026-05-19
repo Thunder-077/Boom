@@ -4,10 +4,6 @@
       <div class="nav-content" :key="title">
         <div class="nav-head">
           <h2 class="title">{{ title }}</h2>
-          <p class="desc">{{ description }}</p>
-          <div class="meta-row">
-            <span class="meta-pill">{{ items.length }} 个工作区</span>
-          </div>
         </div>
         <div class="list">
           <button
@@ -46,7 +42,7 @@ defineEmits<{
 <style scoped>
 .secondary-nav {
   width: 248px;
-  padding: 18px 14px 14px;
+  padding: var(--space-4) var(--space-md) var(--space-md);
   border-radius: 0;
   background: var(--surface-nav-panel);
   border: 1px solid var(--border-default);
@@ -62,7 +58,7 @@ defineEmits<{
 .nav-content {
   display: flex;
   flex-direction: column;
-  gap: 14px;
+  gap: var(--space-md);
   width: 100%;
   min-height: 100%;
 }
@@ -70,7 +66,7 @@ defineEmits<{
 .nav-head {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: var(--space-sm);
   padding: 2px 4px 0;
   position: relative;
 }
@@ -80,12 +76,12 @@ defineEmits<{
   width: 100%;
   height: 1px;
   background: var(--accent-divider);
-  margin-top: 4px;
+  margin-top: var(--space-xs);
 }
 
 .eyebrow {
   color: var(--text-tertiary);
-  font-size: 11px;
+  font-size: var(--font-size-xs);
   font-weight: 700;
   letter-spacing: 0.14em;
   text-transform: uppercase;
@@ -93,7 +89,7 @@ defineEmits<{
 
 .nav-switch-enter-active,
 .nav-switch-leave-active {
-  transition: opacity 0.15s ease, transform 0.15s ease;
+  transition: opacity var(--transition-fast) var(--transition-ease), transform var(--transition-fast) var(--transition-ease);
 }
 
 .nav-switch-enter-from {
@@ -108,7 +104,7 @@ defineEmits<{
 
 .title {
   margin: 0;
-  font-size: 22px;
+  font-size: var(--font-size-3xl);
   font-weight: 700;
   letter-spacing: -0.02em;
 }
@@ -116,14 +112,14 @@ defineEmits<{
 .desc {
   margin: 0;
   color: color-mix(in srgb, var(--text-secondary) 72%, var(--text-primary));
-  font-size: 12px;
+  font-size: var(--font-size-xs);
   line-height: 1.45;
 }
 
 .meta-row {
   display: flex;
   align-items: center;
-  padding-top: 2px;
+  padding-top: var(--space-xs);
 }
 
 .meta-pill {
@@ -131,10 +127,10 @@ defineEmits<{
   align-items: center;
   min-height: 24px;
   padding: 4px 10px;
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   background: rgba(var(--accent-rgb), 0.2);
   color: var(--accent-primary);
-  font-size: 11px;
+  font-size: var(--font-size-xs);
   font-weight: 700;
   letter-spacing: 0.04em;
 }
@@ -142,31 +138,31 @@ defineEmits<{
 .list {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: var(--space-sm);
 }
 
 .nav-item {
   position: relative;
   overflow: hidden;
   min-height: 50px;
-  padding: 0 14px 0 16px;
-  border-radius: 16px;
+  padding: 0 var(--space-md) 0 var(--space-lg);
+  border-radius: var(--radius-sm);
   border: 1px solid var(--border-default);
   background: var(--surface-nav-item);
   color: var(--text-primary);
   text-align: left;
   cursor: pointer;
-  font-size: 14px;
+  font-size: var(--font-size-base);
   font-weight: 600;
   display: inline-flex;
   align-items: center;
-  gap: 12px;
+  gap: var(--space-md);
   transition:
-    background-color 0.18s ease,
-    border-color 0.18s ease,
-    color 0.18s ease,
-    transform 0.18s ease,
-    box-shadow 0.18s ease;
+    background-color var(--transition-base) var(--transition-ease),
+    border-color var(--transition-base) var(--transition-ease),
+    color var(--transition-base) var(--transition-ease),
+    transform var(--transition-base) var(--transition-ease),
+    box-shadow var(--transition-base) var(--transition-ease);
 }
 
 .nav-item::before {
@@ -176,11 +172,11 @@ defineEmits<{
   top: 50%;
   width: 4px;
   height: 24px;
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   background: linear-gradient(180deg, var(--accent-primary-strong), var(--accent-primary));
   opacity: 0;
   transform: translateY(-50%) scaleY(0.4);
-  transition: opacity 0.18s ease, transform 0.18s ease;
+  transition: opacity var(--transition-base) var(--transition-ease), transform var(--transition-base) var(--transition-ease);
 }
 
 .nav-item::after {
@@ -189,7 +185,7 @@ defineEmits<{
   inset: 0;
   background: var(--accent-sheen);
   opacity: 0;
-  transition: opacity 0.18s ease;
+  transition: opacity var(--transition-base) var(--transition-ease);
 }
 
 .nav-item:hover {

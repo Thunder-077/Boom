@@ -112,22 +112,19 @@ defineEmits<{
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  border: 1px solid var(--border-default);
-  border-radius: 12px;
-  background: var(--surface-nav-panel);
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
   color: var(--text-secondary);
   cursor: pointer;
   transition:
-    background-color 0.18s ease,
-    border-color 0.18s ease,
-    color 0.18s ease,
-    box-shadow 0.18s ease;
+    background-color var(--transition-base) var(--transition-ease),
+    color var(--transition-base) var(--transition-ease);
 }
 
 .toggle-btn:hover {
   background: rgba(var(--accent-rgb), 0.12);
   color: var(--accent-primary-strong);
-  border-color: rgba(var(--accent-rgb), 0.22);
 }
 
 .toggle-btn:focus-visible {

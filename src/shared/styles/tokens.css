@@ -114,6 +114,13 @@
   --font-size-title-sm: 18px;
   --font-size-title-md: 22px;
   --font-size-title-lg: 32px;
+  --font-size-xs: 12px;
+  --font-size-sm: 13px;
+  --font-size-base: 14px;
+  --font-size-lg: 15px;
+  --font-size-xl: 18px;
+  --font-size-2xl: 20px;
+  --font-size-3xl: 22px;
 
   /* Radius */
   --radius-xs: 10px;
@@ -121,6 +128,8 @@
   --radius-md: 20px;
   --radius-lg: 28px;
   --radius-pill: 999px;
+  --radius-card: var(--radius-md);
+  --radius-card-large: var(--radius-lg);
 
   /* Space */
   --space-1: 8px;
@@ -130,6 +139,19 @@
   --space-5: 24px;
   --space-6: 32px;
   --space-7: 40px;
+  --space-xs: 4px;
+  --space-sm: 8px;
+  --space-md: 12px;
+  --space-lg: 16px;
+  --space-xl: 24px;
+  --space-2xl: 32px;
+
+  /* Transitions */
+  --transition-fast: 0.15s;
+  --transition-base: 0.2s;
+  --transition-slow: 0.3s;
+  --transition-ease: cubic-bezier(0.4, 0, 0.2, 1);
+  --transition-spring: cubic-bezier(0.25, 0.8, 0.25, 1);
 
   /* Legacy aliases used by existing components */
   --color-bg: var(--surface-page);

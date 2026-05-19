@@ -274,16 +274,16 @@ onMounted(async () => {
 .workload {
   display: flex;
   flex-direction: column;
-  gap: 14px;
+  gap: var(--space-lg);
   height: 100%;
   min-height: 0;
-  padding: 14px;
+  padding: var(--space-lg);
 }
 
 .query-grid {
   display: grid;
   grid-template-columns: minmax(220px, 1.3fr) repeat(4, minmax(116px, 0.7fr)) minmax(112px, 0.5fr) minmax(118px, 0.5fr);
-  gap: 10px;
+  gap: var(--space-md);
   align-items: end;
 }
 
@@ -291,12 +291,12 @@ onMounted(async () => {
   min-width: 0;
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: var(--space-xs);
 }
 
 .control-field > span {
   color: var(--color-text-muted);
-  font-size: 12px;
+  font-size: var(--font-size-xs);
 }
 
 .glass-input {
@@ -304,27 +304,27 @@ onMounted(async () => {
   height: 42px;
   box-sizing: border-box;
   border: 1px solid var(--color-border-soft);
-  border-radius: 14px;
+  border-radius: var(--radius-sm);
   background: var(--surface-panel);
   color: var(--color-text);
-  padding: 0 12px;
-  font-size: 13px;
+  padding: 0 var(--space-md);
+  font-size: var(--font-size-sm);
   outline: none;
 }
 
 .action-btn {
   height: 42px;
   min-width: 0;
-  padding: 0 12px;
+  padding: 0 var(--space-md);
   border: 0;
-  border-radius: 12px;
+  border-radius: var(--radius-sm);
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 6px;
+  gap: var(--space-xs);
   color: var(--color-on-primary);
   font-weight: 700;
-  font-size: 13px;
+  font-size: var(--font-size-sm);
   cursor: pointer;
   white-space: nowrap;
 }
@@ -343,7 +343,7 @@ onMounted(async () => {
 }
 
 .action-btn .material-symbols-rounded {
-  font-size: 18px;
+  font-size: var(--font-size-xl);
 }
 
 .feedback-block {
@@ -365,35 +365,35 @@ onMounted(async () => {
 .stats-strip {
   display: grid;
   grid-template-columns: repeat(3, minmax(120px, 150px)) minmax(220px, 1fr);
-  gap: 10px;
+  gap: var(--space-md);
   align-items: stretch;
 }
 
 .stat-cell {
-  padding: 10px 12px;
+  padding: var(--space-md) var(--space-md);
   border: 1px solid var(--border-default);
-  border-radius: 12px;
+  border-radius: var(--radius-sm);
   background: var(--surface-panel);
 }
 
 .stat-cell span {
   display: block;
   color: var(--color-text-muted);
-  font-size: 12px;
+  font-size: var(--font-size-xs);
 }
 
 .stat-cell strong {
   display: block;
-  margin-top: 4px;
+  margin-top: var(--space-xs);
   color: var(--color-text);
-  font-size: 20px;
+  font-size: var(--font-size-2xl);
 }
 
 
 .tables {
   display: grid;
   grid-template-columns: minmax(420px, 0.7fr) minmax(560px, 1fr);
-  gap: 12px;
+  gap: var(--space-md);
   min-height: 0;
   flex: 1;
 }
@@ -403,7 +403,7 @@ onMounted(async () => {
   min-height: 0;
   overflow: auto;
   border: 1px solid var(--border-default);
-  border-radius: 12px;
+  border-radius: var(--radius-sm);
 }
 
 .data-table {
@@ -418,9 +418,9 @@ onMounted(async () => {
 .data-table th,
 .data-table td {
   border-bottom: 1px solid var(--border-default);
-  padding: 10px 12px;
+  padding: var(--space-md) var(--space-md);
   text-align: left;
-  font-size: 13px;
+  font-size: var(--font-size-sm);
   vertical-align: middle;
 }
 

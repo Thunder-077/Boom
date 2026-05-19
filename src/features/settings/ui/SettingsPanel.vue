@@ -5,7 +5,7 @@
         <span class="section-kicker">外观</span>
         <h3>配色主题</h3>
       </div>
-      <span class="theme-pill">{{ currentThemeLabel }}</span>
+      <Tag>{{ currentThemeLabel }}</Tag>
     </header>
 
     <div class="theme-grid">
@@ -35,6 +35,7 @@
 import { computed } from "vue";
 import type { ThemeOption } from "../../../shared/theme/theme";
 import { useThemeState } from "../../../shared/theme/theme";
+import { Tag } from "../../../widgets/common";
 
 const { currentTheme, options, setTheme } = useThemeState();
 
@@ -55,8 +56,8 @@ function previewStyle(theme: ThemeOption) {
 .settings-card {
   display: flex;
   flex-direction: column;
-  gap: 18px;
-  padding: 20px;
+  gap: var(--space-xl);
+  padding: var(--space-4);
   border-radius: var(--radius-card-large);
   background: var(--surface-nav-panel);
 }
@@ -65,21 +66,21 @@ function previewStyle(theme: ThemeOption) {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
-  gap: 16px;
+  gap: var(--space-3);
 }
 
 .section-kicker {
   margin: 0;
   color: var(--text-tertiary);
-  font-size: 11px;
+  font-size: var(--font-size-xs);
   font-weight: 700;
   letter-spacing: 0.08em;
   text-transform: uppercase;
 }
 
 .settings-head h3 {
-  margin: 6px 0 8px;
-  font-size: 22px;
+  margin: var(--space-sm) 0 var(--space-2);
+  font-size: var(--font-size-3xl);
   font-weight: 700;
   letter-spacing: -0.02em;
 }
@@ -87,48 +88,36 @@ function previewStyle(theme: ThemeOption) {
 .settings-head p {
   margin: 0;
   color: var(--text-secondary);
-  font-size: 13px;
+  font-size: var(--font-size-sm);
   line-height: 1.55;
-}
-
-.theme-pill {
-  display: inline-flex;
-  align-items: center;
-  min-height: 28px;
-  padding: 6px 12px;
-  border-radius: 999px;
-  font-size: 12px;
-  font-weight: 700;
-  background: rgba(var(--accent-rgb), 0.12);
-  color: var(--accent-primary);
 }
 
 .theme-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-  gap: 14px;
+  gap: var(--space-md);
 }
 
 .theme-card {
   display: flex;
   flex-direction: column;
-  gap: 12px;
-  padding: 14px;
+  gap: var(--space-md);
+  padding: var(--space-md);
   border: 1px solid var(--border-default);
-  border-radius: 20px;
+  border-radius: var(--radius-md);
   background: var(--surface-nav-item);
   cursor: pointer;
   text-align: left;
   transition:
-    border-color 0.18s ease,
-    box-shadow 0.18s ease,
-    transform 0.18s ease;
+    border-color var(--transition-base) var(--transition-ease),
+    box-shadow var(--transition-base) var(--transition-ease),
+    transform var(--transition-base) var(--transition-ease);
 }
 
 .theme-card:hover {
   transform: translateY(-1px);
   border-color: var(--accent-border-soft);
-  box-shadow: 0 12px 24px rgba(31, 60, 103, 0.06);
+  box-shadow: var(--shadow-soft);
 }
 
 .theme-card.active {
@@ -140,7 +129,7 @@ function previewStyle(theme: ThemeOption) {
   position: relative;
   display: block;
   height: 116px;
-  border-radius: 16px;
+  border-radius: var(--radius-sm);
   border: 1px solid color-mix(in srgb, var(--preview-accent) 22%, rgba(15, 23, 42, 0.16));
   background:
     radial-gradient(circle at 82% 18%, color-mix(in srgb, var(--preview-accent) 16%, transparent), transparent 45%),
@@ -156,30 +145,30 @@ function previewStyle(theme: ThemeOption) {
 .preview-panel,
 .preview-accent {
   position: absolute;
-  border-radius: 14px;
+  border-radius: var(--radius-sm);
 }
 
 .preview-sidebar {
-  top: 12px;
-  left: 12px;
+  top: var(--space-md);
+  left: var(--space-md);
   width: 32px;
-  bottom: 12px;
+  bottom: var(--space-md);
   background: color-mix(in srgb, var(--preview-surface) 78%, var(--preview-accent) 22%);
   border: 1px solid color-mix(in srgb, var(--preview-accent) 24%, white);
 }
 
 .preview-panel {
-  top: 12px;
+  top: var(--space-md);
   left: 56px;
-  right: 12px;
-  bottom: 12px;
+  right: var(--space-md);
+  bottom: var(--space-md);
   background: color-mix(in srgb, var(--preview-surface) 86%, white);
   border: 1px solid color-mix(in srgb, var(--preview-accent) 20%, white);
 }
 
 .preview-accent {
   right: 22px;
-  top: 24px;
+  top: var(--space-5);
   width: 70px;
   height: 30px;
   background: var(--preview-accent);
@@ -189,17 +178,17 @@ function previewStyle(theme: ThemeOption) {
 .theme-text {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: var(--space-xs);
 }
 
 .theme-text strong {
-  font-size: 15px;
+  font-size: var(--font-size-lg);
   color: var(--text-primary);
 }
 
 .theme-text small {
   color: var(--text-secondary);
-  font-size: 12px;
+  font-size: var(--font-size-xs);
   line-height: 1.5;
 }
 </style>

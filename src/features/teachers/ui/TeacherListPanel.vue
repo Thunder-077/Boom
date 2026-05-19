@@ -52,21 +52,19 @@
           <div class="cell name-col teacher-name">{{ row.teacherName }}</div>
           <div class="cell class-col">
             <div class="tag-row">
-              <span v-for="className in row.classNames" :key="className" class="tag-pill">{{ className }}</span>
+              <Tag v-for="className in row.classNames" :key="className" size="sm">{{ className }}</Tag>
             </div>
           </div>
           <div class="cell subject-col">{{ row.subjects.map((subject) => TEACHER_SUBJECT_LABELS[subject]).join(" / ") }}</div>
           <div class="cell remark-col">{{ row.remark || "--" }}</div>
         </div>
       </div>
-      <div v-if="totalPages > 1" class="pagination-row">
-        <span class="page-meta">共 {{ totalRows }} 位教师，本页 {{ pageStart }} - {{ pageEnd }}</span>
-        <div class="pagination-actions">
-          <button class="page-btn" type="button" :disabled="currentPage === 1" @click="goToPrevPage">上一页</button>
-          <button v-for="page in visiblePages" :key="page" class="page-btn" :class="{ active: page === currentPage }" type="button" @click="goToPage(page)">{{ page }}</button>
-          <button class="page-btn" type="button" :disabled="currentPage === totalPages" @click="goToNextPage">下一页</button>
-        </div>
-      </div>
+      <Pagination
+        v-model:currentPage="currentPage"
+        :pageSize="pageSize"
+        :total="totalRows"
+        @change="currentPage = $event"
+      />
     </TableCard>
   </section>
 </template>
@@ -75,6 +73,7 @@
 import { computed, onMounted, onUnmounted, ref, watch } from "vue";
 import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { TEACHER_SUBJECT_LABELS } from "../../../entities/teacher/model";
+import { Tag, Pagination } from "@/widgets/common";
 import FilterToolbar from "../../../widgets/common/FilterToolbar.vue";
 import FluentSelect from "../../../widgets/common/FluentSelect.vue";
 import InfoHint from "../../../widgets/common/InfoHint.vue";
@@ -115,34 +114,11 @@ const currentPage = ref(1);
 const pageSize = ref(5);
 
 const totalRows = computed(() => store.viewState.rows.length);
-const totalPages = computed(() => Math.max(1, Math.ceil(totalRows.value / pageSize.value)));
 
 const pagedRows = computed(() => {
   const start = (currentPage.value - 1) * pageSize.value;
   return store.viewState.rows.slice(start, start + pageSize.value);
 });
-
-const pageStart = computed(() => totalRows.value === 0 ? 0 : (currentPage.value - 1) * pageSize.value + 1);
-const pageEnd = computed(() => Math.min(currentPage.value * pageSize.value, totalRows.value));
-
-const visiblePages = computed(() => {
-  const current = currentPage.value;
-  const total = totalPages.value;
-  const pages = new Set([1, Math.max(1, current - 1), current, Math.min(total, current + 1), total]);
-  return Array.from(pages).filter((p) => p >= 1 && p <= total).sort((a, b) => a - b);
-});
-
-function goToPage(page: number) {
-  currentPage.value = page;
-}
-
-function goToPrevPage() {
-  if (currentPage.value > 1) currentPage.value--;
-}
-
-function goToNextPage() {
-  if (currentPage.value < totalPages.value) currentPage.value++;
-}
 
 watch(
   () => store.viewState.filters,
@@ -256,7 +232,7 @@ onUnmounted(() => {
   display: flex;
   flex-direction: column;
   min-height: 0;
-  gap: 22px;
+  gap: var(--space-4);
   position: relative;
   min-width: 1160px;
 }
@@ -281,7 +257,7 @@ onUnmounted(() => {
   position: absolute;
   inset: 0;
   z-index: 10;
-  border-radius: 24px;
+  border-radius: var(--radius-md);
   background: rgba(var(--accent-rgb), 0.08);
   border: 2px dashed rgba(var(--accent-rgb), 0.34);
   display: flex;
@@ -292,29 +268,29 @@ onUnmounted(() => {
 
 .drag-card {
   min-width: 280px;
-  padding: 20px 24px;
-  border-radius: 22px;
+  padding: var(--space-4) var(--space-5);
+  border-radius: var(--radius-lg);
   background: var(--surface-panel-strong);
   box-shadow: var(--shadow-medium);
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: var(--space-2);
   text-align: center;
 }
 
 .drag-card strong {
-  font-size: 15px;
+  font-size: var(--font-size-base);
   color: var(--color-brand);
 }
 
 .drag-card span {
-  font-size: 13px;
+  font-size: var(--font-size-sm);
   color: var(--color-text-muted);
 }
 
 .toolbar-fields {
   display: flex;
-  gap: 12px;
+  gap: var(--space-3);
 }
 
 .toolbar-fields label {
@@ -327,8 +303,8 @@ onUnmounted(() => {
 
 .search-field svg {
   position: absolute;
-  left: 14px;
-  top: 12px;
+  left: var(--space-3);
+  top: var(--space-3);
   width: 18px;
   height: 18px;
   fill: var(--color-text-muted);
@@ -336,7 +312,7 @@ onUnmounted(() => {
 
 .search-field input {
   width: 260px;
-  padding-left: 42px;
+  padding-left: var(--space-7);
 }
 
 .table-scroll {
@@ -369,14 +345,14 @@ onUnmounted(() => {
   min-height: inherit;
   display: flex;
   align-items: center;
-  padding: 0 18px;
-  font-size: 14px;
+  padding: 0 var(--space-4);
+  font-size: var(--font-size-sm);
   color: var(--color-text);
   min-width: 0;
 }
 
 .head {
-  font-size: 12px;
+  font-size: var(--font-size-xs);
   font-weight: 700;
   color: var(--text-secondary);
   letter-spacing: 0.04em;
@@ -401,9 +377,9 @@ onUnmounted(() => {
   align-items: center;
   align-content: center;
   flex-wrap: wrap;
-  gap: 10px;
+  gap: var(--space-2);
   width: 100%;
-  padding: 10px 0;
+  padding: var(--space-2) 0;
 }
 
 .row-alt {
@@ -411,55 +387,6 @@ onUnmounted(() => {
 }
 
 .import-status {
-  margin: -10px 4px 0;
-}
-
-.pagination-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 16px 20px;
-  border-top: 1px solid var(--border-default);
-  background: var(--surface-panel);
-}
-
-.page-meta {
-  color: var(--color-text-muted);
-  font-size: 13px;
-}
-
-.pagination-actions {
-  display: flex;
-  gap: 8px;
-}
-
-.page-btn {
-  min-width: 32px;
-  height: 32px;
-  padding: 0 8px;
-  border-radius: 10px;
-  border: 1px solid var(--color-border-soft);
-  background: var(--surface-panel-strong);
-  cursor: pointer;
-  color: var(--text-secondary);
-  font-size: 13px;
-  transition: all 0.2s;
-}
-
-.page-btn:hover:not(:disabled) {
-  background: rgba(var(--accent-rgb), 0.1);
-  border-color: var(--accent-border-strong);
-  color: var(--accent-primary);
-}
-
-.page-btn.active {
-  background: var(--accent-primary);
-  color: var(--color-on-primary);
-  border-color: var(--accent-primary);
-}
-
-.page-btn:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
+  margin: calc(-1 * var(--space-2)) var(--space-1) 0;
 }
 </style>

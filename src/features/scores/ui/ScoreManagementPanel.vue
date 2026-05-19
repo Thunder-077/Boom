@@ -372,7 +372,7 @@ onUnmounted(() => {
   position: absolute;
   inset: 0;
   z-index: 10;
-  border-radius: 24px;
+  border-radius: var(--radius-xl);
   background: rgba(var(--accent-rgb), 0.08);
   border: 2px dashed rgba(var(--accent-rgb), 0.34);
   display: flex;
@@ -383,30 +383,30 @@ onUnmounted(() => {
 
 .drag-card {
   min-width: 280px;
-  padding: 20px 24px;
-  border-radius: 22px;
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--space-4);
   background: var(--surface-panel-strong);
   box-shadow: var(--shadow-medium);
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: var(--space-sm);
   text-align: center;
 }
 
 .drag-card strong {
-  font-size: 15px;
+  font-size: var(--font-size-lg);
   color: var(--color-brand);
 }
 
 .drag-card span {
-  font-size: 13px;
+  font-size: var(--font-size-sm);
   color: var(--color-text-muted);
 }
 
 .toolbar-fields {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: var(--space-md);
 }
 
 /* Filter fields – matches .pen scoreFilter spec */
@@ -416,9 +416,9 @@ onUnmounted(() => {
   align-items: center;
   width: 220px;
   height: 42px;
-  padding: 0 14px;
+  padding: 0 var(--space-lg);
   border: 1px solid var(--color-border-soft);
-  border-radius: 16px;
+  border-radius: var(--radius-sm);
   background: var(--surface-input);
 }
 
@@ -429,7 +429,7 @@ onUnmounted(() => {
 
 .filter-search-icon {
   color: var(--color-text-muted);
-  font-size: 18px;
+  font-size: var(--font-size-xl);
   font-family: "Material Symbols Rounded";
   flex-shrink: 0;
 }
@@ -439,7 +439,7 @@ onUnmounted(() => {
   border: none;
   background: transparent;
   color: var(--color-text);
-  font-size: 14px;
+  font-size: var(--font-size-base);
   outline: none;
   min-width: 0;
 }
@@ -464,7 +464,7 @@ onUnmounted(() => {
 }
 
 .score-cell {
-  font-size: 20px;
+  font-size: var(--font-size-2xl);
   font-weight: 700;
   color: var(--accent-primary-strong);
   font-family: var(--font-mono);
@@ -500,7 +500,7 @@ onUnmounted(() => {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 16px 20px;
+  padding: var(--space-3) var(--space-4);
   border-top: 1px solid var(--border-default);
   background: var(--surface-panel);
 }
@@ -512,20 +512,20 @@ onUnmounted(() => {
 
 .pagination-actions {
   display: flex;
-  gap: 8px;
+  gap: var(--space-sm);
 }
 
 .page-btn {
   min-width: 32px;
   height: 32px;
-  padding: 0 8px;
-  border-radius: 10px;
+  padding: 0 var(--space-sm);
+  border-radius: var(--radius-xs);
   border: 1px solid var(--color-border-soft);
   background: var(--surface-panel-strong);
   cursor: pointer;
   color: var(--text-secondary);
   font-size: 13px;
-  transition: all 0.2s;
+  transition: var(--transition-base);
 }
 
 .page-btn:hover:not(:disabled) {
@@ -559,11 +559,11 @@ onUnmounted(() => {
   width: 780px;
   max-height: 86vh;
   overflow: auto;
-  padding: 22px;
+  padding: var(--space-4);
   display: flex;
   flex-direction: column;
-  gap: 16px;
-  border-radius: 26px;
+  gap: var(--space-3);
+  border-radius: var(--radius-xl);
 }
 
 .detail-head {
@@ -574,7 +574,7 @@ onUnmounted(() => {
 
 .detail-head h3 {
   margin: 0;
-  font-size: 22px;
+  font-size: var(--font-size-2xl);
   font-weight: 700;
 }
 
@@ -587,7 +587,7 @@ onUnmounted(() => {
   color: var(--color-text-muted);
   width: 32px;
   height: 32px;
-  border-radius: 10px;
+  border-radius: var(--radius-xs);
 }
 
 .close-btn:hover {
@@ -597,33 +597,33 @@ onUnmounted(() => {
 .detail-meta {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 10px;
+  gap: var(--space-md);
 }
 
 .meta-field {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: var(--space-sm);
 }
 
 .meta-field span {
-  font-size: 12px;
+  font-size: var(--font-size-xs);
   color: var(--color-text-muted);
 }
 
 .subject-list {
   border: 1px solid var(--color-border-soft);
-  border-radius: 18px;
-  padding: 14px;
+  border-radius: var(--radius-sm);
+  padding: var(--space-md);
   display: grid;
-  gap: 10px;
+  gap: var(--space-md);
 }
 
 .subject-row {
   display: grid;
   grid-template-columns: 88px 140px 1fr;
   align-items: center;
-  gap: 10px;
+  gap: var(--space-md);
 }
 
 .small {
@@ -637,7 +637,7 @@ onUnmounted(() => {
 .detail-actions {
   display: flex;
   justify-content: flex-end;
-  gap: 10px;
+  gap: var(--space-md);
 }
 
 .detail-loading,

@@ -47,24 +47,24 @@
                 >
                   <div class="config-item-top">
                     <strong>{{ row.className }}</strong>
-                    <span class="item-tag">{{ row.gradeName || currentTypeLabel }}</span>
+                    <Tag variant="primary" size="sm">{{ row.gradeName || currentTypeLabel }}</Tag>
                   </div>
                   <p class="config-item-subtitle">{{ compactLocation(row) }}</p>
                 </button>
 
-                <div v-if="filteredRows.length === 0" class="empty-list">
-                  <span class="material-symbols-rounded" aria-hidden="true">inventory_2</span>
-                  <strong>{{ emptyListTitle }}</strong>
-                  <p>{{ emptyListSummary }}</p>
-                </div>
+                <EmptyState
+                  v-if="filteredRows.length === 0"
+                  :title="emptyListTitle"
+                  :description="emptyListSummary"
+                />
               </div>
             </div>
           </div>
 
-          <button class="primary-btn create-btn" type="button" @click="createNewConfig">
+          <Button variant="primary" class="create-btn" @click="createNewConfig">
             <span class="material-symbols-rounded" aria-hidden="true">add</span>
             {{ createButtonLabel }}
-          </button>
+          </Button>
         </div>
       </aside>
 
@@ -150,7 +150,7 @@
           </div>
         </ConfigCard>
 
-        <ConfigCard title="教室位置"">
+        <ConfigCard title="教室位置">
           <div class="form-grid form-grid-compact">
             <label class="field">
               <span class="field-label">楼号</span>
@@ -173,70 +173,44 @@
             </label>
           </div>
           <div class="config-footer">
-            <button
-              class="secondary-btn danger-btn"
-              type="button"
+            <Button
+              variant="danger"
               :disabled="store.viewState.mode !== 'existing' || store.viewState.deleting"
               @click="deleteCurrent"
             >
               {{ store.viewState.deleting ? "删除中..." : "删除教室" }}
-            </button>
-            <button class="primary-btn" type="button" :disabled="store.viewState.saving" @click="saveCurrent">
+            </Button>
+            <Button
+              variant="primary"
+              :disabled="store.viewState.saving"
+              @click="saveCurrent"
+            >
               {{ store.viewState.saving ? "保存中..." : saveButtonLabel }}
-            </button>
+            </Button>
           </div>
           <p v-if="store.viewState.errorMessage" class="error-text">{{ store.viewState.errorMessage }}</p>
         </ConfigCard>
       </div>
     </section>
-
-    <div v-if="dialogState.visible" class="dialog-mask" @click.self="closeDialog(false)">
-      <section class="dialog card-shell">
-        <header class="dialog-head">
-          <h3>{{ dialogState.title }}</h3>
-          <button class="dialog-close" type="button" @click="closeDialog(false)">×</button>
-        </header>
-        <p class="dialog-summary">{{ dialogState.summary }}</p>
-        <ul v-if="dialogState.details.length > 0" class="dialog-details">
-          <li v-for="(line, index) in dialogState.details" :key="index">{{ line }}</li>
-        </ul>
-        <footer class="dialog-actions">
-          <button v-if="dialogState.kind === 'confirm'" class="secondary-btn" type="button" @click="closeDialog(false)">
-            {{ dialogState.cancelText }}
-          </button>
-          <button class="primary-btn" type="button" @click="closeDialog(true)">
-            {{ dialogState.confirmText }}
-          </button>
-        </footer>
-      </section>
-    </div>
   </section>
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref } from "vue";
+import { computed, onMounted, ref } from "vue";
 import { CLASS_CONFIG_TYPE_OPTIONS, SUBJECT_OPTIONS } from "../../../entities/class-config/model";
 import type { ClassConfigRow, ClassConfigType } from "../../../entities/class-config/model";
 import { Subject } from "../../../entities/score/model";
 import ConfigCard from "../../../widgets/common/ConfigCard.vue";
+import { Button, Tag, EmptyState } from "@/widgets/common";
 import { useClassConfigStore } from "../store";
+import { useAppDialog } from "@/shared/ui/appDialog";
 
 const store = useClassConfigStore();
+const dialog = useAppDialog();
 const searchKeyword = ref("");
 const isSearchPanelOpen = ref(false);
 const isInteractingWithSearchPanel = ref(false);
 const searchInputRef = ref<HTMLInputElement | null>(null);
-let dialogResolver: ((value: boolean) => void) | null = null;
-
-const dialogState = reactive({
-  visible: false,
-  kind: "confirm" as "confirm" | "alert",
-  title: "",
-  summary: "",
-  details: [] as string[],
-  confirmText: "确认",
-  cancelText: "取消",
-});
 
 const configTypeOptions = CLASS_CONFIG_TYPE_OPTIONS;
 const subjectMap = new Map(SUBJECT_OPTIONS.map((subject) => [subject.value, subject]));
@@ -309,40 +283,11 @@ function onSearchBlur() {
   }, 0);
 }
 
-function openDialog(options: {
-  kind: "confirm" | "alert";
-  title: string;
-  summary: string;
-  details?: string[];
-  confirmText?: string;
-  cancelText?: string;
-}) {
-  dialogState.visible = true;
-  dialogState.kind = options.kind;
-  dialogState.title = options.title;
-  dialogState.summary = options.summary;
-  dialogState.details = options.details ?? [];
-  dialogState.confirmText = options.confirmText ?? (options.kind === "confirm" ? "确认" : "知道了");
-  dialogState.cancelText = options.cancelText ?? "取消";
-  return new Promise<boolean>((resolve) => {
-    dialogResolver = resolve;
-  });
-}
-
-function closeDialog(result: boolean) {
-  if (dialogResolver) {
-    dialogResolver(result);
-    dialogResolver = null;
-  }
-  dialogState.visible = false;
-}
-
 async function confirmDiscardIfNeeded(nextAction: string) {
   if (!store.viewState.isDirty) {
     return true;
   }
-  return openDialog({
-    kind: "confirm",
+  return dialog.confirm({
     title: "检测到未保存修改",
     summary: "继续操作前需要先放弃当前未保存的内容。",
     details: [
@@ -415,8 +360,7 @@ async function saveCurrent() {
     if (!className) {
       details.push(`请先填写${nameLabel.value}。`);
     }
-    await openDialog({
-      kind: "alert",
+    await dialog.alert({
       title: "缺少必填信息",
       summary: "当前配置还不能保存。",
       details,
@@ -431,8 +375,7 @@ async function saveCurrent() {
     } else {
       await store.update();
     }
-    await openDialog({
-      kind: "alert",
+    await dialog.alert({
       title: "保存成功",
       summary: wasCreating ? "配置已创建。" : "配置已更新。",
       details: [`名称：${store.viewState.form.className || `未命名${currentTypeLabel.value}`}`],
@@ -446,8 +389,7 @@ async function deleteCurrent() {
   if (!store.viewState.editingId) {
     return;
   }
-  const confirmed = await openDialog({
-    kind: "confirm",
+  const confirmed = await dialog.confirm({
     title: "确认删除",
     summary: "删除后当前配置无法恢复，请确认是否继续。",
     details: [`当前记录：${store.viewState.form.className || `未命名${currentTypeLabel.value}`}`],
@@ -459,8 +401,7 @@ async function deleteCurrent() {
   }
   try {
     await store.remove(store.viewState.editingId);
-    await openDialog({
-      kind: "alert",
+    await dialog.alert({
       title: "删除成功",
       summary: "当前配置已经删除。",
     });
@@ -479,23 +420,23 @@ onMounted(async () => {
 .class-config-page {
   display: flex;
   flex-direction: column;
-  gap: 18px;
+  gap: var(--space-3);
   min-width: 0;
 }
 
 .workspace {
   display: grid;
   grid-template-columns: 360px minmax(0, 1fr);
-  gap: 18px;
+  gap: var(--space-3);
   align-items: stretch;
   min-width: 1280px;
 }
 
 .sidebar {
-  padding: 18px;
+  padding: var(--space-3);
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: var(--space-3);
   min-height: 100%;
   overflow: visible;
 }
@@ -503,25 +444,28 @@ onMounted(async () => {
 .sidebar-toolbar {
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: var(--space-2);
 }
 
 .type-switch {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 10px;
+  gap: var(--space-2);
 }
 
 .type-btn {
   min-height: 42px;
   border: 1px solid var(--border-default);
-  border-radius: 14px;
+  border-radius: var(--radius-md);
   background: var(--surface-panel);
   color: var(--text-secondary);
-  font-size: 14px;
+  font-size: var(--font-size-base);
   font-weight: 700;
   cursor: pointer;
-  transition: border-color 0.18s ease, background-color 0.18s ease, color 0.18s ease;
+  transition:
+    border-color var(--transition-base) var(--transition-ease),
+    background-color var(--transition-base) var(--transition-ease),
+    color var(--transition-base) var(--transition-ease);
 }
 
 .type-btn.active {
@@ -538,22 +482,22 @@ onMounted(async () => {
   min-height: 44px;
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 0 14px;
+  gap: var(--space-2);
+  padding: 0 var(--space-3);
   border: 1px solid var(--border-default);
-  border-radius: 16px;
+  border-radius: var(--radius-lg);
   background: var(--surface-input);
 }
 
 .search-panel {
   position: absolute;
-  top: calc(100% + 10px);
+  top: calc(100% + var(--space-2));
   left: 0;
   right: 0;
   z-index: 40;
-  padding: 12px;
+  padding: var(--space-2);
   border: 1px solid var(--border-default);
-  border-radius: 12px;
+  border-radius: var(--radius-md);
   background: color-mix(in srgb, var(--surface-panel-strong) 86%, white);
   box-shadow: var(--shadow-medium);
   backdrop-filter: blur(14px);
@@ -561,7 +505,7 @@ onMounted(async () => {
 
 .search-icon {
   color: var(--text-tertiary);
-  font-size: 18px;
+  font-size: var(--font-size-lg);
 }
 
 .search-input,
@@ -573,11 +517,11 @@ onMounted(async () => {
 }
 
 .search-input {
-  font-size: 14px;
+  font-size: var(--font-size-base);
 }
 
 .field-input {
-  font-size: 15px;
+  font-size: var(--font-size-base);
   font-weight: 600;
 }
 
@@ -586,48 +530,44 @@ onMounted(async () => {
   outline: none;
 }
 
-.create-btn {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 6px;
-}
-
 .list-head {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 10px;
+  gap: var(--space-2);
   color: var(--text-secondary);
-  font-size: 13px;
+  font-size: var(--font-size-sm);
 }
 
 .list-head strong {
   color: var(--text-primary);
-  font-size: 15px;
+  font-size: var(--font-size-base);
 }
 
 .config-list {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: var(--space-2);
   max-height: 520px;
   overflow: auto;
-  padding-right: 4px;
-  margin-top: 12px;
+  padding-right: var(--space-sm);
+  margin-top: var(--space-2);
 }
 
 .config-item {
   border: 1px solid var(--border-default);
-  border-radius: 16px;
+  border-radius: var(--radius-lg);
   background: color-mix(in srgb, var(--surface-panel) 82%, white);
-  padding: 12px 13px;
+  padding: var(--space-2) var(--space-3);
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: var(--space-sm);
   text-align: left;
   cursor: pointer;
-  transition: border-color 0.18s ease, transform 0.18s ease, box-shadow 0.18s ease;
+  transition:
+    border-color var(--transition-base) var(--transition-ease),
+    transform var(--transition-base) var(--transition-ease),
+    box-shadow var(--transition-base) var(--transition-ease);
 }
 
 .config-item:hover {
@@ -643,14 +583,14 @@ onMounted(async () => {
 
 .config-item-top strong {
   color: var(--text-primary);
-  font-size: 15px;
+  font-size: var(--font-size-base);
   line-height: 1.3;
 }
 
 .config-item p {
   margin: 0;
   color: var(--text-secondary);
-  font-size: 12px;
+  font-size: var(--font-size-xs);
   line-height: 1.5;
 }
 
@@ -658,7 +598,7 @@ onMounted(async () => {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 10px;
+  gap: var(--space-2);
 }
 
 .config-item-subtitle {
@@ -667,57 +607,17 @@ onMounted(async () => {
   text-overflow: ellipsis;
 }
 
-.item-tag {
-  padding: 3px 10px;
-  border-radius: 999px;
-  background: rgba(var(--accent-rgb), 0.12);
-  color: var(--accent-primary-strong);
-  font-size: 11px;
-  font-weight: 700;
-  flex-shrink: 0;
-}
-
-.empty-list {
-  min-height: 220px;
-  border: 1px dashed var(--border-strong);
-  border-radius: 18px;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
-  padding: 24px;
-  text-align: center;
-}
-
-.empty-list .material-symbols-rounded {
-  font-size: 28px;
-  color: var(--text-tertiary);
-}
-
-.empty-list strong {
-  color: var(--text-primary);
-  font-size: 16px;
-}
-
-.empty-list p {
-  margin: 0;
-  color: var(--text-secondary);
-  font-size: 13px;
-  line-height: 1.55;
-}
-
 .editor {
   display: flex;
   flex-direction: column;
-  gap: 18px;
+  gap: var(--space-3);
   min-width: 0;
 }
 
 .form-grid {
   display: grid;
   grid-template-columns: minmax(0, 1.5fr) minmax(280px, 1fr);
-  gap: 14px;
+  gap: var(--space-2);
 }
 
 .form-grid-compact {
@@ -728,10 +628,10 @@ onMounted(async () => {
   min-height: 82px;
   display: flex;
   flex-direction: column;
-  gap: 10px;
-  padding: 14px 16px;
+  gap: var(--space-2);
+  padding: var(--space-3) var(--space-3);
   border: 1px solid var(--border-default);
-  border-radius: 16px;
+  border-radius: var(--radius-lg);
   background: color-mix(in srgb, var(--surface-panel) 82%, white);
 }
 
@@ -741,19 +641,19 @@ onMounted(async () => {
 
 .field-label {
   color: var(--text-secondary);
-  font-size: 12px;
+  font-size: var(--font-size-xs);
   font-weight: 700;
 }
 
 .field-input-strong {
-  font-size: 18px;
+  font-size: 28px;
   font-weight: 700;
 }
 
 .subject-grid {
   display: flex;
   flex-wrap: wrap;
-  gap: 10px;
+  gap: var(--space-2);
   align-items: center;
 }
 
@@ -761,25 +661,28 @@ onMounted(async () => {
   display: inline-flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 10px;
-  padding: 6px 8px;
+  gap: var(--space-2);
+  padding: var(--space-sm) var(--space-2);
   border: 1px dashed rgba(var(--accent-rgb), 0.6);
-  border-radius: 24px;
+  border-radius: var(--radius-xl);
   background: rgba(255, 255, 255, 0.76);
 }
 
 .subject-chip {
   min-width: 96px;
   min-height: 40px;
-  padding: 0 14px;
+  padding: 0 var(--space-3);
   border: 1px solid var(--border-default);
-  border-radius: 14px;
+  border-radius: var(--radius-md);
   background: var(--surface-panel);
   color: var(--text-secondary);
-  font-size: 14px;
+  font-size: var(--font-size-base);
   font-weight: 700;
   cursor: pointer;
-  transition: border-color 0.18s ease, background-color 0.18s ease, color 0.18s ease;
+  transition:
+    border-color var(--transition-base) var(--transition-ease),
+    background-color var(--transition-base) var(--transition-ease),
+    color var(--transition-base) var(--transition-ease);
 }
 
 .subject-chip.active {
@@ -792,85 +695,15 @@ onMounted(async () => {
   display: flex;
   align-items: center;
   justify-content: flex-end;
-  gap: 10px;
-  margin-top: 4px;
-  padding-top: 4px;
-}
-
-.danger-btn {
-  color: var(--color-danger);
-  border-color: rgba(209, 52, 56, 0.24);
+  gap: var(--space-2);
+  margin-top: var(--space-sm);
+  padding-top: var(--space-sm);
 }
 
 .error-text {
   margin: 0;
   color: var(--color-danger);
-  font-size: 13px;
-}
-
-.dialog-mask {
-  position: fixed;
-  inset: 0;
-  background: var(--surface-overlay);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  z-index: 600;
-}
-
-.dialog {
-  width: 480px;
-  max-width: calc(100vw - 32px);
-  padding: 20px;
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-}
-
-.dialog-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 16px;
-}
-
-.dialog-head h3 {
-  margin: 0;
-  font-size: 20px;
-  font-weight: 700;
-}
-
-.dialog-close {
-  width: 30px;
-  height: 30px;
-  border: 0;
-  border-radius: 8px;
-  background: transparent;
-  color: var(--text-secondary);
-  cursor: pointer;
-  font-size: 20px;
-}
-
-.dialog-summary {
-  margin: 0;
-  color: var(--text-primary);
-  font-size: 14px;
-  line-height: 1.55;
-}
-
-.dialog-details {
-  margin: 0;
-  padding-left: 18px;
-  color: var(--text-secondary);
-  font-size: 13px;
-  display: grid;
-  gap: 4px;
-}
-
-.dialog-actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: 10px;
+  font-size: var(--font-size-sm);
 }
 
 @media (max-width: 1100px) {

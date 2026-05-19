@@ -430,7 +430,7 @@ onUnmounted(() => {
 .panel {
   display: flex;
   flex-direction: column;
-  gap: 18px;
+  gap: var(--space-xl);
   min-width: 1160px;
   min-height: calc(100vh - 118px);
   position: relative;
@@ -447,17 +447,17 @@ onUnmounted(() => {
 
 .toolbar-fields {
   display: flex;
-  gap: 14px;
+  gap: var(--space-lg);
   align-items: center;
 }
 
 .segmented {
   display: inline-grid;
   grid-template-columns: repeat(3, 1fr);
-  gap: 4px;
-  padding: 4px;
+  gap: var(--space-xs);
+  padding: var(--space-xs);
   border: 1px solid var(--color-border-soft);
-  border-radius: 12px;
+  border-radius: var(--radius-sm);
   background: var(--surface-panel);
 }
 
@@ -465,19 +465,19 @@ onUnmounted(() => {
   height: 34px;
   min-width: 112px;
   border: 0;
-  border-radius: 8px;
+  border-radius: var(--radius-xs);
   background: transparent;
   color: var(--text-secondary);
   cursor: pointer;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 6px;
-  font-size: 13px;
+  gap: var(--space-sm);
+  font-size: var(--font-size-sm);
 }
 
 .segmented .material-symbols-rounded {
-  font-size: 18px;
+  font-size: var(--font-size-xl);
 }
 
 .segmented button.active {
@@ -488,12 +488,12 @@ onUnmounted(() => {
 .import-management {
   display: grid;
   grid-template-columns: 1fr;
-  gap: 12px;
+  gap: var(--space-md);
   align-items: stretch;
   min-width: 0;
-  padding: 14px;
+  padding: var(--space-md);
   border: 1px solid var(--border-default);
-  border-radius: 18px;
+  border-radius: var(--radius-sm);
   background: var(--surface-panel-strong);
 }
 
@@ -516,7 +516,7 @@ onUnmounted(() => {
     minmax(120px, 0.8fr)
     minmax(68px, 0.42fr)
     minmax(68px, 0.42fr);
-  gap: 10px;
+  gap: var(--space-md);
   align-items: end;
   min-width: 0;
   overflow: hidden;
@@ -526,12 +526,12 @@ onUnmounted(() => {
   min-width: 0;
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: var(--space-sm);
 }
 
 .control-field > span {
   color: var(--color-text-muted);
-  font-size: 12px;
+  font-size: var(--font-size-xs);
 }
 
 .glass-input {
@@ -539,11 +539,11 @@ onUnmounted(() => {
   height: 42px;
   box-sizing: border-box;
   border: 1px solid var(--color-border-soft);
-  border-radius: 14px;
+  border-radius: var(--radius-sm);
   background: var(--surface-panel);
   color: var(--color-text);
-  padding: 0 12px;
-  font-size: 13px;
+  padding: 0 var(--space-md);
+  font-size: var(--font-size-sm);
   outline: none;
 }
 
@@ -562,22 +562,22 @@ onUnmounted(() => {
   height: 42px;
   width: 100%;
   min-width: 0;
-  padding: 0 8px;
+  padding: 0 var(--space-sm);
   border: 0;
-  border-radius: 12px;
+  border-radius: var(--radius-xs);
   display: inline-flex;
   align-items: center;
   justify-content: center;
   gap: 5px;
   color: var(--color-on-primary);
   font-weight: 700;
-  font-size: 13px;
+  font-size: var(--font-size-sm);
   cursor: pointer;
   white-space: nowrap;
 }
 
 .action-btn .material-symbols-rounded {
-  font-size: 18px;
+  font-size: var(--font-size-xl);
 }
 
 .action-btn.primary {
@@ -597,19 +597,19 @@ onUnmounted(() => {
 .schedule-area {
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: var(--space-md);
   min-height: 0;
-  padding: 4px;
+  padding: var(--space-xs);
 }
 
 .week-switch {
   display: inline-flex;
   align-items: center;
   width: fit-content;
-  gap: 4px;
-  padding: 4px;
+  gap: var(--space-xs);
+  padding: var(--space-xs);
   border: 1px solid var(--color-border-soft);
-  border-radius: 12px;
+  border-radius: var(--radius-sm);
   background: var(--surface-panel);
 }
 
@@ -617,11 +617,11 @@ onUnmounted(() => {
   height: 32px;
   min-width: 86px;
   border: 0;
-  border-radius: 8px;
+  border-radius: var(--radius-xs);
   background: transparent;
   color: var(--text-secondary);
   cursor: pointer;
-  font-size: 13px;
+  font-size: var(--font-size-sm);
   font-weight: 700;
 }
 
@@ -635,9 +635,9 @@ onUnmounted(() => {
   max-height: calc(100vh - 360px);
   overflow: auto;
   border: 1px solid var(--border-default);
-  border-radius: 12px;
+  border-radius: var(--radius-sm);
   background: var(--surface-table-content);
-  padding-bottom: 10px;
+  padding-bottom: var(--space-md);
   scrollbar-gutter: stable;
 }
 
@@ -675,7 +675,7 @@ onUnmounted(() => {
 
 .section-cell {
   grid-column: 1;
-  padding: 8px 4px;
+  padding: var(--space-sm) var(--space-xs);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -684,7 +684,7 @@ onUnmounted(() => {
 
 .section-cell span {
   color: var(--color-text);
-  font-size: 15px;
+  font-size: var(--font-size-lg);
   font-weight: 700;
   writing-mode: vertical-rl;
   text-orientation: upright;
@@ -693,22 +693,22 @@ onUnmounted(() => {
 
 .period-cell {
   grid-column: 2;
-  padding: 10px;
+  padding: var(--space-md);
   display: flex;
   flex-direction: column;
   justify-content: center;
-  gap: 4px;
+  gap: var(--space-xs);
   background: var(--period-cell-bg, var(--surface-table-stripe));
 }
 
 .period-cell strong {
   color: var(--color-text);
-  font-size: 14px;
+  font-size: var(--font-size-base);
 }
 
 .lesson-cell {
   min-height: 78px;
-  padding: 8px;
+  padding: var(--space-sm);
   display: flex;
   flex-direction: column;
   gap: 6px;
@@ -716,13 +716,13 @@ onUnmounted(() => {
 
 .lesson {
   min-height: 54px;
-  padding: 8px 10px;
-  border-radius: 8px;
+  padding: var(--space-sm) 10px;
+  border-radius: var(--radius-xs);
   background: var(--period-lesson-bg, rgba(var(--accent-rgb), 0.08));
   display: flex;
   flex-direction: column;
   justify-content: center;
-  gap: 4px;
+  gap: var(--space-xs);
   border-left: 3px solid var(--period-accent, var(--accent-primary));
 }
 
@@ -755,12 +755,12 @@ onUnmounted(() => {
 }
 
 .lesson strong {
-  font-size: 15px;
+  font-size: var(--font-size-lg);
   color: var(--color-text);
 }
 
 .lesson span {
-  font-size: 12px;
+  font-size: var(--font-size-xs);
   color: var(--color-text-muted);
   word-break: break-word;
 }
@@ -769,7 +769,7 @@ onUnmounted(() => {
   min-height: 320px;
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: var(--space-md);
   align-items: center;
   justify-content: center;
   color: var(--color-text-muted);
@@ -783,7 +783,7 @@ onUnmounted(() => {
   position: absolute;
   inset: 0;
   z-index: 10;
-  border-radius: 24px;
+  border-radius: var(--radius-lg);
   background: rgba(var(--accent-rgb), 0.08);
   border: 2px dashed rgba(var(--accent-rgb), 0.34);
   display: flex;
@@ -794,23 +794,23 @@ onUnmounted(() => {
 
 .drag-card {
   min-width: 320px;
-  padding: 20px 24px;
-  border-radius: 18px;
+  padding: var(--space-xl) var(--space-2xl);
+  border-radius: var(--radius-md);
   background: var(--surface-panel-strong);
   box-shadow: var(--shadow-medium);
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: var(--space-xs);
   text-align: center;
 }
 
 .drag-card strong {
-  font-size: 15px;
+  font-size: var(--font-size-lg);
   color: var(--color-brand);
 }
 
 .drag-card span {
-  font-size: 13px;
+  font-size: var(--font-size-sm);
   color: var(--color-text-muted);
 }
 </style>
