@@ -280,7 +280,6 @@
             <div>
               <h4>班级科目配置</h4>
             </div>
-            <span class="pending-pill">{{ pendingClassCount }} 个待处理</span>
           </div>
 
           <div v-if="selfStudyLoadError" class="empty-box error-box">{{ selfStudyLoadError }}</div>
@@ -300,7 +299,7 @@
                 />
               </div>
             </div>
-            <div class="page-chip">第 {{ currentPage }} / {{ totalPages }} 页</div>
+            <span class="pending-pill">{{ pendingClassCount }} 个待处理</span>
           </div>
 
           <div v-if="!selfStudyLoading && filteredClasses.length > 0" class="class-table">
@@ -326,14 +325,11 @@
             </div>
           </div>
 
-          <div v-if="!selfStudyLoading && filteredClasses.length > 0" class="pagination-row">
-            <span class="page-meta">共 {{ filteredClasses.length }} 个班级，本页 {{ pageStart }} - {{ pageEnd }}</span>
-            <div class="pagination-actions">
-              <button class="page-btn" type="button" :disabled="currentPage === 1" @click="goToPrevPage">上一页</button>
-              <button v-for="page in visiblePages" :key="page" class="page-btn" :class="{ active: page === currentPage }" type="button" @click="goToPage(page)">{{ page }}</button>
-              <button class="page-btn" type="button" :disabled="currentPage === totalPages" @click="goToNextPage">下一页</button>
-            </div>
-          </div>
+          <Pagination
+            v-model:currentPage="currentPage"
+            :page-size="pageSize"
+            :total="filteredClasses.length"
+          />
         </section>
 
         <div class="drawer-footer">
@@ -351,7 +347,6 @@
         <div class="drawer-header">
           <div class="drawer-title-block">
             <h3>中层监考例外</h3>
-            <p>例外名单用于覆盖默认规则，仅影响中层教师是否进入监考候选池。</p>
           </div>
           <button class="drawer-close" type="button" @click="closeMiddleManagerDrawer"><span class="material-symbols-rounded">close</span></button>
         </div>
@@ -362,16 +357,13 @@
             <button class="segment-btn" :class="{ active: middleManagerDefaultEnabledDraft }" type="button" @click="middleManagerDefaultEnabledDraft = true">参与监考</button>
             <button class="segment-btn" :class="{ active: !middleManagerDefaultEnabledDraft }" type="button" @click="middleManagerDefaultEnabledDraft = false">不参与监考</button>
           </div>
-          <p class="drawer-note">{{ middleManagerDefaultEnabledDraft ? "当前默认策略：中层干部参与监考。例外名单中的人员将覆盖默认规则。" : "当前默认策略：中层干部不参与监考。例外名单中的人员将覆盖默认规则。" }}</p>
         </section>
 
         <section class="drawer-section">
           <div class="section-header">
             <div class="title-stack">
               <h4>例外名单</h4>
-              <p>按人设置与默认规则相反的监考状态。</p>
             </div>
-            <span class="exception-pill">{{ middleManagerExceptionTeacherIdsDraft.length }} 位例外</span>
           </div>
 
           <div class="middle-toolbar">
@@ -381,6 +373,7 @@
             <button class="middle-filter-btn" type="button" :class="{ active: showOnlyMiddleManagerExceptions }" @click="showOnlyMiddleManagerExceptions = !showOnlyMiddleManagerExceptions">
               仅看例外
             </button>
+            <span class="exception-pill">{{ middleManagerExceptionTeacherIdsDraft.length }} 位例外</span>
           </div>
 
           <div v-if="showMiddleManagerPicker" class="middle-picker">
@@ -394,17 +387,6 @@
             <div v-for="teacher in pagedMiddleManagerTeachers" :key="teacher.id" class="exclude-item middle-exception-item">
               <div class="middle-person">
                 <strong>{{ teacher.teacherName }}</strong>
-                <span class="middle-subtext">
-                  {{
-                    isMiddleManagerException(teacher.id)
-                      ? middleManagerDefaultEnabledDraft
-                        ? "已设为例外，当前不参与监考"
-                        : "已设为例外，当前参与监考"
-                      : middleManagerDefaultEnabledDraft
-                        ? "跟随默认规则，当前参与监考"
-                        : "跟随默认规则，当前不参与监考"
-                  }}
-                </span>
               </div>
               <div class="middle-actions">
                 <span class="middle-status-pill" :class="getMiddleManagerStatusClass(teacher.id)">
@@ -415,20 +397,16 @@
                 </button>
               </div>
             </div>
-            <div v-if="middleManagerTotalPages > 1" class="pagination-row middle-pagination">
-              <span class="page-meta">共 {{ filteredMiddleManagerTeachers.length }} 位{{ showOnlyMiddleManagerExceptions ? "例外" : "中层" }}，本页 {{ middleManagerPageStart }} - {{ middleManagerPageEnd }}</span>
-              <div class="pagination-actions">
-                <button class="page-btn" type="button" :disabled="middleManagerPage === 1" @click="goToPrevMiddleManagerPage">上一页</button>
-                <button v-for="page in middleManagerVisiblePages" :key="page" class="page-btn" :class="{ active: page === middleManagerPage }" type="button" @click="goToMiddleManagerPage(page)">{{ page }}</button>
-                <button class="page-btn" type="button" :disabled="middleManagerPage === middleManagerTotalPages" @click="goToNextMiddleManagerPage">下一页</button>
-              </div>
-            </div>
+            <Pagination
+              v-model:currentPage="middleManagerPage"
+              :page-size="middleManagerPageSize"
+              :total="filteredMiddleManagerTeachers.length"
+            />
           </div>
           <div v-else class="empty-box">{{ showOnlyMiddleManagerExceptions ? "当前还没有例外人员。" : "没有匹配的中层教师。" }}</div>
         </section>
 
         <div class="drawer-footer">
-          <p>保存后将更新中层监考规则摘要与例外人数。</p>
           <div class="drawer-actions">
             <button class="secondary-btn" type="button" @click="closeMiddleManagerDrawer">取消</button>
             <button class="primary-btn" type="button" @click="saveMiddleManagerSetup">保存例外</button>
@@ -704,6 +682,7 @@ import { Subject as SubjectEnum } from "../../../entities/score/model";
 import { revealInExplorer } from "../../../shared/utils/appLog";
 import ConfigCard from "../../../widgets/common/ConfigCard.vue";
 import FluentSelect from "../../../widgets/common/FluentSelect.vue";
+import Pagination from "../../../widgets/common/composite/Pagination.vue";
 import { classConfigService } from "../../classes/service";
 import { useExamAllocationStore } from "../../dashboard/store";
 
@@ -860,9 +839,6 @@ const middleManagerTeachers = computed(() => [...store.viewState.teachers].filte
 const filteredClasses = computed(() => (gradeFilter.value === "all" ? selfStudyClasses.value : selfStudyClasses.value.filter((item) => item.gradeName === gradeFilter.value)));
 const totalPages = computed(() => Math.max(1, Math.ceil(filteredClasses.value.length / pageSize)));
 const pagedClasses = computed(() => filteredClasses.value.slice((currentPage.value - 1) * pageSize, currentPage.value * pageSize));
-const pageStart = computed(() => (filteredClasses.value.length === 0 ? 0 : (currentPage.value - 1) * pageSize + 1));
-const pageEnd = computed(() => Math.min(currentPage.value * pageSize, filteredClasses.value.length));
-const visiblePages = computed(() => Array.from(new Set([1, Math.max(1, currentPage.value - 1), currentPage.value, Math.min(totalPages.value, currentPage.value + 1), totalPages.value])).filter((page) => page >= 1 && page <= totalPages.value));
 const configuredClassCount = computed(() => selfStudyClasses.value.filter((item) => !!item.subject).length);
 const pendingClassCount = computed(() => selfStudyClasses.value.length - configuredClassCount.value);
 const allCurrentPageSelected = computed(() => pagedClasses.value.length > 0 && pagedClasses.value.every((item) => selectedClassIds.value.has(item.id)));
@@ -920,15 +896,7 @@ const filteredMiddleManagerTeachers = computed(() => {
     return matchedKeyword && matchedException;
   });
 });
-const middleManagerTotalPages = computed(() => Math.max(1, Math.ceil(filteredMiddleManagerTeachers.value.length / middleManagerPageSize)));
 const pagedMiddleManagerTeachers = computed(() => filteredMiddleManagerTeachers.value.slice((middleManagerPage.value - 1) * middleManagerPageSize, middleManagerPage.value * middleManagerPageSize));
-const middleManagerPageStart = computed(() => (filteredMiddleManagerTeachers.value.length === 0 ? 0 : (middleManagerPage.value - 1) * middleManagerPageSize + 1));
-const middleManagerPageEnd = computed(() => Math.min(middleManagerPage.value * middleManagerPageSize, filteredMiddleManagerTeachers.value.length));
-const middleManagerVisiblePages = computed(() =>
-  Array.from(
-    new Set([1, Math.max(1, middleManagerPage.value - 1), middleManagerPage.value, Math.min(middleManagerTotalPages.value, middleManagerPage.value + 1), middleManagerTotalPages.value]),
-  ).filter((page) => page >= 1 && page <= middleManagerTotalPages.value),
-);
 const subjectMenuSelectedSubject = computed(() => (subjectMenu.value.open && subjectMenu.value.mode === "single" && subjectMenu.value.rowId !== null ? selfStudyClasses.value.find((item) => item.id === subjectMenu.value.rowId)?.subject ?? null : null));
 const isAssignmentProgressVisible = computed(() => Boolean(store.viewState.assigning));
 const persistedInvigilationExportNotice = computed<AssignmentNotice | null>(() => {
@@ -1138,8 +1106,9 @@ watch(
       middleManagerPage.value = 1;
       return;
     }
-    if (middleManagerPage.value > middleManagerTotalPages.value) {
-      middleManagerPage.value = middleManagerTotalPages.value;
+    const maxPage = Math.max(1, Math.ceil(value / middleManagerPageSize));
+    if (middleManagerPage.value > maxPage) {
+      middleManagerPage.value = maxPage;
     }
   },
 );
@@ -1628,19 +1597,6 @@ function toggleSelectAllCurrentPage() {
   selectedClassIds.value = next;
 }
 
-function goToPage(page: number) {
-  currentPage.value = page;
-  closeSubjectMenu();
-}
-
-function goToPrevPage() {
-  if (currentPage.value > 1) goToPage(currentPage.value - 1);
-}
-
-function goToNextPage() {
-  if (currentPage.value < totalPages.value) goToPage(currentPage.value + 1);
-}
-
 function openSubjectMenu(rowId: number, event: MouseEvent) {
   bulkMenuOpen.value = false;
   openSubjectMenuAtEvent(event, rowId, "single");
@@ -1746,18 +1702,6 @@ function getMiddleManagerStatusLabel(teacherId: number) {
 
 function getMiddleManagerStatusClass(teacherId: number) {
   return getMiddleManagerStatusLabel(teacherId) === "参与" ? "on" : "off";
-}
-
-function goToMiddleManagerPage(page: number) {
-  middleManagerPage.value = page;
-}
-
-function goToPrevMiddleManagerPage() {
-  if (middleManagerPage.value > 1) goToMiddleManagerPage(middleManagerPage.value - 1);
-}
-
-function goToNextMiddleManagerPage() {
-  if (middleManagerPage.value < middleManagerTotalPages.value) goToMiddleManagerPage(middleManagerPage.value + 1);
 }
 
 async function saveMiddleManagerSetup() {
@@ -2618,8 +2562,7 @@ onBeforeUnmount(() => {
 
 .field-label,
 .summary-label,
-.card-note,
-.page-meta {
+.card-note {
   color: var(--text-secondary);
   font-size: var(--font-size-sm);
 }
@@ -2737,7 +2680,6 @@ onBeforeUnmount(() => {
 .drawer-header,
 .section-header,
 .drawer-actions,
-.pagination-row,
 .exclude-item,
 .exclude-right,
 .action-buttons,
@@ -2759,9 +2701,9 @@ onBeforeUnmount(() => {
 .toolbar-row,
 .action-row,
 .drawer-header,
-.section-header,
-.pagination-row {
+.section-header {
   justify-content: space-between;
+  padding-top: var(--space-xs);
 }
 
 .footer-row,
@@ -2770,7 +2712,6 @@ onBeforeUnmount(() => {
 .drawer-header,
 .section-header,
 .drawer-actions,
-.pagination-row,
 .toolbar-left,
 .action-buttons,
 .exclude-right,
@@ -2780,7 +2721,6 @@ onBeforeUnmount(() => {
 }
 
 .drawer-trigger,
-.page-btn,
 .action-btn,
 .toolbar-btn {
   white-space: nowrap;
@@ -3449,7 +3389,6 @@ onBeforeUnmount(() => {
 }
 
 .fluent-input,
-.toolbar-filter,
 .search-bar {
   min-height: 42px;
   border-radius: var(--radius-sm);
@@ -3599,37 +3538,9 @@ onBeforeUnmount(() => {
   cursor: pointer;
 }
 
-.toolbar-btn:disabled,
-.page-btn:disabled {
+.toolbar-btn:disabled {
   opacity: 0.5;
   cursor: not-allowed;
-}
-
-.page-chip {
-  padding: var(--space-sm) var(--space-lg);
-  border-radius: var(--radius-md);
-  border: 1px solid var(--accent-border-soft);
-  background: var(--surface-panel);
-  color: var(--text-secondary);
-  font-size: var(--font-size-sm);
-  font-weight: 700;
-}
-
-.page-btn {
-  min-width: 44px;
-  min-height: 40px;
-  border-radius: var(--radius-sm);
-  border: 1px solid var(--accent-border-soft);
-  background: var(--surface-panel);
-  color: var(--text-secondary);
-  font-size: var(--font-size-base);
-  font-weight: 700;
-  cursor: pointer;
-}
-
-.page-btn.active {
-  background: rgba(var(--accent-rgb), 0.12);
-  color: var(--accent-primary);
 }
 
 .selection-strip {
@@ -3727,7 +3638,20 @@ onBeforeUnmount(() => {
 }
 
 .icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: var(--radius-sm);
+  color: var(--text-tertiary);
+  font-size: 18px;
+  transition: color 0.15s, background-color 0.15s;
+}
+
+.icon-btn:hover {
   color: var(--color-danger);
+  background-color: color-mix(in srgb, var(--color-danger) 10%, transparent);
 }
 
 .text-btn {
@@ -3739,8 +3663,9 @@ onBeforeUnmount(() => {
 .drawer-close {
   width: 38px;
   height: 38px;
-  border: 1px solid var(--color-border);
   border-radius: var(--radius-sm);
+  outline: none;
+  box-shadow: none;
 }
 
 .search-bar {
@@ -3938,21 +3863,10 @@ onBeforeUnmount(() => {
   padding: var(--space-md);
 }
 
-.middle-pagination {
-  align-items: center;
-  padding-top: 2px;
-}
-
 .middle-person {
   display: flex;
   flex-direction: column;
   gap: var(--space-xs);
-}
-
-.middle-subtext {
-  color: var(--text-secondary);
-  font-size: var(--font-size-xs);
-  font-weight: 500;
 }
 
 .middle-actions {
