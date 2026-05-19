@@ -42,11 +42,11 @@ defineEmits<{
 <style scoped>
 .secondary-nav {
   width: 248px;
-  padding: var(--space-4) var(--space-md) var(--space-md);
+  padding: var(--space-6) var(--space-md) var(--space-md);
   border-radius: 0;
   background: var(--surface-nav-panel);
-  border: 1px solid var(--border-default);
-  box-shadow: 0 12px 28px rgba(31, 60, 103, 0.06);
+  border-right: 1px solid var(--border-default);
+  box-shadow: none;
   position: relative;
 }
 
@@ -58,7 +58,7 @@ defineEmits<{
 .nav-content {
   display: flex;
   flex-direction: column;
-  gap: var(--space-md);
+  gap: var(--space-lg);
   width: 100%;
   min-height: 100%;
 }
@@ -66,7 +66,7 @@ defineEmits<{
 .nav-head {
   display: flex;
   flex-direction: column;
-  gap: var(--space-sm);
+  gap: var(--space-xs);
   padding: 2px 4px 0;
   position: relative;
 }
@@ -76,37 +76,38 @@ defineEmits<{
   width: 100%;
   height: 1px;
   background: var(--accent-divider);
-  margin-top: var(--space-xs);
+  margin-top: var(--space-sm);
 }
 
 .eyebrow {
   color: var(--text-tertiary);
   font-size: var(--font-size-xs);
-  font-weight: 700;
-  letter-spacing: 0.14em;
-  text-transform: uppercase;
+  font-weight: 500;
+  letter-spacing: 0.08em;
+  text-transform: none;
 }
 
 .nav-switch-enter-active,
 .nav-switch-leave-active {
-  transition: opacity var(--transition-fast) var(--transition-ease), transform var(--transition-fast) var(--transition-ease);
+  transition: opacity var(--transition-base) var(--transition-ease), transform var(--transition-base) var(--transition-ease);
 }
 
 .nav-switch-enter-from {
   opacity: 0;
-  transform: translateX(-8px);
+  transform: translateX(-4px);
 }
 
 .nav-switch-leave-to {
   opacity: 0;
-  transform: translateX(8px);
+  transform: translateX(4px);
 }
 
 .title {
   margin: 0;
-  font-size: var(--font-size-3xl);
-  font-weight: 700;
-  letter-spacing: -0.02em;
+  font-size: var(--font-size-xl);
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  line-height: 1.3;
 }
 
 .desc {
@@ -138,44 +139,41 @@ defineEmits<{
 .list {
   display: flex;
   flex-direction: column;
-  gap: var(--space-sm);
+  gap: var(--space-xs);
 }
 
 .nav-item {
   position: relative;
   overflow: hidden;
-  min-height: 50px;
-  padding: 0 var(--space-md) 0 var(--space-lg);
+  min-height: 36px;
+  padding: var(--space-sm) var(--space-md);
   border-radius: var(--radius-sm);
-  border: 1px solid var(--border-default);
-  background: var(--surface-nav-item);
-  color: var(--text-primary);
+  border: none;
+  background: transparent;
+  color: var(--text-secondary);
   text-align: left;
   cursor: pointer;
-  font-size: var(--font-size-base);
-  font-weight: 600;
+  font-size: var(--font-size-sm);
+  font-weight: 500;
   display: inline-flex;
   align-items: center;
-  gap: var(--space-md);
+  gap: var(--space-sm);
   transition:
     background-color var(--transition-base) var(--transition-ease),
-    border-color var(--transition-base) var(--transition-ease),
-    color var(--transition-base) var(--transition-ease),
-    transform var(--transition-base) var(--transition-ease),
-    box-shadow var(--transition-base) var(--transition-ease);
+    color var(--transition-base) var(--transition-ease);
 }
 
 .nav-item::before {
   content: "";
   position: absolute;
-  left: 8px;
+  left: 0;
   top: 50%;
-  width: 4px;
-  height: 24px;
+  width: 3px;
+  height: 16px;
   border-radius: var(--radius-pill);
-  background: linear-gradient(180deg, var(--accent-primary-strong), var(--accent-primary));
+  background: var(--accent-primary);
   opacity: 0;
-  transform: translateY(-50%) scaleY(0.4);
+  transform: translateY(-50%) scaleX(0.5);
   transition: opacity var(--transition-base) var(--transition-ease), transform var(--transition-base) var(--transition-ease);
 }
 
@@ -183,15 +181,13 @@ defineEmits<{
   content: "";
   position: absolute;
   inset: 0;
-  background: var(--accent-sheen);
+  background: transparent;
   opacity: 0;
-  transition: opacity var(--transition-base) var(--transition-ease);
 }
 
 .nav-item:hover {
   background: var(--surface-nav-item-hover);
   color: var(--text-primary);
-  transform: none;
 }
 
 .nav-item:hover::after {
@@ -199,23 +195,18 @@ defineEmits<{
 }
 
 .nav-item:active {
-  transform: scale(0.99);
+  transform: none;
 }
 
 .nav-item:focus-visible {
   outline: none;
-  border-color: var(--accent-border-strong);
-  box-shadow: 0 0 0 4px var(--accent-focus-ring);
+  background: var(--surface-nav-item-hover);
 }
 
 .nav-item.active {
   color: var(--text-primary);
-  border-color: var(--accent-border-soft);
   background: var(--surface-nav-item-active);
-  transform: none;
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.58),
-    0 8px 18px rgba(var(--accent-rgb), 0.06);
+  font-weight: 600;
 }
 
 .nav-item.active .nav-icon {
@@ -224,7 +215,7 @@ defineEmits<{
 
 .nav-item.active::before {
   opacity: 1;
-  transform: translateY(-50%) scaleY(1);
+  transform: translateY(-50%) scaleX(1);
 }
 
 .nav-item.active::after {
@@ -234,23 +225,28 @@ defineEmits<{
 .nav-icon {
   position: relative;
   z-index: 1;
-  width: 20px;
-  height: 20px;
+  width: 18px;
+  height: 18px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  font-size: 20px;
+  font-size: 18px;
   line-height: 1;
   font-variation-settings:
     "FILL" 0,
-    "wght" 500,
+    "wght" 400,
     "GRAD" 0,
-    "opsz" 20;
+    "opsz" 18;
+  opacity: 0.7;
+}
+
+.nav-item.active .nav-icon {
+  opacity: 1;
 }
 
 .placeholder {
-  width: 20px;
-  height: 20px;
+  width: 18px;
+  height: 18px;
 }
 
 .material-symbols-rounded {

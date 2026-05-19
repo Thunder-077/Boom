@@ -67,17 +67,17 @@ defineEmits<{
   position: relative;
   z-index: 3;
   overflow: visible;
-  width: 64px;
-  padding: 10px 8px;
+  width: 60px;
+  padding: var(--space-4) var(--space-2);
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 16px;
+  gap: var(--space-6);
   border-radius: 0;
   justify-content: flex-start;
-  background: var(--surface-nav-gradient);
-  border: 1px solid var(--border-default);
-  box-shadow: 0 16px 36px rgba(31, 60, 103, 0.08);
+  background: var(--surface-nav-panel);
+  border-right: 1px solid var(--border-default);
+  box-shadow: none;
 }
 
 .rail-top {
@@ -85,7 +85,7 @@ defineEmits<{
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 2px 0 8px;
+  padding: 2px 0 var(--space-md);
 }
 
 .rail-nav {
@@ -93,14 +93,14 @@ defineEmits<{
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 12px;
-  padding-top: 6px;
+  gap: var(--space-2);
+  padding-top: var(--space-2);
 }
 
 .rail-footer {
   width: 100%;
   margin-top: auto;
-  padding-top: 8px;
+  padding-top: var(--space-4);
   display: flex;
   justify-content: center;
 }
@@ -113,7 +113,7 @@ defineEmits<{
   align-items: center;
   justify-content: center;
   border: 0;
-  border-radius: 8px;
+  border-radius: var(--radius-sm);
   background: transparent;
   color: var(--text-secondary);
   cursor: pointer;
@@ -123,14 +123,13 @@ defineEmits<{
 }
 
 .toggle-btn:hover {
-  background: rgba(var(--accent-rgb), 0.12);
-  color: var(--accent-primary-strong);
+  background: var(--surface-nav-item-hover);
+  color: var(--text-primary);
 }
 
 .toggle-btn:focus-visible {
   outline: none;
-  border-color: rgba(var(--accent-rgb), 0.3);
-  box-shadow: 0 0 0 4px var(--accent-focus-ring);
+  background: var(--surface-nav-item-hover);
 }
 
 .toggle-btn .material-symbols-rounded {
@@ -144,8 +143,8 @@ defineEmits<{
   opacity: 0;
   pointer-events: none;
   transition:
-    opacity 0.14s ease,
-    transform 0.14s ease;
+    opacity var(--transition-base) var(--transition-ease),
+    transform var(--transition-base) var(--transition-ease);
 }
 
 .toggle-btn::before,
@@ -155,12 +154,12 @@ defineEmits<{
   top: 50%;
   transform: translate(2px, -50%);
   padding: 6px 9px;
-  border-radius: 8px;
-  background: color-mix(in srgb, var(--surface-panel-strong) 88%, white 12%);
+  border-radius: var(--radius-sm);
+  background: var(--surface-panel-strong);
   color: var(--text-primary);
   border: 1px solid var(--border-default);
-  box-shadow: 0 6px 16px rgba(20, 36, 64, 0.14);
-  font-size: 12px;
+  box-shadow: var(--shadow-medium);
+  font-size: var(--font-size-caption);
   font-weight: 500;
   letter-spacing: 0;
   line-height: 1;
@@ -178,70 +177,64 @@ defineEmits<{
 
 .rail-btn {
   position: relative;
-  width: 40px;
-  height: 40px;
+  width: 36px;
+  height: 36px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  border: 1px solid transparent;
-  border-radius: 14px;
+  border: none;
+  border-radius: var(--radius-sm);
   background: transparent;
-  color: var(--text-secondary);
+  color: var(--text-tertiary);
   cursor: pointer;
   transition:
-    background-color 0.18s ease,
-    border-color 0.18s ease,
-    color 0.18s ease,
-    transform 0.18s ease,
-    box-shadow 0.18s ease;
+    background-color var(--transition-base) var(--transition-ease),
+    color var(--transition-base) var(--transition-ease);
 }
 
 .hover-glow {
   position: absolute;
-  inset: 7px;
-  border-radius: 10px;
+  inset: 4px;
+  border-radius: var(--radius-sm);
   background: var(--accent-radial-soft);
   opacity: 0;
   transform: scale(0.88);
-  transition: opacity 0.18s ease, transform 0.18s ease;
+  transition: opacity var(--transition-base) var(--transition-ease), transform var(--transition-base) var(--transition-ease);
 }
 
 .rail-btn:hover {
-  background: rgba(var(--accent-rgb), 0.1);
-  color: var(--text-primary);
-  transform: none;
+  background: var(--surface-nav-item-hover);
+  color: var(--text-secondary);
 }
 
 .rail-btn:hover .hover-glow {
-  opacity: 0.55;
-  transform: scale(1);
+  opacity: 0;
 }
 
 .rail-btn:active {
-  transform: scale(0.98);
+  transform: none;
 }
 
 .rail-btn:focus-visible {
   outline: none;
-  border-color: rgba(var(--accent-rgb), 0.32);
-  box-shadow: 0 0 0 4px var(--accent-focus-ring);
+  background: var(--surface-nav-item-hover);
 }
 
 .icon {
   position: relative;
   z-index: 1;
-  width: 20px;
-  height: 20px;
+  width: 18px;
+  height: 18px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  font-size: 20px;
+  font-size: 18px;
   line-height: 1;
   font-variation-settings:
     "FILL" 0,
-    "wght" 500,
+    "wght" 400,
     "GRAD" 0,
-    "opsz" 24;
+    "opsz" 20;
 }
 
 .material-symbols-rounded {
@@ -249,20 +242,17 @@ defineEmits<{
 }
 
 .rail-btn.active {
-  background: var(--accent-panel-strong);
-  color: var(--accent-primary-strong);
-  border-color: rgba(var(--accent-rgb), 0.26);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.7), 0 8px 18px rgba(var(--accent-rgb), 0.08);
-  transform: none;
+  background: var(--surface-nav-item-active);
+  color: var(--text-primary);
+  box-shadow: none;
 }
 
 .utility-btn {
-  margin-bottom: 2px;
+  margin-bottom: var(--space-2);
 }
 
 .rail-btn.active .hover-glow {
-  opacity: 0.8;
-  transform: scale(1);
+  opacity: 0;
 }
 
 .sr-only {
