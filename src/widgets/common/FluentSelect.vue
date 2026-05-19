@@ -1,7 +1,7 @@
 <template>
   <div
     class="fluent-combo"
-    :class="{ open: isOpen, disabled }"
+    :class="{ open: isOpen, disabled, [`size-${size}`]: size !== 'md' }"
     :tabindex="searchable ? -1 : 0"
     @keydown.esc.prevent="closeCombo"
     ref="comboRef"
@@ -64,11 +64,13 @@ const props = withDefaults(
     placeholder?: string;
     disabled?: boolean;
     searchable?: boolean;
+    size?: "sm" | "md" | "lg";
   }>(),
   {
     placeholder: "请选择",
     disabled: false,
     searchable: false,
+    size: "md",
   }
 );
 
@@ -292,6 +294,25 @@ onUnmounted(() => {
   display: flex;
   outline: none;
   min-width: 120px;
+}
+
+.fluent-combo.size-sm {
+  min-width: 100px;
+}
+
+.fluent-combo.size-sm .fluent-trigger,
+.fluent-combo.size-sm .fluent-searchable-input {
+  min-height: 32px;
+  font-size: var(--font-size-sm);
+}
+
+.fluent-combo.size-lg {
+  min-width: 160px;
+}
+
+.fluent-combo.size-lg .fluent-trigger,
+.fluent-combo.size-lg .fluent-searchable-input {
+  min-height: 44px;
 }
 
 .fluent-trigger {

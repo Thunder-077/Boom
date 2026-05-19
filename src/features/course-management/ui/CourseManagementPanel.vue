@@ -25,7 +25,7 @@
           :model-value="store.viewState.target"
           :options="targetOptions"
           @update:model-value="store.setTarget($event as string)"
-          style="width: 220px;"
+          class="target-select"
         />
       </div>
     </FilterToolbar>
@@ -36,56 +36,59 @@
         :type="store.viewState.importStatus === 'success' ? 'success' : store.viewState.importStatus === 'error' ? 'error' : store.viewState.importStatus === 'importing' ? 'warning' : 'info'"
         :text="importStatusLabel + '：' + importStatusMessage"
       />
-      <div class="import-controls">
-        <label class="control-field batch-field">
-          <span>课表批次</span>
-          <FluentSelect
-            :model-value="store.viewState.selectedImportId ?? ''"
-            :options="importOptions"
-            placeholder="未导入"
-            @update:model-value="store.setSelectedImport(Number($event))"
-          />
-        </label>
-        <label class="control-field">
-          <span>生效开始</span>
-          <input
-            class="glass-input"
-            type="date"
-            :value="store.viewState.settingsDraft.effectiveStartDate"
-            :disabled="!store.viewState.selectedImportId"
-            @input="setDraftDate('effectiveStartDate', $event)"
-          />
-        </label>
-        <label class="control-field">
-          <span>生效结束</span>
-          <input
-            class="glass-input"
-            type="date"
-            :value="store.viewState.settingsDraft.effectiveEndDate"
-            :disabled="!store.viewState.selectedImportId"
-            @input="setDraftDate('effectiveEndDate', $event)"
-          />
-        </label>
-        <label class="control-field week-field">
-          <span>当前从第几周开始</span>
-          <input
-            class="glass-input"
-            type="number"
-            min="1"
-            step="1"
-            :value="store.viewState.settingsDraft.startWeek"
-            :disabled="!store.viewState.selectedImportId"
-            @input="setDraftWeek"
-          />
-        </label>
-        <button class="action-btn primary" type="button" :disabled="!store.viewState.selectedImportId || isSavingSettings" @click="saveImportSettings">
-          <span class="material-symbols-rounded">save</span>
-          保存
-        </button>
-        <button class="action-btn danger" type="button" :disabled="!store.viewState.selectedImportId || isDeletingImport" @click="deleteImportBatch">
-          <span class="material-symbols-rounded">delete</span>
-          删除
-        </button>
+      <div class="import-controls-section">
+        <span class="controls-label">批次设置</span>
+        <div class="import-controls">
+          <label class="control-field batch-field">
+            <span>课表批次</span>
+            <FluentSelect
+              :model-value="store.viewState.selectedImportId ?? ''"
+              :options="importOptions"
+              placeholder="未导入"
+              @update:model-value="store.setSelectedImport(Number($event))"
+            />
+          </label>
+          <label class="control-field">
+            <span>生效开始</span>
+            <input
+              class="glass-input"
+              type="date"
+              :value="store.viewState.settingsDraft.effectiveStartDate"
+              :disabled="!store.viewState.selectedImportId"
+              @input="setDraftDate('effectiveStartDate', $event)"
+            />
+          </label>
+          <label class="control-field">
+            <span>生效结束</span>
+            <input
+              class="glass-input"
+              type="date"
+              :value="store.viewState.settingsDraft.effectiveEndDate"
+              :disabled="!store.viewState.selectedImportId"
+              @input="setDraftDate('effectiveEndDate', $event)"
+            />
+          </label>
+          <label class="control-field week-field">
+            <span>当前从第几周开始</span>
+            <input
+              class="glass-input"
+              type="number"
+              min="1"
+              step="1"
+              :value="store.viewState.settingsDraft.startWeek"
+              :disabled="!store.viewState.selectedImportId"
+              @input="setDraftWeek"
+            />
+          </label>
+          <button class="action-btn primary" type="button" :disabled="!store.viewState.selectedImportId || isSavingSettings" @click="saveImportSettings">
+            <span class="material-symbols-rounded">save</span>
+            保存
+          </button>
+          <button class="action-btn danger" type="button" :disabled="!store.viewState.selectedImportId || isDeletingImport" @click="deleteImportBatch">
+            <span class="material-symbols-rounded">delete</span>
+            删除
+          </button>
+        </div>
       </div>
     </div>
 
@@ -431,7 +434,7 @@ onUnmounted(() => {
   display: flex;
   flex-direction: column;
   gap: var(--space-xl);
-  min-width: 1160px;
+  min-width: 900px;
   min-height: calc(100vh - 118px);
   position: relative;
 }
@@ -449,6 +452,10 @@ onUnmounted(() => {
   display: flex;
   gap: var(--space-lg);
   align-items: center;
+}
+
+.target-select {
+  width: 220px;
 }
 
 .segmented {
@@ -495,6 +502,21 @@ onUnmounted(() => {
   border: 1px solid var(--border-default);
   border-radius: var(--radius-sm);
   background: var(--surface-panel);
+}
+
+.import-controls-section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+  padding-top: var(--space-md);
+  border-top: 1px solid var(--border-default);
+}
+
+.controls-label {
+  color: var(--text-secondary);
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+  letter-spacing: 0.02em;
 }
 
 .import-status {

@@ -429,7 +429,7 @@ onMounted(async () => {
   grid-template-columns: 360px minmax(0, 1fr);
   gap: var(--space-lg);
   align-items: stretch;
-  min-width: 1280px;
+  min-width: 900px;
 }
 
 .sidebar {

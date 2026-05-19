@@ -236,7 +236,7 @@
                 <FluentSelect
                   v-model="gradeFilter"
                   :options="[{ label: '全部年级', value: 'all' }, ...availableGrades.map(g => ({ label: g, value: g }))]"
-                  style="width: 140px;"
+                  class="grade-filter-select"
                 />
               </div>
             </div>
@@ -430,7 +430,7 @@
               :options="teacherSelectOptions as any"
               placeholder="请选择教师"
               searchable
-              style="width: 100%;"
+              class="teacher-select-full"
             />
           </div>
 
@@ -3028,6 +3028,14 @@ onBeforeUnmount(() => {
   width: fit-content;
   min-width: 0;
   flex: 0 0 auto;
+}
+
+.grade-filter-select {
+  width: 140px;
+}
+
+.teacher-select-full {
+  width: 100%;
 }
 
 .search-bar input {

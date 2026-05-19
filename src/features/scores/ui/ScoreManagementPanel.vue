@@ -12,7 +12,7 @@
           :model-value="store.viewState.filters.gradeName ?? ''"
           :options="[{ label: '全部年级', value: '' }, { label: '高一', value: '高一' }, { label: '高二', value: '高二' }, { label: '高三', value: '高三' }]"
           @update:model-value="store.setFilters({ gradeName: $event as string })"
-          style="width: 220px;"
+          class="grade-select"
         />
         <label class="filter-search">
           <span class="material-symbols-rounded filter-search-icon" aria-hidden="true">search</span>
@@ -56,21 +56,21 @@
         </tbody>
       </table>
       </div>
-      <div v-if="store.viewState.totalPages > 1" class="pagination-row">
-        <span class="page-meta">共 {{ store.viewState.total }} 条成绩记录</span>
-        <div class="pagination-actions">
-          <button class="page-btn" type="button" :disabled="store.viewState.page === 1" @click="goPage(store.viewState.page - 1)">上一页</button>
-          <button v-for="page in visiblePages" :key="page" class="page-btn" :class="{ active: page === store.viewState.page }" type="button" @click="goPage(page)">{{ page }}</button>
-          <button class="page-btn" type="button" :disabled="store.viewState.page === store.viewState.totalPages" @click="goPage(store.viewState.page + 1)">下一页</button>
-        </div>
-      </div>
+      <Pagination
+        :currentPage="store.viewState.page"
+        :pageSize="store.viewState.pageSize ?? 20"
+        :total="store.viewState.total"
+        @update:currentPage="goPage"
+      />
     </TableCard>
 
     <div v-if="detailState.visible" class="detail-mask" @click.self="closeDetail">
       <section class="detail-card card-shell">
         <div class="detail-head">
           <h3>{{ detailState.mode === 'view' ? "查看成绩" : "编辑成绩" }}</h3>
-          <button class="close-btn" type="button" @click="closeDetail">×</button>
+          <button class="close-btn" type="button" @click="closeDetail">
+            <span class="material-symbols-rounded" aria-hidden="true">close</span>
+          </button>
         </div>
         <div v-if="detailState.loading" class="detail-loading">加载中...</div>
         <div v-else-if="detailState.error" class="detail-error">{{ detailState.error }}</div>
@@ -96,7 +96,7 @@
                 v-model="item.state"
                 :options="[{ label: '有成绩', value: 'scored' }, { label: '缺考', value: 'absent' }, { label: '未选考', value: 'not_selected' }]"
                 :disabled="detailState.mode === 'view'"
-                style="width: 130px; min-height: 38px;"
+                class="state-select"
               />
               <input
                 v-model.number="item.score"
@@ -136,6 +136,7 @@ import FilterToolbar from "../../../widgets/common/FilterToolbar.vue";
 import FluentSelect from "../../../widgets/common/FluentSelect.vue";
 import InfoHint from "../../../widgets/common/InfoHint.vue";
 import TableCard from "../../../widgets/common/TableCard.vue";
+import { Pagination } from "@/widgets/common";
 import { useScoreStore } from "../store";
 
 const store = useScoreStore();
@@ -197,22 +198,6 @@ function goPage(page: number) {
   void store.setPage(page);
 }
 
-const visiblePages = computed(() => {
-  const total = store.viewState.totalPages;
-  const current = store.viewState.page;
-  const maxVisible = 7;
-  if (total <= maxVisible) {
-    return Array.from({ length: total }, (_, i) => i + 1);
-  }
-  const half = Math.floor(maxVisible / 2);
-  let start = Math.max(1, current - half);
-  let end = start + maxVisible - 1;
-  if (end > total) {
-    end = total;
-    start = end - maxVisible + 1;
-  }
-  return Array.from({ length: end - start + 1 }, (_, i) => start + i);
-});
 
 async function openDetail(admissionNo: string, mode: "view" | "edit") {
   detailState.visible = true;
@@ -349,7 +334,7 @@ onUnmounted(() => {
   min-height: 0;
   gap: var(--space-lg);
   position: relative;
-  min-width: 1220px;
+  min-width: 900px;
 }
 
 .panel :deep(.table-card) {
@@ -407,6 +392,14 @@ onUnmounted(() => {
   display: flex;
   align-items: center;
   gap: var(--space-md);
+}
+
+.grade-select {
+  width: 220px;
+}
+
+.state-select {
+  width: 130px;
 }
 
 .filter-search {
@@ -490,54 +483,6 @@ onUnmounted(() => {
   background: var(--surface-table-stripe);
 }
 
-.pagination-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: var(--space-lg) var(--space-xl);
-  border-top: 1px solid var(--border-default);
-  background: var(--surface-panel);
-}
-
-.page-meta {
-  color: var(--text-secondary);
-  font-size: 13px;
-}
-
-.pagination-actions {
-  display: flex;
-  gap: var(--space-sm);
-}
-
-.page-btn {
-  min-width: 32px;
-  height: 32px;
-  padding: 0 var(--space-sm);
-  border-radius: var(--radius-xs);
-  border: 1px solid var(--border-default);
-  background: var(--surface-panel);
-  cursor: pointer;
-  color: var(--text-secondary);
-  font-size: 13px;
-  transition: var(--transition-base) var(--transition-ease);
-}
-
-.page-btn:hover:not(:disabled) {
-  background: var(--accent-soft);
-  border-color: var(--accent-primary);
-  color: var(--accent-primary);
-}
-
-.page-btn.active {
-  background: var(--accent-primary);
-  color: var(--color-on-primary);
-  border-color: var(--accent-primary);
-}
-
-.page-btn:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
 
 .detail-mask {
   position: fixed;
@@ -575,13 +520,19 @@ onUnmounted(() => {
 .close-btn {
   border: 0;
   background: transparent;
-  font-size: 24px;
-  line-height: 1;
   cursor: pointer;
   color: var(--text-secondary);
   width: 32px;
   height: 32px;
-  border-radius: var(--radius-xs);
+  border-radius: var(--radius-sm);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: background-color var(--transition-base) var(--transition-ease);
+}
+
+.close-btn .material-symbols-rounded {
+  font-size: 20px;
 }
 
 .close-btn:hover {

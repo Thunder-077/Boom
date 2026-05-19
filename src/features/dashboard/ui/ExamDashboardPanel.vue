@@ -34,7 +34,7 @@
           <FluentSelect
             :model-value="store.viewState.selectedSessionTimeGradeName"
             :options="sessionTimeGradeOptions"
-            style="width: 150px; min-height: 38px;"
+            class="grade-select"
             @update:model-value="onSessionTimeGradeChange"
           />
           <button class="secondary-btn" type="button" :disabled="store.viewState.loading" @click="addManualSubjectRow">新增科目</button>
@@ -87,7 +87,7 @@
                     <FluentSelect
                       v-model="item.subject"
                       :options="DISPLAY_SUBJECT_OPTIONS.map(s => ({ label: examTimeSubjectLabel(s), value: s }))"
-                      style="width: 140px; min-height: 38px;"
+                      class="subject-select"
                     />
                   </div>
                 </td>
@@ -682,7 +682,7 @@ onUnmounted(() => {
   grid-template-columns: minmax(0, 1.75fr) minmax(320px, 1fr);
   gap: var(--space-xl);
   min-height: calc(100vh - 170px);
-  min-width: 1180px;
+  min-width: 900px;
 }
 
 .exam-table-scroll {
@@ -1236,6 +1236,14 @@ onUnmounted(() => {
   display: flex;
   align-items: center;
   gap: var(--space-sm);
+}
+
+.grade-select {
+  width: 150px;
+}
+
+.subject-select {
+  width: 140px;
 }
 
 .icon-btn {

@@ -9,22 +9,20 @@
     <FilterToolbar :items="[]">
       <div class="toolbar-fields">
         <label class="search-field">
-          <svg viewBox="0 0 24 24" aria-hidden="true">
-            <path d="M15.5 14h-.79l-.28-.27A6.47 6.47 0 0 0 16 9.5 6.5 6.5 0 1 0 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79L19 20.5 20.5 19 15.5 14ZM9.5 14A4.5 4.5 0 1 1 14 9.5 4.5 4.5 0 0 1 9.5 14Z" />
-          </svg>
+          <span class="material-symbols-rounded search-icon" aria-hidden="true">search</span>
           <input class="glass-field" :value="store.viewState.filters.nameKeyword" placeholder="按教师姓名查询" @input="onNameInput" />
         </label>
         <FluentSelect
           :model-value="store.viewState.filters.className ?? ''"
           :options="[{ label: '班级', value: '' }, ...classOptions.map(c => ({ label: c, value: c }))]"
           @update:model-value="store.setFilters({ className: $event as string })"
-          style="width: 150px;"
+          class="filter-select"
         />
         <FluentSelect
           :model-value="store.viewState.filters.subject ?? ''"
           :options="TEACHER_SUBJECT_OPTIONS"
           @update:model-value="store.setFilters({ subject: $event as any })"
-          style="width: 150px;"
+          class="filter-select"
         />
       </div>
     </FilterToolbar>
@@ -111,7 +109,7 @@ const classOptions = computed(() =>
 );
 
 const currentPage = ref(1);
-const pageSize = ref(5);
+const pageSize = ref(15);
 
 const totalRows = computed(() => store.viewState.rows.length);
 
@@ -234,7 +232,7 @@ onUnmounted(() => {
   min-height: 0;
   gap: var(--space-xl);
   position: relative;
-  min-width: 1160px;
+  min-width: 900px;
 }
 
 .panel :deep(.table-card) {
@@ -297,17 +295,22 @@ onUnmounted(() => {
   display: block;
 }
 
+.filter-select {
+  width: 150px;
+}
+
 .search-field {
   position: relative;
 }
 
-.search-field svg {
+.search-field .search-icon {
   position: absolute;
   left: var(--space-lg);
-  top: var(--space-lg);
-  width: 18px;
-  height: 18px;
-  fill: var(--text-secondary);
+  top: 50%;
+  transform: translateY(-50%);
+  font-size: 18px;
+  color: var(--text-secondary);
+  pointer-events: none;
 }
 
 .search-field input {
