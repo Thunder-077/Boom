@@ -14,6 +14,8 @@ jobs:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -37,6 +39,35 @@ jobs:
       - name: Install frontend dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Generate release notes from commits
+        shell: pwsh
+        run: |
+          $prevTag = $(git describe --tags --abbrev=0 HEAD^ 2>$null) -replace '^v',''
+          if (-not $prevTag) { $prevTag = "HEAD~10" }
+          $commits = git log "v$prevTag..HEAD" --pretty=format:"%s" --no-merges
+          $lines = $commits -split '\r?\n' | Where-Object { $_ -match '^\w+(\(.+\))?!?:' }
+
+          $features = @(); $fixes = @(); $refactors = @(); $others = @()
+
+          foreach ($line in $lines) {
+            $clean = $line -replace '^\w+(\(.+\))?!?:\s*', ''
+            switch -Regex ($line) {
+              '^feat'   { $features += "- $clean" }
+              '^fix'    { $fixes += "- $clean" }
+              '^refactor|^perf' { $refactors += "- $clean" }
+              default   { $others += "- $clean" }
+            }
+          }
+
+          $body = @()
+          if ($features.Count)   { $body += "### ✨ 新增"; $body += $features; $body += "" }
+          if ($fixes.Count)      { $body += "### 🐛 修复"; $body += $fixes; $body += "" }
+          if ($refactors.Count)  { $body += "### ⚡ 优化"; $body += $refactors; $body += "" }
+          if ($others.Count)     { $body += "### 🔧 其他"; $body += $others; $body += "" }
+          if ($body.Count -eq 0) { $body = @("暂无更新说明") }
+
+          ($body -join "`n") | Out-File -FilePath release_notes.txt -Encoding utf8 -NoNewline
+
       - name: Build & Release
         uses: tauri-apps/tauri-action@v0
         env:
@@ -46,8 +77,7 @@ jobs:
         with:
           tagName: v__VERSION__
           releaseName: 'BOOM v__VERSION__'
-          releaseBody: |
-            See the assets to download this version and install.
+          releaseBodyFile: release_notes.txt
           releaseDraft: false
           prerelease: false
           includeUpdaterJson: true

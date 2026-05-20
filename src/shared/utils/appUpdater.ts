@@ -10,7 +10,6 @@ const progress = ref(0);
 const downloadSize = ref(0);
 const errorMessage = ref("");
 const updateVersion = ref("");
-const updateBody = ref("");
 const currentVersion = ref("");
 
 async function initCurrentVersion() {
@@ -28,7 +27,6 @@ function reset() {
   downloadSize.value = 0;
   errorMessage.value = "";
   updateVersion.value = "";
-  updateBody.value = "";
 }
 
 async function checkForUpdate() {
@@ -41,7 +39,6 @@ async function checkForUpdate() {
       return false;
     }
     updateVersion.value = update.version;
-    updateBody.value = update.body ?? "";
     downloadSize.value = (update as any).contentLength ?? 0;
     status.value = "available";
     return true;
@@ -108,8 +105,8 @@ export function useAppUpdater() {
     status,
     progress,
     updateVersion,
-    updateBody,
     currentVersion,
+    errorMessage,
     statusLabel,
     checkForUpdate,
     downloadAndInstall,
