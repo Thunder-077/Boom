@@ -16,7 +16,7 @@
         <div class="text-content">
           <h2 class="main-title">系统版本与更新</h2>
           <p class="sub-text">
-            当前版本：<span class="version-tag">{{ currentVersion || "加载中..." }}</span>
+            当前版本：<span class="version-tag">v{{ currentVersion || "加载中..." }}</span>
             <span v-if="updaterStatus === 'error'" class="error-badge" :title="errorMessage">
               (检查失败: {{ errorMessage }})
             </span>
@@ -44,7 +44,7 @@
         </div>
         <div class="text-content">
           <h2 class="main-title">当前已是最新版本</h2>
-          <p class="sub-text">系统版本 <span class="version-tag">{{ currentVersion }}</span></p>
+          <p class="sub-text">系统版本 <span class="version-tag">v{{ currentVersion }}</span></p>
         </div>
       </div>
       <button class="btn btn-ghost" @click="handleCheckUpdate" :disabled="isChecking">
@@ -199,7 +199,7 @@ async function handleInstall() {
 .text-content {
   display: flex;
   flex-direction: column;
-  gap: var(--space-xs);
+  gap: var(--space-md);
 }
 
 .main-title {

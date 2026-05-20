@@ -68,6 +68,18 @@ jobs:
 
           ($body -join "`n") | Out-File -FilePath release_notes.txt -Encoding utf8 -NoNewline
 
+      - name: Check if pre-release
+        id: check-prerelease
+        shell: pwsh
+        run: |
+          if ("${{ github.ref_name }}" -match '-(alpha|beta|rc)') {
+            echo "is_prerelease=true" >> $env:GITHUB_OUTPUT
+            write-host "Detected pre-release version: ${{ github.ref_name }}"
+          } else {
+            echo "is_prerelease=false" >> $env:GITHUB_OUTPUT
+            write-host "Detected stable release version: ${{ github.ref_name }}"
+          }
+
       - name: Build & Release
         uses: tauri-apps/tauri-action@v0
         env:
@@ -79,5 +91,6 @@ jobs:
           releaseName: 'BOOM v__VERSION__'
           releaseBodyFile: release_notes.txt
           releaseDraft: false
-          prerelease: false
+          prerelease: ${{ steps.check-prerelease.outputs.is_prerelease == 'true' }}
           includeUpdaterJson: true
+
