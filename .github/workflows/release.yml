@@ -88,7 +88,7 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
           tagName: v__VERSION__
-          releaseName: 'BOOM v__VERSION__'
+          releaseName: 'Boom v__VERSION__'
           releaseBodyFile: release_notes.txt
           releaseDraft: false
           prerelease: ${{ steps.check-prerelease.outputs.is_prerelease == 'true' }}

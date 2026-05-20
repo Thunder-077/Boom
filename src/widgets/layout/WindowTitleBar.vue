@@ -5,8 +5,7 @@
         <img class="app-logo" src="/boom.svg" alt="" />
       </span>
       <div class="title-copy">
-        <span class="app-title">BOOM</span>
-        <span class="app-subtitle">教务管理系统</span>
+        <span class="app-title">Boom</span>
       </div>
     </div>
     <div class="window-controls">
