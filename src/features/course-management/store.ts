@@ -16,7 +16,6 @@ import type {
   CourseWorkloadReport,
   ExportCourseWorkloadResult,
 } from "../../entities/course-management/model";
-import { createVueViewState } from "../../shared/store/zustandVueBridge";
 import { courseManagementService, type CourseManagementService } from "./service";
 
 type ImportStatus = "idle" | "importing" | "success" | "error";
@@ -97,7 +96,6 @@ function selectedImportFrom(imports: CourseImportBatch[], selectedImportId: numb
 
 export function createCourseManagementStore(service: CourseManagementService = courseManagementService) {
   const store = createStore<CourseManagementStoreState>(() => createDefaultState());
-  const viewState = createVueViewState(store);
 
   function defaultTargetFor(viewType: CourseViewType) {
     const state = store.getState();
@@ -398,16 +396,12 @@ export function createCourseManagementStore(service: CourseManagementService = c
     loadWorkloadReport,
     exportWorkloadReport,
     get viewState() {
-      return viewState;
+      return store.getState();
     },
   };
 }
 
 const courseManagementStore = createCourseManagementStore();
-
-export function useCourseManagementStore() {
-  return courseManagementStore;
-}
 
 export function useReactCourseManagementStore() {
   const state = useSyncExternalStore(

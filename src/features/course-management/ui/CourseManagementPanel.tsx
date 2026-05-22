@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
+import { hasDesktopRuntime } from "../../../shared/utils/desktopRuntime";
 import type { CoursePeriodSlot, CourseScheduleEntry, CourseViewType } from "../../../entities/course-management/model";
 import { useAppDialog } from "../../../shared/ui/appDialog";
 import { FilterToolbar, FluentSelect, InfoHint, TableCard } from "../../../widgets/common/index.react";
@@ -154,6 +155,9 @@ export default function CourseManagementPanel() {
     let unlistenDragDrop: (() => void) | null = null;
 
     async function bindWindowEvents() {
+      if (!hasDesktopRuntime()) {
+        return;
+      }
       const appWindow = getCurrentWebviewWindow();
       unlistenDragDrop = await appWindow.onDragDropEvent((event) => {
         if (event.payload.type === "enter" || event.payload.type === "over") {

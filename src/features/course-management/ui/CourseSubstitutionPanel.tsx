@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { hasDesktopRuntime } from "../../../shared/utils/desktopRuntime";
 import type { CourseSubstitutionCandidate } from "../../../entities/course-management/model";
 import { useAppDialog } from "../../../shared/ui/appDialog";
 import { FluentSelect, InfoHint, TableCard } from "../../../widgets/common/index.react";
@@ -84,7 +85,9 @@ export default function CourseSubstitutionPanel() {
   }).length;
 
   useEffect(() => {
-    void store.loadOptions();
+    if (hasDesktopRuntime()) {
+      void store.loadOptions();
+    }
   }, []);
 
   useEffect(() => {

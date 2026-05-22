@@ -7,7 +7,6 @@ import type {
   TeacherSubject,
   TeacherSummary,
 } from "../../entities/teacher/model";
-import { createVueViewState } from "../../shared/store/zustandVueBridge";
 import { teacherService, type TeacherService } from "./service";
 
 const defaultFilters: TeacherQuery = {
@@ -45,8 +44,6 @@ export function createTeacherStore(service: TeacherService = teacherService) {
     importMessage: "",
     lastImportResult: null,
   }));
-
-  const viewState = createVueViewState(store);
 
   async function load() {
     store.setState({ loading: true });
@@ -118,16 +115,12 @@ export function createTeacherStore(service: TeacherService = teacherService) {
     importExcel,
     setImportFeedback,
     get viewState() {
-      return viewState;
+      return store.getState();
     },
   };
 }
 
 const teacherStoreSingleton = createTeacherStore();
-
-export function useTeacherStore() {
-  return teacherStoreSingleton;
-}
 
 export function useReactTeacherStore() {
   const state = useSyncExternalStore(

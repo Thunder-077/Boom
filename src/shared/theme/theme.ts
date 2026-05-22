@@ -1,5 +1,3 @@
-import { ref } from "vue";
-
 export type ThemeId = "mist-blue" | "sand-dune-mist" | "glacier-dew" | "sky-bloom" | "peach-blush" | "lavender-mist";
 
 export interface ThemeOption {
@@ -58,7 +56,7 @@ export const THEME_OPTIONS: ThemeOption[] = [
 ];
 
 const FALLBACK_THEME: ThemeId = "mist-blue";
-const currentTheme = ref<ThemeId>(FALLBACK_THEME);
+let currentTheme: ThemeId = FALLBACK_THEME;
 
 function isThemeId(value: string | null | undefined): value is ThemeId {
   return THEME_OPTIONS.some((option) => option.id === value);
@@ -81,12 +79,12 @@ function writeThemeToDom(themeId: ThemeId) {
 
 export function initializeTheme() {
   const resolvedTheme = readStoredTheme();
-  currentTheme.value = resolvedTheme;
+  currentTheme = resolvedTheme;
   writeThemeToDom(resolvedTheme);
 }
 
 export function setTheme(themeId: ThemeId) {
-  currentTheme.value = themeId;
+  currentTheme = themeId;
   writeThemeToDom(themeId);
   if (typeof window !== "undefined") {
     window.localStorage.setItem(THEME_STORAGE_KEY, themeId);
@@ -94,13 +92,5 @@ export function setTheme(themeId: ThemeId) {
 }
 
 export function getCurrentTheme() {
-  return currentTheme.value;
-}
-
-export function useThemeState() {
-  return {
-    currentTheme,
-    setTheme,
-    options: THEME_OPTIONS,
-  };
+  return currentTheme;
 }

@@ -1,13 +1,29 @@
 import { useEffect, useState } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import { hasDesktopRuntime } from "../../shared/utils/desktopRuntime";
 
-const appWindow = getCurrentWindow();
+function resolveAppWindow() {
+  // 浏览器调试时没有 Tauri runtime，直接跳过窗口控制绑定，避免整页白屏。
+  if (!hasDesktopRuntime()) {
+    return null;
+  }
+  try {
+    return getCurrentWindow();
+  } catch {
+    return null;
+  }
+}
 
 export default function WindowTitleBar() {
+  const appWindow = resolveAppWindow();
   const [isFocused, setIsFocused] = useState(true);
   const [isMaximized, setIsMaximized] = useState(false);
 
   async function refreshMaxState() {
+    if (!appWindow) {
+      setIsMaximized(false);
+      return;
+    }
     try {
       setIsMaximized(await appWindow.isMaximized());
     } catch {
@@ -16,6 +32,9 @@ export default function WindowTitleBar() {
   }
 
   async function minimizeWindow() {
+    if (!appWindow) {
+      return;
+    }
     try {
       await appWindow.minimize();
     } catch (error) {
@@ -24,6 +43,9 @@ export default function WindowTitleBar() {
   }
 
   async function toggleMaximize() {
+    if (!appWindow) {
+      return;
+    }
     try {
       await appWindow.toggleMaximize();
       await refreshMaxState();
@@ -33,6 +55,9 @@ export default function WindowTitleBar() {
   }
 
   async function closeWindow() {
+    if (!appWindow) {
+      return;
+    }
     try {
       await appWindow.close();
     } catch (error) {
@@ -46,6 +71,9 @@ export default function WindowTitleBar() {
     let unlistenFocusChanged: (() => void) | null = null;
 
     async function bindWindowEvents() {
+      if (!appWindow) {
+        return;
+      }
       await refreshMaxState();
       unlistenResized = await appWindow.onResized(() => {
         void refreshMaxState();
@@ -64,11 +92,11 @@ export default function WindowTitleBar() {
       unlistenResized?.();
       unlistenFocusChanged?.();
     };
-  }, []);
+  }, [appWindow]);
 
   return (
     <header className={`window-titlebar ${isFocused ? "" : "unfocused"}`}>
-      <div className="drag-zone" data-tauri-drag-region>
+      <div className="drag-zone" {...(appWindow ? { "data-tauri-drag-region": true } : {})}>
         <span className="app-icon" aria-hidden="true">
           <img className="app-logo" src="/boom.svg" alt="" />
         </span>
@@ -76,28 +104,30 @@ export default function WindowTitleBar() {
           <span className="app-title">Boom</span>
         </div>
       </div>
-      <div className="window-controls">
-        <button className="win-btn" type="button" aria-label="最小化窗口" onClick={minimizeWindow}>
-          <span className="material-symbols-rounded" aria-hidden="true">
-            remove
-          </span>
-        </button>
-        <button
-          className="win-btn"
-          type="button"
-          aria-label={isMaximized ? "还原窗口" : "最大化窗口"}
-          onClick={toggleMaximize}
-        >
-          <span className="material-symbols-rounded" aria-hidden="true">
-            {isMaximized ? "filter_none" : "crop_square"}
-          </span>
-        </button>
-        <button className="win-btn close" type="button" aria-label="关闭窗口" onClick={closeWindow}>
-          <span className="material-symbols-rounded" aria-hidden="true">
-            close
-          </span>
-        </button>
-      </div>
+      {appWindow ? (
+        <div className="window-controls">
+          <button className="win-btn" type="button" aria-label="最小化窗口" onClick={minimizeWindow}>
+            <span className="material-symbols-rounded" aria-hidden="true">
+              remove
+            </span>
+          </button>
+          <button
+            className="win-btn"
+            type="button"
+            aria-label={isMaximized ? "还原窗口" : "最大化窗口"}
+            onClick={toggleMaximize}
+          >
+            <span className="material-symbols-rounded" aria-hidden="true">
+              {isMaximized ? "filter_none" : "crop_square"}
+            </span>
+          </button>
+          <button className="win-btn close" type="button" aria-label="关闭窗口" onClick={closeWindow}>
+            <span className="material-symbols-rounded" aria-hidden="true">
+              close
+            </span>
+          </button>
+        </div>
+      ) : null}
     </header>
   );
 }

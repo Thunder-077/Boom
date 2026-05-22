@@ -1,23 +1,6 @@
-import { reactive } from "vue";
 import type { StoreApi } from "zustand/vanilla";
 
 type PropertyKeyPath = Array<string | number | symbol>;
-
-export function createVueViewState<State extends object>(store: StoreApi<State>): Readonly<State> {
-  const viewState = reactive({ ...store.getState() }) as State;
-
-  // Keep the Vue-facing snapshot reactive while Zustand owns the canonical state.
-  store.subscribe((nextState) => {
-    for (const key of Object.keys(viewState) as Array<keyof State>) {
-      if (!(key in nextState)) {
-        delete viewState[key];
-      }
-    }
-    Object.assign(viewState, nextState);
-  });
-
-  return viewState as Readonly<State>;
-}
 
 export function createMutableZustandState<State extends object>(store: StoreApi<State>): State {
   function valueAt(path: PropertyKeyPath) {

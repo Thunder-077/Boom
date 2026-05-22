@@ -18,7 +18,7 @@ import type {
   TeacherDutyStat,
 } from "../../entities/exam-plan/model";
 import type { TeacherRow } from "../../entities/teacher/model";
-import { createMutableZustandState, createVueViewState } from "../../shared/store/zustandVueBridge";
+import { createMutableZustandState } from "../../shared/store/zustandStateProxy";
 import { examAllocationService, type ExamAllocationService } from "./service";
 
 const emptyOverview: ExamPlanOverview = {
@@ -154,7 +154,6 @@ export function createExamAllocationStore(service: ExamAllocationService = examA
     assignmentProgress: null as ExamStaffAssignmentProgress | null,
   }));
   const state = createMutableZustandState(store);
-  const viewState = createVueViewState(store);
   const snapshot = () => store.getState();
   let progressPollTimer: number | null = null;
   const isNoRowsError = (error: unknown) => String(error).includes("Query returned no rows");
@@ -752,16 +751,12 @@ export function createExamAllocationStore(service: ExamAllocationService = examA
     refreshGenerationProgress,
     setAssignmentProgress,
     get viewState() {
-      return viewState;
+      return store.getState();
     },
   };
 }
 
 const singleton = createExamAllocationStore();
-
-export function useExamAllocationStore() {
-  return singleton;
-}
 
 export function useReactExamAllocationStore() {
   const state = useSyncExternalStore(

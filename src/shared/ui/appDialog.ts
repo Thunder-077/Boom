@@ -1,4 +1,3 @@
-import { reactive } from "vue";
 import { useSyncExternalStore } from "react";
 
 export type AppDialogTone = "default" | "danger" | "success" | "warning";
@@ -39,14 +38,12 @@ const defaultAppDialogState: AppDialogState = {
   cancelText: "取消",
 };
 
-export const appDialogState = reactive<AppDialogState>({ ...defaultAppDialogState });
 let currentDialogState: AppDialogState = { ...defaultAppDialogState };
 const listeners = new Set<() => void>();
 
 let resolver: ((value: boolean) => void) | null = null;
 
 function notifyDialogState() {
-  Object.assign(appDialogState, currentDialogState);
   for (const listener of listeners) {
     listener();
   }

@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { hasDesktopRuntime } from "../../../shared/utils/desktopRuntime";
 import { CLASS_CONFIG_TYPE_OPTIONS, SUBJECT_OPTIONS, type ClassConfigRow, type ClassConfigType } from "../../../entities/class-config/model";
 import { Subject } from "../../../entities/score/model";
 import { useAppDialog } from "../../../shared/ui/appDialog";
@@ -34,7 +35,9 @@ export default function ClassConfigPanel() {
   const searchInputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
-    void store.setFilters({ configType: "teaching_class", gradeName: "", keyword: "" });
+    if (hasDesktopRuntime()) {
+      void store.setFilters({ configType: "teaching_class", gradeName: "", keyword: "" });
+    }
   }, []);
 
   const normalizedSearchKeyword = searchKeyword.trim().replace(/\s+/g, "").toLowerCase();

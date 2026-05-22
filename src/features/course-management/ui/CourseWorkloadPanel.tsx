@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { hasDesktopRuntime } from "../../../shared/utils/desktopRuntime";
 import { revealInExplorer } from "../../../shared/utils/appLog";
 import { FluentSelect, InfoHint, TableCard } from "../../../widgets/common/index.react";
 import { useReactCourseManagementStore } from "../store";
@@ -46,7 +47,9 @@ export default function CourseWorkloadPanel() {
   const filteredDetails = selectedTeacher ? details.filter((item) => item.teacherName === selectedTeacher) : details;
 
   useEffect(() => {
-    void store.loadOptions();
+    if (hasDesktopRuntime()) {
+      void store.loadOptions();
+    }
   }, []);
 
   useEffect(() => {

@@ -1,10 +1,8 @@
-import { computed } from "vue";
 import { useSyncExternalStore } from "react";
 import { createStore } from "zustand/vanilla";
 import { relaunch } from "@tauri-apps/plugin-process";
 import { check } from "@tauri-apps/plugin-updater";
 import { getVersion } from "@tauri-apps/api/app";
-import { createVueViewState } from "../store/zustandVueBridge";
 
 export type UpdateStatus = "idle" | "checking" | "available" | "downloading" | "ready" | "up-to-date" | "error";
 
@@ -25,8 +23,6 @@ const updaterStore = createStore<AppUpdaterState>(() => ({
   updateVersion: "",
   currentVersion: "",
 }));
-
-const vueState = createVueViewState(updaterStore);
 
 function statusLabel(state: AppUpdaterState) {
   switch (state.status) {
@@ -136,19 +132,6 @@ export function useReactAppUpdater() {
   return {
     ...state,
     statusLabel: statusLabel(state),
-    checkForUpdate,
-    downloadAndInstall,
-  };
-}
-
-export function useAppUpdater() {
-  return {
-    status: computed(() => vueState.status),
-    progress: computed(() => vueState.progress),
-    updateVersion: computed(() => vueState.updateVersion),
-    currentVersion: computed(() => vueState.currentVersion),
-    errorMessage: computed(() => vueState.errorMessage),
-    statusLabel: computed(() => statusLabel(vueState)),
     checkForUpdate,
     downloadAndInstall,
   };

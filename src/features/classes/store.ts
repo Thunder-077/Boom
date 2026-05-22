@@ -8,7 +8,6 @@ import type {
   ClassConfigUpsertPayload,
 } from "../../entities/class-config/model";
 import type { Subject } from "../../entities/score/model";
-import { createVueViewState } from "../../shared/store/zustandVueBridge";
 import { classConfigService, type ClassConfigService } from "./service";
 
 export type ClassConfigMode = "existing" | "new";
@@ -100,7 +99,6 @@ function createDefaultState(): ClassConfigStoreState {
 
 export function createClassConfigStore(service: ClassConfigService = classConfigService) {
   const store = createStore<ClassConfigStoreState>(() => createDefaultState());
-  const viewState = createVueViewState(store);
 
   function resetForm(type: ClassConfigType = store.getState().filters.configType) {
     const form = {
@@ -337,16 +335,12 @@ export function createClassConfigStore(service: ClassConfigService = classConfig
     startCreate,
     discardChanges,
     get viewState() {
-      return viewState;
+      return store.getState();
     },
   };
 }
 
 const classConfigStoreSingleton = createClassConfigStore();
-
-export function useClassConfigStore() {
-  return classConfigStoreSingleton;
-}
 
 export function useReactClassConfigStore() {
   const state = useSyncExternalStore(

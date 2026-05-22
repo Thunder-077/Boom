@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
+import { hasDesktopRuntime } from "../../../shared/utils/desktopRuntime";
 import { invigilationService } from "../../invigilation/service";
 import type {
   AnimationPhase,
@@ -494,6 +495,9 @@ export default function MonitorDrawPanel() {
     let unlistenDragDrop: (() => void) | null = null;
 
     async function bindWindowEvents() {
+      if (!hasDesktopRuntime()) {
+        return;
+      }
       const appWindow = getCurrentWebviewWindow();
       unlistenDragDrop = await appWindow.onDragDropEvent((event) => {
         if (step !== "import") return;

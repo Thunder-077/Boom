@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
+import { hasDesktopRuntime } from "../../../shared/utils/desktopRuntime";
 import { SUBJECT_LABELS } from "../../../entities/class-config/model";
 import type { ScoreCellState, ScoreDetail, ScoreRow, ScoreUpdatePayload } from "../../../entities/score/model";
 import { FilterToolbar, FluentSelect, InfoHint, Pagination, TableCard } from "../../../widgets/common/index.react";
@@ -78,6 +79,9 @@ export default function ScoreManagementPanel() {
     let unlistenDragDrop: (() => void) | null = null;
 
     async function bindWindowEvents() {
+      if (!hasDesktopRuntime()) {
+        return;
+      }
       const appWindow = getCurrentWebviewWindow();
       unlistenDragDrop = await appWindow.onDragDropEvent((event) => {
         if (event.payload.type === "enter" || event.payload.type === "over") {

@@ -8,7 +8,6 @@ import type {
   ScoreRow,
   ScoreUpdatePayload,
 } from "../../entities/score/model";
-import { createVueViewState } from "../../shared/store/zustandVueBridge";
 import { scoreService, type ScoreService } from "./service";
 
 type ImportStatus = "idle" | "importing" | "success" | "error";
@@ -62,8 +61,6 @@ export function createScoreStore(service: ScoreService = scoreService) {
       pageSize: 7,
     }),
   );
-
-  const viewState = createVueViewState(store);
 
   async function load() {
     store.setState({ loading: true });
@@ -169,16 +166,12 @@ export function createScoreStore(service: ScoreService = scoreService) {
     updateScore,
     setImportFeedback,
     get viewState() {
-      return viewState;
+      return store.getState();
     },
   };
 }
 
 const scoreStoreSingleton = createScoreStore();
-
-export function useScoreStore() {
-  return scoreStoreSingleton;
-}
 
 export function useReactScoreStore() {
   const state = useSyncExternalStore(

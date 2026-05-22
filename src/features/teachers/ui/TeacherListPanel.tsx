@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
+import { hasDesktopRuntime } from "../../../shared/utils/desktopRuntime";
 import { TEACHER_SUBJECT_LABELS } from "../../../entities/teacher/model";
 import {
   FilterToolbar,
@@ -86,6 +87,9 @@ export default function TeacherListPanel() {
     let unlistenDragDrop: (() => void) | null = null;
 
     async function bindWindowEvents() {
+      if (!hasDesktopRuntime()) {
+        return;
+      }
       const appWindow = getCurrentWebviewWindow();
       unlistenDragDrop = await appWindow.onDragDropEvent((event) => {
         if (event.payload.type === "enter" || event.payload.type === "over") {

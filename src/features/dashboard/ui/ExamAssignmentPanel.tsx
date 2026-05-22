@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { SUBJECT_LABELS } from "../../../entities/class-config/model";
 import { Subject } from "../../../entities/score/model";
 import { revealInExplorer } from "../../../shared/utils/appLog";
+import { hasDesktopRuntime } from "../../../shared/utils/desktopRuntime";
 import { ConfigCard, FluentSelect, TableCard } from "../../../widgets/common/index.react";
 import { useReactExamAllocationStore } from "../store";
 
@@ -322,7 +323,9 @@ export default function ExamAssignmentPanel() {
   }
 
   useEffect(() => {
-    void store.loadAll();
+    if (hasDesktopRuntime()) {
+      void store.loadAll();
+    }
     return () => {
       clearAutoSaveTimer();
     };
