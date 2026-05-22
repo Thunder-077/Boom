@@ -93,6 +93,10 @@ export function setTheme(themeId: ThemeId) {
   }
 }
 
+export function getCurrentTheme() {
+  return currentTheme.value;
+}
+
 export function useThemeState() {
   return {
     currentTheme,

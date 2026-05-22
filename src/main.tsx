@@ -1,18 +1,11 @@
-import { createApp } from "vue";
-import App from "./app/App.vue";
-import { router } from "./app/router";
+import React from "react";
+import ReactDOM from "react-dom/client";
+import App from "./app/App";
 import { appendAppLog } from "./shared/utils/appLog";
 import { initializeTheme } from "./shared/theme/theme";
 import "./shared/styles/index.css";
 
-const app = createApp(App);
 initializeTheme();
-
-app.config.errorHandler = (error, instance, info) => {
-  const componentType = (instance as { type?: { name?: string } } | null)?.type;
-  const componentName = componentType?.name ? String(componentType.name) : "unknown-component";
-  void appendAppLog("error", "frontend.vue", `${info} | ${componentName} | ${String(error)}`);
-};
 
 window.addEventListener("error", (event) => {
   void appendAppLog(
@@ -30,6 +23,10 @@ window.addEventListener("unhandledrejection", (event) => {
   void appendAppLog("error", "frontend.promise", reason);
 });
 
-void appendAppLog("info", "frontend.startup", "application boot");
+void appendAppLog("info", "frontend.startup", "react shell boot");
 
-app.use(router).mount("#app");
+ReactDOM.createRoot(document.getElementById("app") as HTMLElement).render(
+  <React.StrictMode>
+    <App />
+  </React.StrictMode>,
+);

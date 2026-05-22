@@ -1,4 +1,5 @@
-import { computed, reactive, readonly } from "vue";
+import { createStore } from "zustand/vanilla";
+import { useSyncExternalStore } from "react";
 import type {
   TeacherImportResult,
   TeacherQuery,
@@ -6,6 +7,7 @@ import type {
   TeacherSubject,
   TeacherSummary,
 } from "../../entities/teacher/model";
+import { createVueViewState } from "../../shared/store/zustandVueBridge";
 import { teacherService, type TeacherService } from "./service";
 
 const defaultFilters: TeacherQuery = {
@@ -21,88 +23,102 @@ const emptySummary: TeacherSummary = {
 
 type ImportStatus = "idle" | "importing" | "success" | "error";
 
+interface TeacherStoreState {
+  loading: boolean;
+  filters: TeacherQuery;
+  rows: TeacherRow[];
+  total: number;
+  summary: TeacherSummary;
+  importStatus: ImportStatus;
+  importMessage: string;
+  lastImportResult: TeacherImportResult | null;
+}
+
 export function createTeacherStore(service: TeacherService = teacherService) {
-  const state = reactive({
+  const store = createStore<TeacherStoreState>(() => ({
     loading: false,
     filters: { ...defaultFilters },
-    rows: [] as TeacherRow[],
+    rows: [],
     total: 0,
-    summary: { ...emptySummary } as TeacherSummary,
-    importStatus: "idle" as ImportStatus,
+    summary: { ...emptySummary },
+    importStatus: "idle",
     importMessage: "",
-    lastImportResult: null as TeacherImportResult | null,
-  });
+    lastImportResult: null,
+  }));
+
+  const viewState = createVueViewState(store);
 
   async function load() {
-    state.loading = true;
+    store.setState({ loading: true });
     try {
+      const { filters } = store.getState();
       const [listResult, summary] = await Promise.all([
-        service.list(state.filters),
+        service.list(filters),
         service.getSummary(),
       ]);
-      state.rows = listResult.items;
-      state.total = listResult.total;
-      state.summary = summary;
+      store.setState({
+        rows: listResult.items,
+        total: listResult.total,
+        summary,
+      });
     } finally {
-      state.loading = false;
+      store.setState({ loading: false });
     }
   }
 
   async function setFilters(filters: Partial<TeacherQuery>) {
-    state.filters = {
-      ...state.filters,
-      ...filters,
-    };
+    store.setState((state) => ({
+      filters: {
+        ...state.filters,
+        ...filters,
+      },
+    }));
     await load();
   }
 
   async function resetFilters() {
-    state.filters = { ...defaultFilters };
+    store.setState({ filters: { ...defaultFilters } });
     await load();
   }
 
   async function importExcel(filePath: string) {
-    state.importStatus = "importing";
-    state.importMessage = "正在导入教师 Excel...";
+    store.setState({
+      importStatus: "importing",
+      importMessage: "正在导入教师 Excel...",
+    });
     try {
       const result = await service.importExcel(filePath);
-      state.lastImportResult = result;
-      state.importStatus = "success";
-      state.importMessage = `共 ${result.rowCount} 条，耗时 ${result.durationMs}ms`;
+      store.setState({
+        lastImportResult: result,
+        importStatus: "success",
+        importMessage: `共 ${result.rowCount} 条，耗时 ${result.durationMs}ms`,
+      });
       await load();
     } catch (error) {
-      state.importStatus = "error";
-      state.importMessage = error instanceof Error ? error.message : String(error);
+      store.setState({
+        importStatus: "error",
+        importMessage: error instanceof Error ? error.message : String(error),
+      });
       throw error;
     }
   }
 
   function setImportFeedback(status: ImportStatus, message: string) {
-    state.importStatus = status;
-    state.importMessage = message;
+    store.setState({
+      importStatus: status,
+      importMessage: message,
+    });
   }
 
-  const viewState = readonly(
-    computed(() => ({
-      loading: state.loading,
-      filters: state.filters,
-      rows: state.rows,
-      total: state.total,
-      summary: state.summary,
-      importStatus: state.importStatus,
-      importMessage: state.importMessage,
-      lastImportResult: state.lastImportResult,
-    })),
-  );
-
   return {
+    store,
     load,
     setFilters,
     resetFilters,
     importExcel,
     setImportFeedback,
     get viewState() {
-      return viewState.value;
+      return viewState;
     },
   };
 }
@@ -111,6 +127,22 @@ const teacherStoreSingleton = createTeacherStore();
 
 export function useTeacherStore() {
   return teacherStoreSingleton;
+}
+
+export function useReactTeacherStore() {
+  const state = useSyncExternalStore(
+    teacherStoreSingleton.store.subscribe,
+    teacherStoreSingleton.store.getState,
+    teacherStoreSingleton.store.getInitialState,
+  );
+  return {
+    state,
+    load: teacherStoreSingleton.load,
+    setFilters: teacherStoreSingleton.setFilters,
+    resetFilters: teacherStoreSingleton.resetFilters,
+    importExcel: teacherStoreSingleton.importExcel,
+    setImportFeedback: teacherStoreSingleton.setImportFeedback,
+  };
 }
 
 export const TEACHER_SUBJECT_OPTIONS: Array<{ value: TeacherSubject | ""; label: string }> = [

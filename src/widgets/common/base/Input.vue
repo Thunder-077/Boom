@@ -85,89 +85,67 @@ function handleBlur(event: FocusEvent) {
 
 <style scoped>
 .input-wrapper {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-sm);
+  @apply flex flex-col gap-sm;
 }
 
 .input-label {
-  color: var(--text-secondary);
-  font-size: var(--font-size-sm);
-  font-weight: 600;
+  @apply text-sm font-semibold text-text-secondary;
 }
 
 .input-field-wrap {
-  position: relative;
-  display: flex;
-  align-items: center;
-  border: 1px solid var(--border-default);
-  border-radius: var(--radius-sm);
-  background: var(--surface-input);
+  @apply relative flex items-center rounded-sm border border-border bg-surface-input;
   transition:
     border-color var(--transition-base) var(--transition-ease),
     box-shadow var(--transition-base) var(--transition-ease);
 }
 
 .input-field {
-  flex: 1;
-  border: 0;
-  background: transparent;
-  outline: none;
-  color: var(--text-primary);
-  font-family: var(--font-ui);
+  @apply flex-1 border-0 bg-transparent font-ui text-text-primary outline-none;
 }
 
 .input-field::placeholder {
-  color: var(--text-tertiary);
+  @apply text-text-tertiary;
 }
 
 .input-field:disabled {
-  cursor: not-allowed;
-  opacity: 0.5;
+  @apply cursor-not-allowed opacity-50;
 }
 
 .input-sm .input-field-wrap {
-  min-height: 32px;
+  @apply min-h-8;
 }
 
 .input-sm .input-field {
-  padding: 0 var(--space-md);
-  font-size: var(--font-size-sm);
+  @apply px-md text-sm;
 }
 
 .input-md .input-field-wrap {
-  min-height: 38px;
+  @apply min-h-[38px];
 }
 
 .input-md .input-field {
-  padding: 0 var(--space-lg);
-  font-size: var(--font-size-base);
+  @apply px-lg text-base;
 }
 
 .input-lg .input-field-wrap {
-  min-height: 44px;
+  @apply min-h-11;
 }
 
 .input-lg .input-field {
-  padding: 0 var(--space-xl);
-  font-size: var(--font-size-base);
+  @apply px-xl text-base;
 }
 
 .input-prefix,
 .input-suffix {
-  display: inline-flex;
-  align-items: center;
-  color: var(--text-tertiary);
-  font-size: var(--font-size-base);
-  flex-shrink: 0;
+  @apply inline-flex shrink-0 items-center text-base text-text-tertiary;
 }
 
 .input-prefix {
-  padding-left: var(--space-md);
+  @apply pl-md;
 }
 
 .input-suffix {
-  padding-right: var(--space-md);
+  @apply pr-md;
 }
 
 .input-wrapper.focused .input-field-wrap {
@@ -176,23 +154,18 @@ function handleBlur(event: FocusEvent) {
 }
 
 .input-wrapper.disabled .input-field-wrap {
-  background: var(--surface-elevated);
-  cursor: not-allowed;
+  @apply cursor-not-allowed bg-surface-elevated;
 }
 
 .input-wrapper .input-field-wrap:hover:not(.focused):not(.disabled) {
-  border-color: var(--border-strong);
+  @apply border-border-strong;
 }
 
 .input-error {
-  margin: 0;
-  color: var(--color-danger);
-  font-size: var(--font-size-sm);
+  @apply m-0 text-sm text-danger;
 }
 
 .input-help {
-  margin: 0;
-  color: var(--text-tertiary);
-  font-size: var(--font-size-sm);
+  @apply m-0 text-sm text-text-tertiary;
 }
 </style>

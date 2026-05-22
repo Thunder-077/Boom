@@ -45,54 +45,36 @@ function handleClick(event: MouseEvent) {
 
 <style scoped>
 .btn {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: var(--space-sm);
-  border-radius: var(--radius-sm);
-  border: 1px solid transparent;
-  cursor: pointer;
-  font-family: var(--font-ui);
-  font-weight: 600;
+  @apply inline-flex cursor-pointer items-center justify-center gap-sm rounded-sm border border-transparent font-ui font-semibold outline-none;
   transition:
     border-color var(--transition-base) var(--transition-ease),
     background-color var(--transition-base) var(--transition-ease),
     color var(--transition-base) var(--transition-ease);
-  outline: none;
 }
 
 .btn:disabled,
 .btn.disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
+  @apply cursor-not-allowed opacity-50;
 }
 
 .btn-sm {
-  min-height: 30px;
-  padding: 0 var(--space-md);
-  font-size: var(--font-size-sm);
+  @apply min-h-[30px] px-md text-sm;
 }
 
 .btn-md {
-  min-height: 36px;
-  padding: 0 var(--space-lg);
-  font-size: var(--font-size-base);
+  @apply min-h-9 px-lg text-base;
 }
 
 .btn-lg {
-  min-height: 42px;
-  padding: 0 var(--space-xl);
-  font-size: var(--font-size-base);
+  @apply min-h-[42px] px-xl text-base;
 }
 
 .btn-primary {
-  border-color: transparent;
-  color: var(--color-on-primary);
-  background: var(--accent-primary);
+  @apply border-transparent bg-accent text-[var(--color-on-primary)];
 }
 
 .btn-primary:hover:not(:disabled):not(.loading) {
-  background: var(--accent-primary-strong);
+  @apply bg-accent-strong;
 }
 
 .btn-primary:active:not(:disabled) {
@@ -100,56 +82,41 @@ function handleClick(event: MouseEvent) {
 }
 
 .btn-secondary {
-  border-color: var(--border-default);
-  color: var(--text-primary);
-  background: var(--surface-panel);
+  @apply border-border bg-surface-panel text-text-primary;
 }
 
 .btn-secondary:hover:not(:disabled):not(.loading) {
-  border-color: var(--border-strong);
-  background: var(--surface-panel);
+  @apply border-border-strong bg-surface-panel;
 }
 
 .btn-danger {
-  border-color: var(--border-default);
-  color: var(--color-danger);
-  background: var(--surface-panel);
+  @apply border-border bg-surface-panel text-danger;
 }
 
 .btn-danger:hover:not(:disabled):not(.loading) {
-  border-color: var(--color-danger-action-strong);
-  background: var(--color-danger-soft);
+  @apply border-[var(--color-danger-action-strong)] bg-[var(--color-danger-soft)];
 }
 
 .btn-ghost {
-  border-color: transparent;
-  color: var(--text-secondary);
-  background: transparent;
+  @apply border-transparent bg-transparent text-text-secondary;
 }
 
 .btn-ghost:hover:not(:disabled):not(.loading) {
-  background: var(--accent-fill-soft);
-  color: var(--text-primary);
+  @apply bg-[var(--accent-fill-soft)] text-text-primary;
 }
 
 .btn-content {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-sm);
+  @apply inline-flex items-center gap-sm;
 }
 
 .btn-icon {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
+  @apply inline-flex items-center justify-center;
 }
 
 .btn-spinner {
-  width: 14px;
-  height: 14px;
-  border: 2px solid rgba(255, 255, 255, 0.3);
+  @apply h-[14px] w-[14px] rounded-full border-2;
+  border-color: rgba(255, 255, 255, 0.3);
   border-top-color: currentColor;
-  border-radius: 50%;
   animation: spin 0.6s linear infinite;
 }
 

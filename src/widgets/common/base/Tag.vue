@@ -38,67 +38,50 @@ const sizeClass = computed(() => `tag-${props.size}`);
 
 <style scoped>
 .tag {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  border-radius: var(--radius-pill);
-  font-weight: 600;
-  white-space: nowrap;
+  @apply inline-flex items-center justify-center whitespace-nowrap rounded-pill font-semibold;
   transition:
     background-color var(--transition-base) var(--transition-ease),
     color var(--transition-base) var(--transition-ease);
 }
 
 .tag-sm {
-  min-height: 22px;
-  padding: 2px 8px;
-  font-size: var(--font-size-xs);
+  @apply min-h-[22px] px-2 py-0.5 text-xs;
 }
 
 .tag-md {
-  min-height: 26px;
-  padding: 4px 10px;
-  font-size: var(--font-size-xs);
+  @apply min-h-[26px] px-2.5 py-1 text-xs;
 }
 
 .tag-lg {
-  min-height: 30px;
-  padding: 4px 12px;
-  font-size: var(--font-size-sm);
+  @apply min-h-[30px] px-3 py-1 text-sm;
 }
 
 .tag-default {
-  background: var(--accent-fill-soft);
-  color: var(--text-secondary);
+  @apply bg-[var(--accent-fill-soft)] text-text-secondary;
 }
 
 .tag-primary {
-  background: var(--accent-soft);
-  color: var(--accent-primary);
+  @apply bg-accent-soft text-accent;
 }
 
 .tag-success {
-  background: var(--color-success-soft);
-  color: var(--color-success);
+  @apply bg-[var(--color-success-soft)] text-success;
 }
 
 .tag-warning {
-  background: var(--color-warning-soft);
-  color: var(--color-warning);
+  @apply bg-[var(--color-warning-soft)] text-warning;
 }
 
 .tag-danger {
-  background: var(--color-danger-soft);
-  color: var(--color-danger);
+  @apply bg-[var(--color-danger-soft)] text-danger;
 }
 
 .tag-info {
-  background: var(--accent-softer);
-  color: var(--accent-primary);
+  @apply bg-accent-softer text-accent;
 }
 
 .tag.clickable {
-  cursor: pointer;
+  @apply cursor-pointer;
 }
 
 .tag.clickable:hover {
@@ -106,7 +89,6 @@ const sizeClass = computed(() => `tag-${props.size}`);
 }
 
 .tag.clickable.active {
-  background: var(--accent-soft);
-  color: var(--accent-primary-strong);
+  @apply bg-accent-soft text-accent-strong;
 }
 </style>

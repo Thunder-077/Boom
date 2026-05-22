@@ -1,5 +1,14 @@
-import { computed, reactive, readonly } from "vue";
-import type { ImportResult, LatestScoreSummary, ScoreDetail, ScoreQuery, ScoreRow, ScoreUpdatePayload } from "../../entities/score/model";
+import { createStore } from "zustand/vanilla";
+import { useSyncExternalStore } from "react";
+import type {
+  ImportResult,
+  LatestScoreSummary,
+  ScoreDetail,
+  ScoreQuery,
+  ScoreRow,
+  ScoreUpdatePayload,
+} from "../../entities/score/model";
+import { createVueViewState } from "../../shared/store/zustandVueBridge";
 import { scoreService, type ScoreService } from "./service";
 
 type ImportStatus = "idle" | "importing" | "success" | "error";
@@ -17,73 +26,122 @@ const emptySummary: LatestScoreSummary = {
   gradeCount: 0,
 };
 
+interface ScoreStoreState {
+  loading: boolean;
+  filters: ScoreQuery;
+  rows: ScoreRow[];
+  total: number;
+  summary: LatestScoreSummary;
+  importStatus: ImportStatus;
+  importMessage: string;
+  lastImportResult: ImportResult | null;
+  page: number;
+  pageSize: number;
+  totalPages: number;
+}
+
+function withTotalPages(state: Omit<ScoreStoreState, "totalPages">): ScoreStoreState {
+  return {
+    ...state,
+    totalPages: Math.max(1, Math.ceil(state.total / state.pageSize)),
+  };
+}
+
 export function createScoreStore(service: ScoreService = scoreService) {
-  const state = reactive({
-    loading: false,
-    filters: { ...defaultFilters },
-    rows: [] as ScoreRow[],
-    total: 0,
-    summary: { ...emptySummary } as LatestScoreSummary,
-    importStatus: "idle" as ImportStatus,
-    importMessage: "",
-    lastImportResult: null as ImportResult | null,
-    page: 1,
-    pageSize: 7,
-  });
+  const store = createStore<ScoreStoreState>(() =>
+    withTotalPages({
+      loading: false,
+      filters: { ...defaultFilters },
+      rows: [],
+      total: 0,
+      summary: { ...emptySummary },
+      importStatus: "idle",
+      importMessage: "",
+      lastImportResult: null,
+      page: 1,
+      pageSize: 7,
+    }),
+  );
+
+  const viewState = createVueViewState(store);
 
   async function load() {
-    state.loading = true;
+    store.setState({ loading: true });
     try {
+      const { filters, page, pageSize } = store.getState();
       const [listResult, summaryResult] = await Promise.all([
         service.list({
-          ...state.filters,
-          page: state.page,
-          pageSize: state.pageSize,
+          ...filters,
+          page,
+          pageSize,
         }),
         service.getLatestSummary(),
       ]);
-      state.rows = listResult.items;
-      state.total = listResult.total;
-      state.summary = summaryResult;
+      store.setState((state) =>
+        withTotalPages({
+          ...state,
+          rows: listResult.items,
+          total: listResult.total,
+          summary: summaryResult,
+        }),
+      );
     } finally {
-      state.loading = false;
+      store.setState({ loading: false });
     }
   }
 
   async function setFilters(filters: Partial<ScoreQuery>) {
-    state.filters = {
-      ...state.filters,
-      ...filters,
-    };
-    state.page = 1;
+    store.setState((state) =>
+      withTotalPages({
+        ...state,
+        filters: {
+          ...state.filters,
+          ...filters,
+        },
+        page: 1,
+      }),
+    );
     await load();
   }
 
   async function resetFilters() {
-    state.filters = { ...defaultFilters };
-    state.page = 1;
+    store.setState((state) =>
+      withTotalPages({
+        ...state,
+        filters: { ...defaultFilters },
+        page: 1,
+      }),
+    );
     await load();
   }
 
   async function importExcel(filePath: string) {
-    state.importStatus = "importing";
-    state.importMessage = "正在导入成绩 Excel...";
+    store.setState({
+      importStatus: "importing",
+      importMessage: "正在导入成绩 Excel...",
+    });
     try {
       const result = await service.importExcel(filePath);
-      state.lastImportResult = result;
-      state.importStatus = "success";
-      state.importMessage = `共 ${result.rowCount} 条，耗时 ${result.durationMs}ms`;
+      store.setState({
+        lastImportResult: result,
+        importStatus: "success",
+        importMessage: `共 ${result.rowCount} 条，耗时 ${result.durationMs}ms`,
+      });
       await load();
     } catch (error) {
-      state.importStatus = "error";
-      state.importMessage = error instanceof Error ? error.message : String(error);
+      store.setState({
+        importStatus: "error",
+        importMessage: error instanceof Error ? error.message : String(error),
+      });
       throw error;
     }
   }
 
   function setImportFeedback(status: ImportStatus, message: string) {
-    state.importStatus = status;
-    state.importMessage = message;
+    store.setState({
+      importStatus: status,
+      importMessage: message,
+    });
   }
 
   async function getDetail(admissionNo: string): Promise<ScoreDetail> {
@@ -91,7 +149,7 @@ export function createScoreStore(service: ScoreService = scoreService) {
   }
 
   async function setPage(page: number) {
-    state.page = page;
+    store.setState((state) => withTotalPages({ ...state, page }));
     await load();
   }
 
@@ -100,23 +158,8 @@ export function createScoreStore(service: ScoreService = scoreService) {
     await load();
   }
 
-  const viewState = readonly(
-    computed(() => ({
-      loading: state.loading,
-      filters: state.filters,
-      rows: state.rows,
-      total: state.total,
-      page: state.page,
-      pageSize: state.pageSize,
-      totalPages: Math.max(1, Math.ceil(state.total / state.pageSize)),
-      summary: state.summary,
-      importStatus: state.importStatus,
-      importMessage: state.importMessage,
-      lastImportResult: state.lastImportResult,
-    })),
-  );
-
   return {
+    store,
     load,
     setFilters,
     resetFilters,
@@ -126,7 +169,7 @@ export function createScoreStore(service: ScoreService = scoreService) {
     updateScore,
     setImportFeedback,
     get viewState() {
-      return viewState.value;
+      return viewState;
     },
   };
 }
@@ -135,4 +178,24 @@ const scoreStoreSingleton = createScoreStore();
 
 export function useScoreStore() {
   return scoreStoreSingleton;
+}
+
+export function useReactScoreStore() {
+  const state = useSyncExternalStore(
+    scoreStoreSingleton.store.subscribe,
+    scoreStoreSingleton.store.getState,
+    scoreStoreSingleton.store.getInitialState,
+  );
+
+  return {
+    state,
+    load: scoreStoreSingleton.load,
+    setFilters: scoreStoreSingleton.setFilters,
+    resetFilters: scoreStoreSingleton.resetFilters,
+    setPage: scoreStoreSingleton.setPage,
+    importExcel: scoreStoreSingleton.importExcel,
+    getDetail: scoreStoreSingleton.getDetail,
+    updateScore: scoreStoreSingleton.updateScore,
+    setImportFeedback: scoreStoreSingleton.setImportFeedback,
+  };
 }

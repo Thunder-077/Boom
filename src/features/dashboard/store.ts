@@ -1,4 +1,5 @@
-import { computed, reactive, readonly } from "vue";
+import { useSyncExternalStore } from "react";
+import { createStore } from "zustand/vanilla";
 import { Subject } from "../../entities/score/model";
 import type {
   ExamAllocationSettings,
@@ -17,6 +18,7 @@ import type {
   TeacherDutyStat,
 } from "../../entities/exam-plan/model";
 import type { TeacherRow } from "../../entities/teacher/model";
+import { createMutableZustandState, createVueViewState } from "../../shared/store/zustandVueBridge";
 import { examAllocationService, type ExamAllocationService } from "./service";
 
 const emptyOverview: ExamPlanOverview = {
@@ -107,7 +109,7 @@ function subjectOrder(subject: Subject): number {
 }
 
 export function createExamAllocationStore(service: ExamAllocationService = examAllocationService) {
-  const state = reactive({
+  const store = createStore(() => ({
     loading: false,
     generating: false,
     saving: false,
@@ -150,7 +152,10 @@ export function createExamAllocationStore(service: ExamAllocationService = examA
     lastInvigilationExportPath: "",
     generationProgress: { ...emptyGenerationProgress } as ExamGenerationProgress,
     assignmentProgress: null as ExamStaffAssignmentProgress | null,
-  });
+  }));
+  const state = createMutableZustandState(store);
+  const viewState = createVueViewState(store);
+  const snapshot = () => store.getState();
   let progressPollTimer: number | null = null;
   const isNoRowsError = (error: unknown) => String(error).includes("Query returned no rows");
 
@@ -661,7 +666,7 @@ export function createExamAllocationStore(service: ExamAllocationService = examA
           0,
           Number(state.invigilationConfig.outdoorAllowancePerMinute || 0),
         ),
-        customRules: state.customRules,
+        customRules: snapshot().customRules,
       });
       await loadStaffOutputs();
       return result;
@@ -678,7 +683,7 @@ export function createExamAllocationStore(service: ExamAllocationService = examA
   }
 
   async function saveInvigilationConfig(payload?: Partial<InvigilationConfig>) {
-    const next = { ...state.invigilationConfig, ...payload };
+    const next = { ...snapshot().invigilationConfig, ...payload };
     state.invigilationConfig = {
       defaultExamRoomRequiredCount: Math.max(
         1,
@@ -700,12 +705,12 @@ export function createExamAllocationStore(service: ExamAllocationService = examA
       selfStudyStartTime: (next.selfStudyStartTime || "12:10").trim(),
       selfStudyEndTime: (next.selfStudyEndTime || "13:40").trim(),
     };
-    await service.savePersistedInvigilationConfig(state.invigilationConfig);
+    await service.savePersistedInvigilationConfig(snapshot().invigilationConfig);
   }
 
   async function saveCustomRules(rules: InvigilationCustomRule[]) {
     state.customRules = rules;
-    await service.replacePersistedInvigilationCustomRules(state.customRules);
+    await service.replacePersistedInvigilationCustomRules(snapshot().customRules);
     await loadCustomRuleOptions();
   }
 
@@ -716,7 +721,7 @@ export function createExamAllocationStore(service: ExamAllocationService = examA
       classId: item.classId,
       subject: item.subject ?? null,
     }));
-    await service.savePersistedSelfStudyClassSubjects(state.selfStudyClassSubjects);
+    await service.savePersistedSelfStudyClassSubjects(snapshot().selfStudyClassSubjects);
   }
 
   async function setSessionTimeGrade(gradeName: string) {
@@ -727,47 +732,8 @@ export function createExamAllocationStore(service: ExamAllocationService = examA
     await loadSessionTimes();
   }
 
-  const viewState = readonly(
-    computed(() => ({
-      loading: state.loading,
-      generating: state.generating,
-      saving: state.saving,
-      exporting: state.exporting,
-      exportingInvigilation: state.exportingInvigilation,
-      assigning: state.assigning,
-      savingTimes: state.savingTimes,
-      errorMessage: state.errorMessage,
-      settings: state.settings,
-      overview: state.overview,
-      sessions: state.sessions,
-      total: state.total,
-      selectedSessionId: state.selectedSessionId,
-      detail: state.detail,
-      filters: state.filters,
-      sessionTimeGradeOptions: state.sessionTimeGradeOptions,
-      selectedSessionTimeGradeName: state.selectedSessionTimeGradeName,
-      sessionTimes: state.sessionTimes,
-      sessionTimeDrafts: state.sessionTimeDrafts,
-      staffOverview: state.staffOverview,
-      staffTasks: state.staffTasks,
-      teacherDutyStats: state.teacherDutyStats,
-      invigilationConfig: state.invigilationConfig,
-      customRules: state.customRules,
-      customRuleOptions: state.customRuleOptions,
-      selfStudyClassSubjects: state.selfStudyClassSubjects,
-      exclusionSessionOptions: state.exclusionSessionOptions.map((item) => ({
-        sessionId: item.sessionId,
-        label: item.label,
-      })),
-      teachers: state.teachers,
-      lastExportFolderPath: state.lastExportFolderPath,
-      lastInvigilationExportPath: state.lastInvigilationExportPath,
-      generationProgress: state.generationProgress,
-      assignmentProgress: state.assignmentProgress,
-    })),
-  );
-
   return {
+    store,
     loadAll,
     saveSettings,
     exportLatestBundle,
@@ -786,7 +752,7 @@ export function createExamAllocationStore(service: ExamAllocationService = examA
     refreshGenerationProgress,
     setAssignmentProgress,
     get viewState() {
-      return viewState.value;
+      return viewState;
     },
   };
 }
@@ -795,4 +761,33 @@ const singleton = createExamAllocationStore();
 
 export function useExamAllocationStore() {
   return singleton;
+}
+
+export function useReactExamAllocationStore() {
+  const state = useSyncExternalStore(
+    singleton.store.subscribe,
+    singleton.store.getState,
+    singleton.store.getInitialState,
+  );
+
+  return {
+    state,
+    loadAll: singleton.loadAll,
+    saveSettings: singleton.saveSettings,
+    exportLatestBundle: singleton.exportLatestBundle,
+    exportLatestInvigilationSchedule: singleton.exportLatestInvigilationSchedule,
+    generate: singleton.generate,
+    loadDetail: singleton.loadDetail,
+    setFilters: singleton.setFilters,
+    setSessionTimeGrade: singleton.setSessionTimeGrade,
+    setSessionTimeDraft: singleton.setSessionTimeDraft,
+    saveSessionTimes: singleton.saveSessionTimes,
+    deleteSessionTime: singleton.deleteSessionTime,
+    assignTeachers: singleton.assignTeachers,
+    saveInvigilationConfig: singleton.saveInvigilationConfig,
+    saveCustomRules: singleton.saveCustomRules,
+    saveSelfStudyClassSubjects: singleton.saveSelfStudyClassSubjects,
+    refreshGenerationProgress: singleton.refreshGenerationProgress,
+    setAssignmentProgress: singleton.setAssignmentProgress,
+  };
 }

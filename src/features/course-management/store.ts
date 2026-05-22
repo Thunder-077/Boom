@@ -1,4 +1,5 @@
-import { computed, reactive, readonly } from "vue";
+import { useSyncExternalStore } from "react";
+import { createStore } from "zustand/vanilla";
 import type {
   CourseClassOption,
   CourseImportBatch,
@@ -15,6 +16,7 @@ import type {
   CourseWorkloadReport,
   ExportCourseWorkloadResult,
 } from "../../entities/course-management/model";
+import { createVueViewState } from "../../shared/store/zustandVueBridge";
 import { courseManagementService, type CourseManagementService } from "./service";
 
 type ImportStatus = "idle" | "importing" | "success" | "error";
@@ -31,100 +33,126 @@ const emptySummary: CourseSummary = {
   startWeek: 1,
 };
 
-export function createCourseManagementStore(service: CourseManagementService = courseManagementService) {
-  const state = reactive({
+interface CourseManagementStoreState {
+  loading: boolean;
+  viewType: CourseViewType;
+  target: string;
+  summary: CourseSummary;
+  imports: CourseImportBatch[];
+  selectedImportId: number | null;
+  selectedImport: CourseImportBatch | null;
+  settingsDraft: {
+    effectiveStartDate: string;
+    effectiveEndDate: string;
+    startWeek: number;
+  };
+  adminClasses: CourseClassOption[];
+  foreignClasses: CourseClassOption[];
+  teachers: string[];
+  periods: CoursePeriodSlot[];
+  schedule: CourseScheduleView | null;
+  substitutionCandidates: CourseSubstitutionCandidate[];
+  scheduleChanges: CourseScheduleChange[];
+  workloadReport: CourseWorkloadReport | null;
+  exportingWorkload: boolean;
+  lastWorkloadExport: ExportCourseWorkloadResult | null;
+  importStatus: ImportStatus;
+  importMessage: string;
+  lastImportResult: CourseImportResult | null;
+}
+
+function createDefaultState(): CourseManagementStoreState {
+  return {
     loading: false,
-    viewType: "admin_class" as CourseViewType,
+    viewType: "admin_class",
     target: "",
-    summary: { ...emptySummary } as CourseSummary,
-    imports: [] as CourseImportBatch[],
-    selectedImportId: null as number | null,
+    summary: { ...emptySummary },
+    imports: [],
+    selectedImportId: null,
+    selectedImport: null,
     settingsDraft: {
       effectiveStartDate: "",
       effectiveEndDate: "",
       startWeek: 1,
     },
-    adminClasses: [] as CourseClassOption[],
-    foreignClasses: [] as CourseClassOption[],
-    teachers: [] as string[],
-    periods: [] as CoursePeriodSlot[],
-    schedule: null as CourseScheduleView | null,
-    substitutionCandidates: [] as CourseSubstitutionCandidate[],
-    scheduleChanges: [] as CourseScheduleChange[],
-    workloadReport: null as CourseWorkloadReport | null,
+    adminClasses: [],
+    foreignClasses: [],
+    teachers: [],
+    periods: [],
+    schedule: null,
+    substitutionCandidates: [],
+    scheduleChanges: [],
+    workloadReport: null,
     exportingWorkload: false,
-    lastWorkloadExport: null as ExportCourseWorkloadResult | null,
-    importStatus: "idle" as ImportStatus,
+    lastWorkloadExport: null,
+    importStatus: "idle",
     importMessage: "",
-    lastImportResult: null as CourseImportResult | null,
-  });
+    lastImportResult: null,
+  };
+}
 
-  async function loadOptions() {
-    state.loading = true;
-    try {
-      const [summary, imports] = await Promise.all([
-        service.getSummary(),
-        service.listImports(),
-      ]);
-      state.summary = summary;
-      state.imports = imports;
-      const selectedStillExists = imports.some((item) => item.id === state.selectedImportId);
-      state.selectedImportId = selectedStillExists ? state.selectedImportId : imports[0]?.id ?? summary.latestImportId;
-      syncSettingsDraft();
-      await loadClassesForSelectedImport();
-      await loadPeriodsForSelectedImport();
-      await loadScheduleChanges();
-      if (!targetExists(state.viewType, state.target)) {
-        state.target = defaultTargetFor(state.viewType);
-      }
-      await loadSchedule();
-    } finally {
-      state.loading = false;
-    }
-  }
+function selectedImportFrom(imports: CourseImportBatch[], selectedImportId: number | null) {
+  return imports.find((item) => item.id === selectedImportId) ?? null;
+}
+
+export function createCourseManagementStore(service: CourseManagementService = courseManagementService) {
+  const store = createStore<CourseManagementStoreState>(() => createDefaultState());
+  const viewState = createVueViewState(store);
 
   function defaultTargetFor(viewType: CourseViewType) {
+    const state = store.getState();
     if (viewType === "teacher") return state.teachers[0] ?? "";
     if (viewType === "foreign_class") return state.foreignClasses[0]?.className ?? "";
     return state.adminClasses[0]?.className ?? "";
   }
 
-  function selectedImport() {
-    return state.imports.find((item) => item.id === state.selectedImportId) ?? null;
-  }
-
-  function syncSettingsDraft() {
-    const batch = selectedImport();
-    state.settingsDraft.effectiveStartDate = batch?.effectiveStartDate ?? "";
-    state.settingsDraft.effectiveEndDate = batch?.effectiveEndDate ?? "";
-    state.settingsDraft.startWeek = batch?.startWeek ?? 1;
+  function syncSelectedImportDraft() {
+    store.setState((state) => {
+      const selectedImport = selectedImportFrom(state.imports, state.selectedImportId);
+      return {
+        selectedImport,
+        settingsDraft: {
+          effectiveStartDate: selectedImport?.effectiveStartDate ?? "",
+          effectiveEndDate: selectedImport?.effectiveEndDate ?? "",
+          startWeek: selectedImport?.startWeek ?? 1,
+        },
+      };
+    });
   }
 
   async function loadClassesForSelectedImport() {
-    if (!state.selectedImportId) {
-      state.adminClasses = [];
-      state.foreignClasses = [];
-      state.teachers = [];
+    const { selectedImportId } = store.getState();
+    if (!selectedImportId) {
+      store.setState({
+        adminClasses: [],
+        foreignClasses: [],
+        teachers: [],
+      });
       return;
     }
     const [adminClasses, foreignClasses] = await Promise.all([
-      service.listClasses("admin", state.selectedImportId),
-      service.listClasses("foreign", state.selectedImportId),
+      service.listClasses("admin", selectedImportId),
+      service.listClasses("foreign", selectedImportId),
     ]);
-    state.adminClasses = adminClasses;
-    state.foreignClasses = foreignClasses;
-    state.teachers = await service.listTeachers(state.selectedImportId);
+    const teachers = await service.listTeachers(selectedImportId);
+    store.setState({
+      adminClasses,
+      foreignClasses,
+      teachers,
+    });
   }
 
   async function loadPeriodsForSelectedImport() {
-    if (!state.selectedImportId) {
-      state.periods = [];
+    const { selectedImportId } = store.getState();
+    if (!selectedImportId) {
+      store.setState({ periods: [] });
       return;
     }
-    state.periods = await service.listPeriods(state.selectedImportId);
+    store.setState({ periods: await service.listPeriods(selectedImportId) });
   }
 
   function targetExists(viewType: CourseViewType, target: string) {
+    const state = store.getState();
     if (!target) return false;
     if (viewType === "teacher") return state.teachers.includes(target);
     if (viewType === "foreign_class") return state.foreignClasses.some((item) => item.className === target);
@@ -132,119 +160,188 @@ export function createCourseManagementStore(service: CourseManagementService = c
   }
 
   async function loadSchedule() {
-    if (!state.target || !state.selectedImportId) {
-      state.schedule = null;
+    const { target, selectedImportId, viewType } = store.getState();
+    if (!target || !selectedImportId) {
+      store.setState({ schedule: null });
       return;
     }
-    state.schedule = await service.getScheduleView({
-      viewType: state.viewType,
-      target: state.target,
-      importId: state.selectedImportId,
+    store.setState({
+      schedule: await service.getScheduleView({
+        viewType,
+        target,
+        importId: selectedImportId,
+      }),
     });
   }
 
+  async function loadScheduleChanges() {
+    const { selectedImportId } = store.getState();
+    if (!selectedImportId) {
+      store.setState({ scheduleChanges: [] });
+      return;
+    }
+    store.setState({ scheduleChanges: await service.listScheduleChanges(selectedImportId) });
+  }
+
+  async function loadOptions() {
+    store.setState({ loading: true });
+    try {
+      const [summary, imports] = await Promise.all([
+        service.getSummary(),
+        service.listImports(),
+      ]);
+      const currentSelectedId = store.getState().selectedImportId;
+      const selectedStillExists = imports.some((item) => item.id === currentSelectedId);
+      const selectedImportId = selectedStillExists ? currentSelectedId : imports[0]?.id ?? summary.latestImportId;
+      store.setState({
+        summary,
+        imports,
+        selectedImportId,
+        selectedImport: selectedImportFrom(imports, selectedImportId),
+      });
+      syncSelectedImportDraft();
+      await loadClassesForSelectedImport();
+      await loadPeriodsForSelectedImport();
+      await loadScheduleChanges();
+      const { viewType, target } = store.getState();
+      if (!targetExists(viewType, target)) {
+        store.setState({ target: defaultTargetFor(viewType) });
+      }
+      await loadSchedule();
+    } finally {
+      store.setState({ loading: false });
+    }
+  }
+
   async function setViewType(viewType: CourseViewType) {
-    state.viewType = viewType;
-    state.target = defaultTargetFor(viewType);
+    store.setState({
+      viewType,
+      target: defaultTargetFor(viewType),
+    });
     await loadSchedule();
   }
 
   async function setTarget(target: string) {
-    state.target = target;
+    store.setState({ target });
     await loadSchedule();
   }
 
   async function setSelectedImport(importId: number) {
-    state.selectedImportId = Number(importId) || null;
-    syncSettingsDraft();
+    const selectedImportId = Number(importId) || null;
+    store.setState((state) => ({
+      selectedImportId,
+      selectedImport: selectedImportFrom(state.imports, selectedImportId),
+    }));
+    syncSelectedImportDraft();
     await loadClassesForSelectedImport();
     await loadPeriodsForSelectedImport();
     await loadScheduleChanges();
-    if (!targetExists(state.viewType, state.target)) {
-      state.target = defaultTargetFor(state.viewType);
+    const { viewType, target } = store.getState();
+    if (!targetExists(viewType, target)) {
+      store.setState({ target: defaultTargetFor(viewType) });
     }
     await loadSchedule();
   }
 
-  function setSettingsDraft(patch: Partial<typeof state.settingsDraft>) {
-    Object.assign(state.settingsDraft, patch);
+  function setSettingsDraft(patch: Partial<CourseManagementStoreState["settingsDraft"]>) {
+    store.setState((state) => ({
+      settingsDraft: {
+        ...state.settingsDraft,
+        ...patch,
+      },
+    }));
   }
 
   async function saveSelectedImportSettings() {
-    if (!state.selectedImportId) return;
+    const { selectedImportId, settingsDraft } = store.getState();
+    if (!selectedImportId) return;
     const updated = await service.updateImportSettings({
-      importId: state.selectedImportId,
-      effectiveStartDate: state.settingsDraft.effectiveStartDate || null,
-      effectiveEndDate: state.settingsDraft.effectiveEndDate || null,
-      startWeek: Math.max(1, Number(state.settingsDraft.startWeek) || 1),
+      importId: selectedImportId,
+      effectiveStartDate: settingsDraft.effectiveStartDate || null,
+      effectiveEndDate: settingsDraft.effectiveEndDate || null,
+      startWeek: Math.max(1, Number(settingsDraft.startWeek) || 1),
     });
-    state.imports = state.imports.map((item) => (item.id === updated.id ? updated : item));
-    syncSettingsDraft();
+    store.setState((state) => {
+      const imports = state.imports.map((item) => (item.id === updated.id ? updated : item));
+      return {
+        imports,
+        selectedImport: selectedImportFrom(imports, state.selectedImportId),
+      };
+    });
+    syncSelectedImportDraft();
   }
 
   async function deleteSelectedImport() {
-    if (!state.selectedImportId) return;
-    await service.deleteImport(state.selectedImportId);
-    state.target = "";
-    state.schedule = null;
-    state.substitutionCandidates = [];
-    state.scheduleChanges = [];
-    state.workloadReport = null;
-    state.selectedImportId = null;
+    const { selectedImportId } = store.getState();
+    if (!selectedImportId) return;
+    await service.deleteImport(selectedImportId);
+    store.setState({
+      target: "",
+      schedule: null,
+      substitutionCandidates: [],
+      scheduleChanges: [],
+      workloadReport: null,
+      selectedImportId: null,
+      selectedImport: null,
+    });
     await loadOptions();
   }
 
   async function importExcel(filePath: string) {
-    state.importStatus = "importing";
-    state.importMessage = "正在解析并导入课表...";
+    store.setState({
+      importStatus: "importing",
+      importMessage: "正在解析并导入课表...",
+    });
     try {
       const result = await service.importExcel(filePath);
-      state.lastImportResult = result;
-      state.importStatus = "success";
-      state.importMessage = `导入 ${result.entryCount} 节课，更新 ${result.teacherCount} 位教师，耗时 ${result.durationMs}ms`;
-      state.target = "";
-      state.selectedImportId = null;
+      store.setState({
+        lastImportResult: result,
+        importStatus: "success",
+        importMessage: `导入 ${result.entryCount} 节课，更新 ${result.teacherCount} 位教师，耗时 ${result.durationMs}ms`,
+        target: "",
+        selectedImportId: null,
+        selectedImport: null,
+      });
       await loadOptions();
     } catch (error) {
-      state.importStatus = "error";
-      state.importMessage = error instanceof Error ? error.message : String(error);
+      store.setState({
+        importStatus: "error",
+        importMessage: error instanceof Error ? error.message : String(error),
+      });
       throw error;
     }
   }
 
   function setImportFeedback(status: ImportStatus, message: string) {
-    state.importStatus = status;
-    state.importMessage = message;
-  }
-
-  async function loadScheduleChanges() {
-    if (!state.selectedImportId) {
-      state.scheduleChanges = [];
-      return;
-    }
-    state.scheduleChanges = await service.listScheduleChanges(state.selectedImportId);
+    store.setState({
+      importStatus: status,
+      importMessage: message,
+    });
   }
 
   async function findSubstitutionCandidates(query: Omit<CourseSubstitutionCandidateQuery, "importId">) {
-    if (!state.selectedImportId) {
-      state.substitutionCandidates = [];
+    const { selectedImportId } = store.getState();
+    if (!selectedImportId) {
+      store.setState({ substitutionCandidates: [] });
       return [];
     }
     const candidates = await service.listSubstitutionCandidates({
       ...query,
-      importId: state.selectedImportId,
+      importId: selectedImportId,
     });
-    state.substitutionCandidates = candidates;
+    store.setState({ substitutionCandidates: candidates });
     return candidates;
   }
 
   async function saveSubstitutions(payload: Omit<SaveCourseSubstitutionsPayload, "importId">) {
-    if (!state.selectedImportId) return [];
-    state.scheduleChanges = await service.saveSubstitutions({
+    const { selectedImportId } = store.getState();
+    if (!selectedImportId) return [];
+    const scheduleChanges = await service.saveSubstitutions({
       ...payload,
-      importId: state.selectedImportId,
+      importId: selectedImportId,
     });
-    return state.scheduleChanges;
+    store.setState({ scheduleChanges });
+    return scheduleChanges;
   }
 
   async function revokeScheduleChange(changeId: number) {
@@ -253,60 +350,37 @@ export function createCourseManagementStore(service: CourseManagementService = c
   }
 
   async function loadWorkloadReport(query: Omit<CourseWorkloadQuery, "importId">) {
-    if (!state.selectedImportId) {
-      state.workloadReport = null;
+    const { selectedImportId } = store.getState();
+    if (!selectedImportId) {
+      store.setState({ workloadReport: null });
       return null;
     }
     const report = await service.getWorkloadReport({
       ...query,
-      importId: state.selectedImportId,
+      importId: selectedImportId,
     });
-    state.workloadReport = report;
+    store.setState({ workloadReport: report });
     return report;
   }
 
   async function exportWorkloadReport(query: Omit<CourseWorkloadQuery, "importId">) {
-    if (!state.selectedImportId) return null;
-    state.exportingWorkload = true;
+    const { selectedImportId } = store.getState();
+    if (!selectedImportId) return null;
+    store.setState({ exportingWorkload: true });
     try {
       const result = await service.exportWorkloadReport({
         ...query,
-        importId: state.selectedImportId,
+        importId: selectedImportId,
       });
-      state.lastWorkloadExport = result;
+      store.setState({ lastWorkloadExport: result });
       return result;
     } finally {
-      state.exportingWorkload = false;
+      store.setState({ exportingWorkload: false });
     }
   }
 
-  const viewState = readonly(
-    computed(() => ({
-      loading: state.loading,
-      viewType: state.viewType,
-      target: state.target,
-      summary: state.summary,
-      imports: state.imports,
-      selectedImportId: state.selectedImportId,
-      settingsDraft: state.settingsDraft,
-      selectedImport: selectedImport(),
-      adminClasses: state.adminClasses,
-      foreignClasses: state.foreignClasses,
-      teachers: state.teachers,
-      periods: state.periods,
-      schedule: state.schedule,
-      substitutionCandidates: state.substitutionCandidates,
-      scheduleChanges: state.scheduleChanges,
-      workloadReport: state.workloadReport,
-      exportingWorkload: state.exportingWorkload,
-      lastWorkloadExport: state.lastWorkloadExport,
-      importStatus: state.importStatus,
-      importMessage: state.importMessage,
-      lastImportResult: state.lastImportResult,
-    })),
-  );
-
   return {
+    store,
     loadOptions,
     loadSchedule,
     setViewType,
@@ -324,7 +398,7 @@ export function createCourseManagementStore(service: CourseManagementService = c
     loadWorkloadReport,
     exportWorkloadReport,
     get viewState() {
-      return viewState.value;
+      return viewState;
     },
   };
 }
@@ -333,4 +407,32 @@ const courseManagementStore = createCourseManagementStore();
 
 export function useCourseManagementStore() {
   return courseManagementStore;
+}
+
+export function useReactCourseManagementStore() {
+  const state = useSyncExternalStore(
+    courseManagementStore.store.subscribe,
+    courseManagementStore.store.getState,
+    courseManagementStore.store.getInitialState,
+  );
+
+  return {
+    state,
+    loadOptions: courseManagementStore.loadOptions,
+    loadSchedule: courseManagementStore.loadSchedule,
+    setViewType: courseManagementStore.setViewType,
+    setTarget: courseManagementStore.setTarget,
+    setSelectedImport: courseManagementStore.setSelectedImport,
+    setSettingsDraft: courseManagementStore.setSettingsDraft,
+    saveSelectedImportSettings: courseManagementStore.saveSelectedImportSettings,
+    deleteSelectedImport: courseManagementStore.deleteSelectedImport,
+    importExcel: courseManagementStore.importExcel,
+    setImportFeedback: courseManagementStore.setImportFeedback,
+    loadScheduleChanges: courseManagementStore.loadScheduleChanges,
+    findSubstitutionCandidates: courseManagementStore.findSubstitutionCandidates,
+    saveSubstitutions: courseManagementStore.saveSubstitutions,
+    revokeScheduleChange: courseManagementStore.revokeScheduleChange,
+    loadWorkloadReport: courseManagementStore.loadWorkloadReport,
+    exportWorkloadReport: courseManagementStore.exportWorkloadReport,
+  };
 }
