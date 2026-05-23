@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import { Minus, Square, X, Copy } from "lucide-react";
 import { hasDesktopRuntime } from "../../shared/utils/desktopRuntime";
 
 function resolveAppWindow() {
@@ -107,9 +108,7 @@ export default function WindowTitleBar() {
       {appWindow ? (
         <div className="window-controls">
           <button className="win-btn" type="button" aria-label="最小化窗口" onClick={minimizeWindow}>
-            <span className="material-symbols-rounded" aria-hidden="true">
-              remove
-            </span>
+            <Minus size={16} />
           </button>
           <button
             className="win-btn"
@@ -117,14 +116,10 @@ export default function WindowTitleBar() {
             aria-label={isMaximized ? "还原窗口" : "最大化窗口"}
             onClick={toggleMaximize}
           >
-            <span className="material-symbols-rounded" aria-hidden="true">
-              {isMaximized ? "filter_none" : "crop_square"}
-            </span>
+            {isMaximized ? <Copy size={16} /> : <Square size={16} />}
           </button>
           <button className="win-btn close" type="button" aria-label="关闭窗口" onClick={closeWindow}>
-            <span className="material-symbols-rounded" aria-hidden="true">
-              close
-            </span>
+            <X size={16} />
           </button>
         </div>
       ) : null}

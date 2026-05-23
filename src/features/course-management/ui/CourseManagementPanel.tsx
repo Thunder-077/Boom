@@ -1,4 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
+import type { LucideIcon } from "lucide-react";
+import { Building2, CalendarX, Save, Trash2, Users, UserCheck } from "lucide-react";
 import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { hasDesktopRuntime } from "../../../shared/utils/desktopRuntime";
 import type { CoursePeriodSlot, CourseScheduleEntry, CourseViewType } from "../../../entities/course-management/model";
@@ -16,10 +18,10 @@ const DAYS = [
   { value: 7, label: "周日" },
 ] as const;
 
-const VIEW_TYPE_OPTIONS: Array<{ value: CourseViewType; label: string; icon: string }> = [
-  { value: "admin_class", label: "行政班", icon: "domain" },
-  { value: "foreign_class", label: "教学班", icon: "groups" },
-  { value: "teacher", label: "教师", icon: "badge" },
+const VIEW_TYPE_OPTIONS: Array<{ value: CourseViewType; label: string; icon: LucideIcon }> = [
+  { value: "admin_class", label: "行政班", icon: Building2 },
+  { value: "foreign_class", label: "教学班", icon: Users },
+  { value: "teacher", label: "教师", icon: UserCheck },
 ];
 
 function normalizeDroppedPath(rawPath: string) {
@@ -266,7 +268,7 @@ export default function CourseManagementPanel() {
                 className={state.viewType === option.value ? "active" : ""}
                 onClick={() => void store.setViewType(option.value)}
               >
-                <span className="material-symbols-rounded" aria-hidden="true">{option.icon}</span>
+                <option.icon size={18} />
                 {option.label}
               </button>
             ))}
@@ -330,12 +332,12 @@ export default function CourseManagementPanel() {
               />
             </label>
             <button className="action-btn primary" type="button" disabled={!state.selectedImportId || isSavingSettings} onClick={() => void saveImportSettings()}>
-              <span className="material-symbols-rounded" aria-hidden="true">save</span>
-              保存
+              <Save size={18} />
+              <span>保存</span>
             </button>
             <button className="action-btn danger" type="button" disabled={!state.selectedImportId || isDeletingImport} onClick={() => void deleteImportBatch()}>
-              <span className="material-symbols-rounded" aria-hidden="true">delete</span>
-              删除
+              <Trash2 size={18} />
+              <span>删除</span>
             </button>
           </div>
         </div>
@@ -344,7 +346,7 @@ export default function CourseManagementPanel() {
       <TableCard title={scheduleTitle === "课表" ? scheduleTitle : `${scheduleTitle}课表`} meta={scheduleMeta}>
         {!state.schedule || state.schedule.entries.length === 0 ? (
           <div className="empty-state">
-            <span className="material-symbols-rounded" aria-hidden="true">event_busy</span>
+            <CalendarX size={24} />
             <strong>{state.selectedImportId ? "当前条件下暂无课表" : "请先拖拽导入课表 Excel"}</strong>
           </div>
         ) : (

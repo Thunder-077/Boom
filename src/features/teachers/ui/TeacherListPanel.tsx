@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { Search } from "lucide-react";
 import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { hasDesktopRuntime } from "../../../shared/utils/desktopRuntime";
 import { TEACHER_SUBJECT_LABELS } from "../../../entities/teacher/model";
@@ -155,7 +156,7 @@ export default function TeacherListPanel() {
       <FilterToolbar items={[]}>
         <div className="toolbar-fields">
           <label className="search-field">
-            <span className="material-symbols-rounded search-icon" aria-hidden="true">search</span>
+            <Search size={18} className="search-icon" />
             <input
               className="glass-field"
               value={state.filters.nameKeyword ?? ""}

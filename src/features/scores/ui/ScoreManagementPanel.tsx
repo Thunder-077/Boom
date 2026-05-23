@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { Search, X } from "lucide-react";
 import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { hasDesktopRuntime } from "../../../shared/utils/desktopRuntime";
 import { SUBJECT_LABELS } from "../../../entities/class-config/model";
@@ -225,7 +226,7 @@ export default function ScoreManagementPanel() {
             className="grade-select"
           />
           <label className="filter-search">
-            <span className="material-symbols-rounded filter-search-icon" aria-hidden="true">search</span>
+            <Search size={18} className="filter-search-icon" />
             <input
               value={state.filters.nameKeyword ?? ""}
               placeholder="按姓名筛选"
@@ -286,7 +287,7 @@ export default function ScoreManagementPanel() {
             <div className="detail-head">
               <h3>{detailState.mode === "view" ? "查看成绩" : "编辑成绩"}</h3>
               <button className="close-btn" type="button" onClick={closeDetail}>
-                <span className="material-symbols-rounded" aria-hidden="true">close</span>
+                <X size={18} />
               </button>
             </div>
 

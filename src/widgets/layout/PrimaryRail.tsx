@@ -1,4 +1,7 @@
+import React from "react";
+import { Menu, Settings } from "lucide-react";
 import type { RailItem } from "./types";
+import { RAIL_ICONS } from "./types";
 
 interface PrimaryRailProps {
   items: RailItem[];
@@ -32,9 +35,7 @@ export default function PrimaryRail({
           data-tooltip={toggleLabel}
           onClick={onToggleSecondaryNav}
         >
-          <span className="material-symbols-rounded" aria-hidden="true">
-            menu
-          </span>
+          <Menu size={20} />
         </button>
       </div>
       <div className="nav-group">
@@ -47,9 +48,7 @@ export default function PrimaryRail({
             data-tooltip={item.label}
             onClick={() => onSelect?.(item.key)}
           >
-            <span className="icon material-symbols-rounded" aria-hidden="true">
-              {item.icon}
-            </span>
+            {React.createElement(RAIL_ICONS[item.icon], { size: 20 })}
             <span className="sr-only">{item.label}</span>
           </button>
         ))}
@@ -62,9 +61,7 @@ export default function PrimaryRail({
           data-tooltip="系统设置"
           onClick={onOpenSettings}
         >
-          <span className="icon material-symbols-rounded" aria-hidden="true">
-            settings
-          </span>
+          <Settings size={20} />
           <span className="sr-only">系统设置</span>
         </button>
       </div>

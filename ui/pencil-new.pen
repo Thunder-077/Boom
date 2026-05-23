@@ -1852,7 +1852,7 @@
                                   "id": "XVl2q",
                                   "name": "metaLabel",
                                   "fill": "$color-text-muted",
-                                  "content": "结果摘要",
+                                  "content": "结果路径",
                                   "fontFamily": "Inter",
                                   "fontSize": 13,
                                   "fontWeight": "600"

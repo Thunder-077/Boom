@@ -17,6 +17,23 @@ import FluentSelect from "../../../widgets/common/FluentSelect";
 import Pagination from "../../../widgets/common/composite/Pagination";
 import { classConfigService } from "../../classes/service";
 import { useReactExamAllocationStore } from "../../dashboard/store";
+import {
+  AlertCircle,
+  AlertTriangle,
+  Check,
+  CircleCheck,
+  Info,
+  List,
+  Loader2,
+  Minus,
+  Plus,
+  Search,
+  Settings,
+  SlidersHorizontal,
+  Trash2,
+  Users,
+  X,
+} from "lucide-react";
 
 interface SelfStudyClassRow {
   id: number;
@@ -457,12 +474,12 @@ export default function MonitorConfigPanel() {
   const displayedAssignmentNotice = assignmentNotice ?? persistedInvigilationExportNotice;
   const assignmentProgress = state.assignmentProgress;
   const assignmentNoticeIcon = isAssignmentProgressVisible
-    ? "hourglass_top"
+    ? <Loader2 size={18} className="assignment-notice-icon" />
     : displayedAssignmentNotice?.type === "success"
-      ? "check_circle"
+      ? <CircleCheck size={18} className="assignment-notice-icon" />
       : displayedAssignmentNotice?.type === "warning"
-        ? "warning"
-        : "info";
+        ? <AlertTriangle size={18} className="assignment-notice-icon" />
+        : <Info size={18} className="assignment-notice-icon" />;
   const assignmentNoticeText = isAssignmentProgressVisible
     ? assignmentProgress?.message || "正在准备监考分配..."
     : displayedAssignmentNotice?.text || "";
@@ -1281,14 +1298,14 @@ export default function MonitorConfigPanel() {
         <ConfigCard className="top-card exam-count-card" title="监考人数配置">
           <div className="exam-count-content">
             <button className="count-btn" type="button" disabled={defaultExamRoomRequiredCount <= 1} onClick={decreaseCount} aria-label="减少人数">
-              <span className="material-symbols-rounded">remove</span>
+              <Minus size={18} />
             </button>
             <div className="count-display">
               <span className="count-number">{defaultExamRoomRequiredCount}</span>
               <span className="count-unit">人</span>
             </div>
             <button className="count-btn" type="button" onClick={increaseCount} aria-label="增加人数">
-              <span className="material-symbols-rounded">add</span>
+              <Plus size={18} />
             </button>
           </div>
         </ConfigCard>
@@ -1301,12 +1318,10 @@ export default function MonitorConfigPanel() {
             </div>
             <div className="footer-row middle-footer">
               <div className="exception-tag">
-                <span className="material-symbols-rounded">group</span>
-                已设置 {middleManagerExceptionCount} 位例外人员
+                <Users size={18} /> 已设置 {middleManagerExceptionCount} 位例外人员
               </div>
               <button className="drawer-trigger exception-btn" type="button" onClick={openMiddleManagerDrawer}>
-                <span className="material-symbols-rounded">settings</span>
-                配置例外
+                <Settings size={18} /> 配置例外
               </button>
             </div>
           </div>
@@ -1323,7 +1338,7 @@ export default function MonitorConfigPanel() {
             <div className="schedule-card-subtitle">当前已配置 <strong>{state.customRules.length}</strong> 条规则</div>
           </div>
           <button className="schedule-btn-primary drawer-trigger" type="button" onClick={openCustomRuleDrawer}>
-            <span className="material-symbols-rounded">add</span>
+            <Plus size={18} />
             添加排班规则
           </button>
         </div>
@@ -1331,7 +1346,7 @@ export default function MonitorConfigPanel() {
         {state.customRules.length === 0 ? (
           <div className="schedule-empty-state">
             <div className="schedule-empty-icon">
-              <span className="material-symbols-rounded">format_list_bulleted</span>
+              <List size={24} />
             </div>
             <h3 className="schedule-empty-title">暂未添加排班规则</h3>
             <p className="schedule-empty-desc">点击右上方按钮添加规则，开始管理您的排班。</p>
@@ -1354,7 +1369,7 @@ export default function MonitorConfigPanel() {
                 <div className="compact-rule-actions">
                   <button className="text-btn" type="button" onClick={() => openCustomRuleDetail(item)}>详情</button>
                   <button className="icon-btn" type="button" onClick={() => void removeCustomRule(item)}>
-                    <span className="material-symbols-rounded">delete</span>
+                    <Trash2 size={18} />
                   </button>
                 </div>
               </div>
@@ -1387,11 +1402,11 @@ export default function MonitorConfigPanel() {
           </div>
           <div className="study-card-footer">
             <span className={`study-status-text ${pendingClassCount > 0 ? "pending" : ""}`.trim()}>
-              <span className="material-symbols-rounded study-status-icon" aria-hidden="true">{pendingClassCount > 0 ? "error" : "check_circle"}</span>
+              {pendingClassCount > 0 ? <AlertCircle size={18} /> : <CircleCheck size={18} />}
               {selfStudySummaryText}
             </span>
             <button className="study-btn-primary drawer-trigger" type="button" onClick={openSelfStudyDrawer}>
-              <span className="material-symbols-rounded" aria-hidden="true">tune</span>
+              <SlidersHorizontal size={18} />
               配置班级科目
             </button>
           </div>
@@ -1461,7 +1476,7 @@ export default function MonitorConfigPanel() {
           </div>
           {displayedAssignmentNotice || isAssignmentProgressVisible ? (
             <div ref={assignmentNoticeEl} className="assignment-notice inline" role="status" aria-live="polite" tabIndex={-1}>
-              <span className="material-symbols-rounded assignment-notice-icon">{assignmentNoticeIcon}</span>
+              {assignmentNoticeIcon}
               <div className="assignment-notice-body">
                 <span className="assignment-notice-text">{assignmentNoticeText}</span>
                 {assignmentNoticeLinkPath && !isAssignmentProgressVisible ? (
@@ -1502,7 +1517,7 @@ export default function MonitorConfigPanel() {
             <div className="drawer-title-block">
               <h3>配置全员自习</h3>
             </div>
-            <button className="drawer-close" type="button" onClick={closeSelfStudyDrawer}><span className="material-symbols-rounded">close</span></button>
+            <button className="drawer-close" type="button" onClick={closeSelfStudyDrawer}><X size={18} /></button>
           </div>
 
           <section className="drawer-section soft-panel">
@@ -1601,7 +1616,7 @@ export default function MonitorConfigPanel() {
             <div className="drawer-title-block">
               <h3>中层监考例外</h3>
             </div>
-            <button className="drawer-close" type="button" onClick={closeMiddleManagerDrawer}><span className="material-symbols-rounded">close</span></button>
+            <button className="drawer-close" type="button" onClick={closeMiddleManagerDrawer}><X size={18} /></button>
           </div>
 
           <section className="drawer-section soft-panel">
@@ -1630,7 +1645,7 @@ export default function MonitorConfigPanel() {
             {showMiddleManagerPicker ? (
               <div className="middle-picker">
                 <label className="search-bar middle-search">
-                  <span className="material-symbols-rounded search-icon">search</span>
+                  <Search size={18} />
                   <input value={middleManagerKeyword} onChange={(event) => setMiddleManagerKeyword(event.target.value)} type="text" placeholder="输入姓名搜索中层教师" />
                 </label>
               </div>
@@ -1674,7 +1689,7 @@ export default function MonitorConfigPanel() {
           {selectableSubjects.map((subject) => (
             <button key={subject} className={`subject-menu-item ${subjectMenuSelectedSubject === subject ? "active" : ""}`.trim()} type="button" onClick={() => applySubjectSelection(subject)}>
               <span>{subjectLabelMap[subject]}</span>
-              {subjectMenuSelectedSubject === subject ? <span className="material-symbols-rounded">check</span> : null}
+              {subjectMenuSelectedSubject === subject ? <Check size={18} /> : null}
             </button>
           ))}
         </div>
@@ -1718,7 +1733,7 @@ export default function MonitorConfigPanel() {
               <h3>添加排班规则</h3>
               <p>按时间范围、任务类型和作用对象配置禁排或指定安排。</p>
             </div>
-            <button className="drawer-close" type="button" onClick={closeCustomRuleDrawer}><span className="material-symbols-rounded">close</span></button>
+            <button className="drawer-close" type="button" onClick={closeCustomRuleDrawer}><X size={18} /></button>
           </div>
 
           <section className="drawer-section soft-panel custom-rule-panel">
@@ -1870,7 +1885,7 @@ export default function MonitorConfigPanel() {
               <h3>规则详情</h3>
               <p>{selectedCustomRule.teacherName} 的{ruleTaskScopeLabel(selectedCustomRule.taskScopeType)}规则</p>
             </div>
-            <button className="drawer-close" type="button" onClick={closeCustomRuleDetail}><span className="material-symbols-rounded">close</span></button>
+            <button className="drawer-close" type="button" onClick={closeCustomRuleDetail}><X size={18} /></button>
           </div>
 
           <section className="drawer-section soft-panel custom-rule-panel">

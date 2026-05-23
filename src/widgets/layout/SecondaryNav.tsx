@@ -1,4 +1,6 @@
+import React from "react";
 import type { SecondaryNavItem } from "./types";
+import { SECONDARY_NAV_ICONS } from "./types";
 
 interface SecondaryNavProps {
   title: string;
@@ -24,9 +26,7 @@ export default function SecondaryNav({ title, description: _description, items, 
               onClick={() => onSelect?.(item.key)}
             >
               {item.icon ? (
-                <span className="nav-icon material-symbols-rounded" aria-hidden="true">
-                  {item.icon}
-                </span>
+                React.createElement(SECONDARY_NAV_ICONS[item.icon], { size: 18 })
               ) : (
                 <span className="nav-icon placeholder" aria-hidden="true" />
               )}

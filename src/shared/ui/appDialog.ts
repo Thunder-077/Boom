@@ -1,4 +1,6 @@
 import { useSyncExternalStore } from "react";
+import type { LucideIcon } from "lucide-react";
+import { AlertTriangle, CheckCircle, Info } from "lucide-react";
 
 export type AppDialogTone = "default" | "danger" | "success" | "warning";
 export type AppDialogKind = "alert" | "confirm";
@@ -6,7 +8,7 @@ export type AppDialogKind = "alert" | "confirm";
 export interface AppDialogOptions {
   kind?: AppDialogKind;
   tone?: AppDialogTone;
-  icon?: string;
+  icon?: LucideIcon;
   title: string;
   summary: string;
   details?: string[];
@@ -18,7 +20,7 @@ interface AppDialogState {
   visible: boolean;
   kind: AppDialogKind;
   tone: AppDialogTone;
-  icon: string;
+  icon: LucideIcon;
   title: string;
   summary: string;
   details: string[];
@@ -30,7 +32,7 @@ const defaultAppDialogState: AppDialogState = {
   visible: false,
   kind: "alert",
   tone: "default",
-  icon: "info",
+  icon: Info,
   title: "",
   summary: "",
   details: [],
@@ -49,11 +51,11 @@ function notifyDialogState() {
   }
 }
 
-function iconForTone(tone: AppDialogTone) {
-  if (tone === "danger") return "warning";
-  if (tone === "success") return "check_circle";
-  if (tone === "warning") return "error";
-  return "info";
+function iconForTone(tone: AppDialogTone): LucideIcon {
+  if (tone === "danger") return AlertTriangle;
+  if (tone === "success") return CheckCircle;
+  if (tone === "warning") return AlertTriangle;
+  return Info;
 }
 
 function openAppDialog(options: AppDialogOptions) {

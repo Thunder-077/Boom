@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
+import { ChevronDown } from "lucide-react";
 
 interface FluentSelectOption<T extends string | number> {
   label: string;
@@ -275,7 +276,9 @@ export default function FluentSelect<T extends string | number>({
               }
             }}
           />
-          <span className="material-symbols-rounded combo-icon" aria-hidden="true">keyboard_arrow_down</span>
+          <span className="combo-icon" aria-hidden="true">
+            <ChevronDown size={18} />
+          </span>
         </div>
       ) : (
         <div className="fluent-trigger" ref={triggerRef} onMouseDown={(event) => {
@@ -285,7 +288,9 @@ export default function FluentSelect<T extends string | number>({
           <span className={`fluent-value ${isPlaceholder ? "placeholder" : ""}`.trim()}>
             {displayLabel}
           </span>
-          <span className="material-symbols-rounded combo-icon" aria-hidden="true">keyboard_arrow_down</span>
+          <span className="combo-icon" aria-hidden="true">
+            <ChevronDown size={18} />
+          </span>
         </div>
       )}
 

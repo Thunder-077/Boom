@@ -1,4 +1,5 @@
 import { closeAppDialog, useReactAppDialogState } from "../../shared/ui/appDialog";
+import { Trash2, Check, X } from "lucide-react";
 
 export default function AppDialogHost() {
   const state = useReactAppDialogState();
@@ -6,6 +7,8 @@ export default function AppDialogHost() {
   if (!state.visible) {
     return null;
   }
+
+  const DialogIcon = state.icon;
 
   return (
     <div
@@ -25,13 +28,15 @@ export default function AppDialogHost() {
         tabIndex={-1}
       >
         <header className="app-dialog-head">
-          <span className="dialog-icon material-symbols-rounded" aria-hidden="true">{state.icon}</span>
+          <span className="dialog-icon" aria-hidden="true">
+            <DialogIcon size={20} />
+          </span>
           <div>
             <h3 id="app-dialog-title">{state.title}</h3>
             <p id="app-dialog-summary">{state.summary}</p>
           </div>
           <button className="dialog-close" type="button" aria-label="关闭弹窗" onClick={() => closeAppDialog(false)}>
-            <span className="material-symbols-rounded" aria-hidden="true">close</span>
+            <X size={16} />
           </button>
         </header>
 
@@ -50,7 +55,7 @@ export default function AppDialogHost() {
             </button>
           ) : null}
           <button className="dialog-btn primary" type="button" autoFocus onClick={() => closeAppDialog(true)}>
-            <span className="material-symbols-rounded" aria-hidden="true">{state.tone === "danger" ? "delete" : "check"}</span>
+            {state.tone === "danger" ? <Trash2 size={16} /> : <Check size={16} />}
             {state.confirmText}
           </button>
         </footer>

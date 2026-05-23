@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { Trash2 } from "lucide-react";
 import { SUBJECT_LABELS } from "../../../entities/class-config/model";
 import { Subject } from "../../../entities/score/model";
 import { revealInExplorer } from "../../../shared/utils/appLog";
@@ -473,9 +474,6 @@ export default function ExamAssignmentPanel() {
               />
             </label>
           </div>
-          <p className={`autosave-note ${autoSaveError ? "error" : ""}`.trim()} aria-live="polite">
-            {autoSaveError ? `自动保存失败：${autoSaveError}` : autoSaveText}
-          </p>
         </ConfigCard>
 
         <TableCard
@@ -622,13 +620,13 @@ export default function ExamAssignmentPanel() {
                     </td>
                     <td>
                       <button
-                        className="icon-btn"
+                        className="icon-btn danger"
                         type="button"
                         disabled={state.savingTimes}
                         title={`删除${examTimeSubjectLabel(item.subject)}考试时间配置`}
                         onClick={() => void store.deleteSessionTime(item.subject)}
                       >
-                        <span className="material-symbols-rounded" aria-hidden="true">delete</span>
+                        <Trash2 size={18} />
                       </button>
                     </td>
                   </tr>
@@ -672,7 +670,7 @@ export default function ExamAssignmentPanel() {
                     </td>
                     <td>
                       <button className="icon-btn" type="button" title="删除该科目时间配置" onClick={() => setManualSubjectRows((current) => current.filter((row) => row.id !== item.id))}>
-                        <span className="material-symbols-rounded" aria-hidden="true">delete</span>
+                        <Trash2 size={18} />
                       </button>
                     </td>
                   </tr>
@@ -761,7 +759,7 @@ export default function ExamAssignmentPanel() {
               <span className="ov-status-value">{state.overview.generatedAt ? "可导出" : "未生成"}</span>
             </div>
             <div className="ov-status-item">
-              <span className="ov-status-label">结果摘要</span>
+              <span className="ov-status-label">结果路径</span>
               {state.lastExportFolderPath ? (
                 <button className="ov-result-link" type="button" onClick={() => void openExportFolder()}>{exportFileName}</button>
               ) : (

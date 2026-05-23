@@ -1630,7 +1630,7 @@ fn generate_latest_exam_plan_internal(
         "finalizing_results",
         "整理结果",
         76,
-        "正在整理场次时间与分配结果摘要",
+        "正在整理场次时间与分配结果路径",
         None,
         total_grades,
         total_grades,

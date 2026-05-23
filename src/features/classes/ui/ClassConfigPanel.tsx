@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { Plus, Search } from "lucide-react";
 import { hasDesktopRuntime } from "../../../shared/utils/desktopRuntime";
 import { CLASS_CONFIG_TYPE_OPTIONS, SUBJECT_OPTIONS, type ClassConfigRow, type ClassConfigType } from "../../../entities/class-config/model";
 import { Subject } from "../../../entities/score/model";
@@ -197,7 +198,7 @@ export default function ClassConfigPanel() {
 
             <div className="search-anchor">
               <div className="search-wrap">
-                <span className="material-symbols-rounded search-icon" aria-hidden="true">search</span>
+                <Search size={18} className="search-icon" />
                 <input
                   ref={searchInputRef}
                   value={searchKeyword}
@@ -254,7 +255,7 @@ export default function ClassConfigPanel() {
             </div>
 
             <Button variant="primary" className="create-btn" onClick={() => void createNewConfig()}>
-              <span className="material-symbols-rounded" aria-hidden="true">add</span>
+              <Plus size={18} />
               {createButtonLabel}
             </Button>
           </div>

@@ -1,4 +1,5 @@
 import Button from "../base/Button";
+import { ChevronLeft, ChevronRight } from "lucide-react";
 
 interface PaginationProps {
   currentPage?: number;
@@ -26,7 +27,7 @@ export default function Pagination({ currentPage = 1, pageSize = 10, total = 0, 
       <span className="pagination-info">{infoText}</span>
       <div className="pagination-actions">
         <Button variant="ghost" size="sm" disabled={currentPage === 1} onClick={() => onChange?.(currentPage - 1)}>
-          <span className="material-symbols-rounded">chevron_left</span>
+          <ChevronLeft size={16} />
           上一页
         </Button>
         {visiblePages.map((page) => (
@@ -36,7 +37,7 @@ export default function Pagination({ currentPage = 1, pageSize = 10, total = 0, 
         ))}
         <Button variant="ghost" size="sm" disabled={currentPage === totalPages} onClick={() => onChange?.(currentPage + 1)}>
           下一页
-          <span className="material-symbols-rounded">chevron_right</span>
+          <ChevronRight size={16} />
         </Button>
       </div>
     </div>

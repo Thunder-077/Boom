@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { BarChart3, Download } from "lucide-react";
 import { hasDesktopRuntime } from "../../../shared/utils/desktopRuntime";
 import { revealInExplorer } from "../../../shared/utils/appLog";
 import { FluentSelect, InfoHint, TableCard } from "../../../widgets/common/index.react";
@@ -128,11 +129,11 @@ export default function CourseWorkloadPanel() {
               <FluentSelect modelValue={endPeriodIndex} options={periodOptions} onUpdateModelValue={(value) => setEndPeriodIndex(Number(value))} />
             </label>
             <button className="action-btn primary" type="button" disabled={isLoading} onClick={() => void loadReport()}>
-              <span className="material-symbols-rounded" aria-hidden="true">query_stats</span>
+              <BarChart3 size={18} />
               查看统计
             </button>
             <button className="action-btn secondary" type="button" disabled={state.exportingWorkload} onClick={() => void exportReport()}>
-              <span className="material-symbols-rounded" aria-hidden="true">download</span>
+              <Download size={18} />
               导出 Excel
             </button>
           </div>

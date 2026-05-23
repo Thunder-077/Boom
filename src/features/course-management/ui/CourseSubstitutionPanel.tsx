@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { CalendarCheck, ChevronDown, Save, Search, Undo2, UserPlus } from "lucide-react";
 import { hasDesktopRuntime } from "../../../shared/utils/desktopRuntime";
 import type { CourseSubstitutionCandidate } from "../../../entities/course-management/model";
 import { useAppDialog } from "../../../shared/ui/appDialog";
@@ -190,7 +191,7 @@ export default function CourseSubstitutionPanel() {
   async function revokeChange(changeId: number) {
     const confirmed = await dialog.confirm({
       tone: "warning",
-      icon: "undo",
+      icon: Undo2,
       title: "删除调代课记录",
       summary: "确定删除这条调代课记录吗？删除后该记录将无法恢复。",
       confirmText: "确认删除",
@@ -239,7 +240,7 @@ export default function CourseSubstitutionPanel() {
                 <FluentSelect modelValue={reason} options={REASON_OPTIONS} onUpdateModelValue={(value) => setReason(String(value))} />
               </label>
               <button className="action-btn primary" type="button" disabled={isSearching} onClick={() => void searchCandidates()}>
-                <span className="material-symbols-rounded" aria-hidden="true">search</span>
+                <Search size={18} />
                 查询课次
               </button>
             </div>
@@ -298,11 +299,11 @@ export default function CourseSubstitutionPanel() {
                   return next;
                 })}
               >
-                <span className="material-symbols-rounded" aria-hidden="true">group_add</span>
+                <UserPlus size={18} />
                 批量指定
               </button>
               <button className="action-btn primary" type="button" disabled={isSaving || saveableCount === 0} onClick={() => void saveSelected()}>
-                <span className="material-symbols-rounded" aria-hidden="true">save</span>
+                <Save size={18} />
                 保存生效
               </button>
             </div>
@@ -390,7 +391,7 @@ export default function CourseSubstitutionPanel() {
           <div className="change-list">
             {state.scheduleChanges.length === 0 ? (
               <div className="empty-state">
-                <span className="material-symbols-rounded" aria-hidden="true">event_available</span>
+                <CalendarCheck size={24} />
                 <strong>暂无调代课记录</strong>
               </div>
             ) : null}
@@ -406,7 +407,7 @@ export default function CourseSubstitutionPanel() {
                     return next;
                   })}
                 >
-                  <span className="material-symbols-rounded expand-icon" aria-hidden="true">expand_more</span>
+                  <ChevronDown size={18} className="expand-icon" />
                   <span className="teacher-name">{teacherName}</span>
                   <span className="group-stats">{changes.length} 条记录</span>
                 </button>
@@ -421,7 +422,7 @@ export default function CourseSubstitutionPanel() {
                         </div>
                         <div className="change-actions">
                           <button className="icon-btn danger" type="button" onClick={() => void revokeChange(change.id)}>
-                            <span className="material-symbols-rounded" aria-hidden="true">undo</span>
+                            <Undo2 size={18} />
                           </button>
                         </div>
                       </div>
