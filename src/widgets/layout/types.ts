@@ -14,6 +14,7 @@ import {
   BarChart3,
   RefreshCw,
   FileText,
+  FilePenLine,
   Calendar,
 } from "lucide-react";
 
@@ -23,6 +24,7 @@ export const RAIL_ICONS: Record<string, LucideIcon> = {
   domain: School,
   school: ClipboardList,
   event_note: FileText,
+  edit_file: FilePenLine,
   calendar_month: Calendar,
 };
 
@@ -38,6 +40,7 @@ export const SECONDARY_NAV_ICONS: Record<string, LucideIcon> = {
   published_with_changes: GitBranch,
   query_stats: BarChart3,
   system_update: RefreshCw,
+  edit_file: FilePenLine,
 };
 
 export interface RailItem {

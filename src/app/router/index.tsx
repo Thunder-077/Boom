@@ -1,3 +1,4 @@
+import { lazy, Suspense } from "react";
 import { Navigate, Route, Routes, useLocation, useNavigate } from "react-router-dom";
 import { AppShell, TopHeader, type RailItem, type SecondaryNavItem } from "../../widgets/layout/index.react";
 import SettingsPanel from "../../features/settings/ui/SettingsPanel";
@@ -12,6 +13,8 @@ import ExamAssignmentPanel from "../../features/dashboard/ui/ExamAssignmentPanel
 import MonitorDrawPanel from "../../features/monitor-draw/ui/MonitorDrawPanel";
 import MonitorConfigPanel from "../../features/invigilation/ui/MonitorConfigPanel";
 
+const PdfEditorPanel = lazy(() => import("../../features/pdf-editor/ui/PdfEditorPanel"));
+
 export type AppSection =
   | "exam-assignment"
   | "monitor-draw"
@@ -22,6 +25,7 @@ export type AppSection =
   | "course-management"
   | "course-substitution"
   | "course-workload"
+  | "pdf-editor"
   | "appearance"
   | "update";
 
@@ -89,6 +93,13 @@ const pageMap: Record<AppSection, { title: string; description: string; breadcru
     pageTitle: "监考配置",
     summary: "",
   },
+  "pdf-editor": {
+    title: "文档工具",
+    description: "PDF 查看、批注与覆盖式编辑",
+    breadcrumb: "文档工具 / PDF 编辑",
+    pageTitle: "PDF 编辑",
+    summary: "",
+  },
   appearance: {
     title: "系统设置",
     description: "配色主题与版本更新",
@@ -112,6 +123,7 @@ const RAIL_ITEMS: RailItem[] = [
   { key: "classes", label: "班级模块", icon: "domain" },
   { key: "academic", label: "教务模块", icon: "school" },
   { key: "dashboard", label: "考试模块", icon: "event_note" },
+  { key: "documents", label: "文档工具", icon: "edit_file" },
 ];
 
 const SECONDARY_GROUPS: Record<string, { title: string; items: SecondaryNavItem[] }> = {
@@ -143,6 +155,10 @@ const SECONDARY_GROUPS: Record<string, { title: string; items: SecondaryNavItem[
       { key: "monitor-config", label: "监考配置", icon: "tune" },
     ],
   },
+  documents: {
+    title: pageMap["pdf-editor"].title,
+    items: [{ key: "pdf-editor", label: "PDF 编辑", icon: "edit_file" }],
+  },
   settings: {
     title: pageMap.appearance.title,
     items: [
@@ -162,6 +178,7 @@ const SECTION_TO_RAIL: Record<AppSection, string> = {
   "exam-assignment": "dashboard",
   "monitor-draw": "dashboard",
   "monitor-config": "dashboard",
+  "pdf-editor": "documents",
   appearance: "settings",
   update: "settings",
 };
@@ -193,6 +210,10 @@ function AppSectionRoute() {
     }
     if (key === "academic") {
       navigate("/app/course-management");
+      return;
+    }
+    if (key === "documents") {
+      navigate("/app/pdf-editor");
       return;
     }
     navigate("/app/classes");
@@ -227,6 +248,11 @@ function AppSectionRoute() {
         {section === "exam-assignment" ? <ExamAssignmentPanel /> : null}
         {section === "monitor-draw" ? <MonitorDrawPanel /> : null}
         {section === "monitor-config" ? <MonitorConfigPanel /> : null}
+        {section === "pdf-editor" ? (
+          <Suspense fallback={<div className="pdf-loading-panel">正在载入 PDF 编辑器...</div>}>
+            <PdfEditorPanel />
+          </Suspense>
+        ) : null}
         {section === "appearance" ? <SettingsPanel /> : null}
         {section === "update" ? <UpdatePanel /> : null}
       </AppShell>

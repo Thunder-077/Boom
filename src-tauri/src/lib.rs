@@ -9,6 +9,8 @@ mod exam_staff;
 mod export_bundle;
 mod export_invigilation;
 mod invigilation;
+mod pdf_editor;
+mod pdf_engine;
 mod score;
 mod teacher;
 
@@ -21,6 +23,7 @@ use tauri::{AppHandle, Manager, RunEvent};
 pub fn run() {
     let app = tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .setup(|app| {
@@ -83,7 +86,10 @@ pub fn run() {
             invigilation::export_latest_invigilation_schedule,
             teacher::import_teachers_from_excel,
             teacher::list_latest_teachers,
-            teacher::get_latest_teacher_summary
+            teacher::get_latest_teacher_summary,
+            pdf_engine::analyze_pdf_native_editability,
+            pdf_editor::get_pdf_editor_font,
+            pdf_editor::save_pdf_file
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application");
