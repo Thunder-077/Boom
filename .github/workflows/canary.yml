@@ -1,0 +1,134 @@
+name: Canary Build & Release
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+  schedule:
+    # 每天凌晨 2 点（北京时间，即 UTC 18:00）自动运行
+    - cron: '0 18 * * *'
+
+permissions:
+  contents: write
+
+jobs:
+  canary-release:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install WebView2
+        run: |
+          $ProgressPreference = 'SilentlyContinue'
+          Invoke-WebRequest -Uri 'https://go.microsoft.com/fwlink/p/?linkid=2124701' -OutFile 'MicrosoftEdgeWebview2Setup.exe'
+          Start-Process -FilePath 'MicrosoftEdgeWebview2Setup.exe' -ArgumentList '/silent', '/install' -Wait
+
+      - name: Install frontend dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Resolve canary version
+        id: canary-version
+        shell: pwsh
+        run: |
+          $result = node scripts/resolve-channel-version.mjs canary | ConvertFrom-Json
+          "version=$($result.version)" >> $env:GITHUB_OUTPUT
+          "tag=$($result.tag)" >> $env:GITHUB_OUTPUT
+          "short_sha=$($result.shortSha)" >> $env:GITHUB_OUTPUT
+
+      - name: Apply canary version
+        run: |
+          pnpm version:set ${{ steps.canary-version.outputs.version }}
+          pnpm version:check
+
+      - name: Build & Release
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        with:
+          tagName: ${{ steps.canary-version.outputs.tag }}
+          releaseName: 'Boom Canary __VERSION__'
+          releaseBody: |
+            这是 Canary 通道的自动构建，可用于提前验证主干上的最新改动。
+
+            - **通道**：canary
+            - **版本**：${{ steps.canary-version.outputs.version }}
+            - **编译时间**：${{ github.event.head_commit.timestamp || '手动/定时触发构建' }}
+            - **提交摘要**：${{ github.event.head_commit.message || '无' }}
+            - **提交 SHA**：${{ github.sha }}
+          releaseDraft: false
+          prerelease: true
+          includeUpdaterJson: true
+          includeRelease: true
+
+      - name: Download canary updater manifest
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path .canary-manifest | Out-Null
+          gh release download "${{ steps.canary-version.outputs.tag }}" --pattern latest.json --dir .canary-manifest
+
+      - name: Publish canary updater manifest
+        env:
+          CANARY_VERSION: ${{ steps.canary-version.outputs.version }}
+        shell: pwsh
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+
+          $worktreeDir = Join-Path $env:RUNNER_TEMP "boom-update-manifests"
+          if (Test-Path $worktreeDir) {
+            Remove-Item $worktreeDir -Recurse -Force
+          }
+
+          $branchExists = (git ls-remote --heads origin update-manifests | Measure-Object -Line).Lines -gt 0
+          if ($branchExists) {
+            git worktree add $worktreeDir origin/update-manifests
+          } else {
+            git worktree add -b update-manifests $worktreeDir HEAD
+          }
+
+          Push-Location $worktreeDir
+          try {
+            if (-not $branchExists) {
+              Get-ChildItem -Force | Where-Object { $_.Name -ne '.git' } | Remove-Item -Recurse -Force
+            }
+
+            New-Item -ItemType Directory -Force -Path canary | Out-Null
+            Copy-Item (Join-Path $env:GITHUB_WORKSPACE ".canary-manifest\\latest.json") "canary\\latest.json" -Force
+
+            if (-not (Test-Path "README.md")) {
+              Set-Content -Path "README.md" -Value "# Boom updater manifests`n"
+            }
+
+            git add canary/latest.json README.md
+            git diff --cached --quiet
+            if ($LASTEXITCODE -eq 0) {
+              Write-Host "Canary manifest unchanged, skip push."
+              exit 0
+            }
+
+            git commit -m "chore: update canary manifest for $env:CANARY_VERSION"
+            git push origin HEAD:update-manifests
+          } finally {
+            Pop-Location
+            git worktree remove $worktreeDir --force
+          }

@@ -1,3 +1,4 @@
+mod app_updates;
 mod app_log;
 mod class_config;
 mod course_management;
@@ -23,11 +24,14 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
+        .manage(app_updates::PendingUpdate(std::sync::Mutex::new(None)))
         .setup(|app| {
             configure_cp_sat_runtime(app);
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            app_updates::fetch_update,
+            app_updates::install_update,
             app_log::append_app_log,
             app_log::get_app_log_path,
             app_log::reveal_in_explorer,

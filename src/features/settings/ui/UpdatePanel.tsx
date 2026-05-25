@@ -46,12 +46,14 @@ export default function UpdatePanel() {
     progress,
     updateVersion,
     currentVersion,
+    channel,
     errorMessage,
     checkForUpdate,
     downloadAndInstall,
   } = useReactAppUpdater();
   const isChecking = status === "checking";
   const isHighlightState = ["available", "downloading", "ready"].includes(status);
+  const channelLabel = channel === "canary" ? "Canary 通道" : "Stable 通道";
 
   if (status === "up-to-date") {
     return (
@@ -60,7 +62,7 @@ export default function UpdatePanel() {
           <div className="icon-box icon-success"><SuccessIcon /></div>
           <div className="text-content">
             <h2 className="main-title">当前已是最新版本</h2>
-            <p className="sub-text">系统版本 <span className="version-tag">v{currentVersion}</span></p>
+            <p className="sub-text">系统版本 <span className="version-tag">v{currentVersion}</span> · {channelLabel}</p>
           </div>
         </div>
         <button className="btn btn-ghost" type="button" onClick={checkForUpdate} disabled={isChecking}>
@@ -116,7 +118,7 @@ export default function UpdatePanel() {
         <div className="text-content">
           <h2 className="main-title">系统版本与更新</h2>
           <p className="sub-text">
-            当前版本：<span className="version-tag">v{currentVersion || "加载中..."}</span>
+            当前版本：<span className="version-tag">v{currentVersion || "加载中..."}</span> · {channelLabel}
             {status === "error" ? <span className="error-badge" title={errorMessage}>(检查失败: {errorMessage})</span> : null}
           </p>
         </div>
