@@ -1,10 +1,21 @@
 import { useSyncExternalStore } from "react";
 import { createStore } from "zustand/vanilla";
-import { relaunch } from "@tauri-apps/plugin-process";
-import { check } from "@tauri-apps/plugin-updater";
+import { Channel, invoke } from "@tauri-apps/api/core";
 import { getVersion } from "@tauri-apps/api/app";
 
 export type UpdateStatus = "idle" | "checking" | "available" | "downloading" | "ready" | "up-to-date" | "error";
+export type UpdateChannel = "stable" | "canary";
+
+interface UpdateMetadata {
+  version: string;
+  currentVersion: string;
+  channel: UpdateChannel;
+}
+
+type DownloadEvent =
+  | { event: "Started"; data: { contentLength?: number } }
+  | { event: "Progress"; data: { chunkLength: number } }
+  | { event: "Finished" };
 
 interface AppUpdaterState {
   status: UpdateStatus;
@@ -13,6 +24,7 @@ interface AppUpdaterState {
   errorMessage: string;
   updateVersion: string;
   currentVersion: string;
+  channel: UpdateChannel;
 }
 
 const updaterStore = createStore<AppUpdaterState>(() => ({
@@ -22,7 +34,12 @@ const updaterStore = createStore<AppUpdaterState>(() => ({
   errorMessage: "",
   updateVersion: "",
   currentVersion: "",
+  channel: "stable",
 }));
+
+function detectChannel(version: string): UpdateChannel {
+  return version.includes("+canary.") ? "canary" : "stable";
+}
 
 function statusLabel(state: AppUpdaterState) {
   switch (state.status) {
@@ -45,7 +62,11 @@ function statusLabel(state: AppUpdaterState) {
 
 async function initCurrentVersion() {
   try {
-    updaterStore.setState({ currentVersion: await getVersion() });
+    const currentVersion = await getVersion();
+    updaterStore.setState({
+      currentVersion,
+      channel: detectChannel(currentVersion),
+    });
   } catch {
     updaterStore.setState({ currentVersion: "未知版本" });
   }
@@ -66,14 +87,15 @@ async function checkForUpdate() {
   reset();
   updaterStore.setState({ status: "checking" });
   try {
-    const update = await check();
+    const update = await invoke<UpdateMetadata | null>("fetch_update");
     if (!update) {
       updaterStore.setState({ status: "up-to-date" });
       return false;
     }
     updaterStore.setState({
       updateVersion: update.version,
-      downloadSize: (update as { contentLength?: number }).contentLength ?? 0,
+      currentVersion: update.currentVersion,
+      channel: update.channel,
       status: "available",
     });
     return true;
@@ -90,15 +112,8 @@ async function downloadAndInstall() {
   updaterStore.setState({ status: "downloading", progress: 0 });
   try {
     let downloadedSize = 0;
-    const update = await check();
-    if (!update) {
-      updaterStore.setState({
-        status: "error",
-        errorMessage: "未检测到可用更新",
-      });
-      return;
-    }
-    await update.downloadAndInstall((event) => {
+    const onEvent = new Channel<DownloadEvent>();
+    onEvent.onmessage = (event) => {
       if (event.event === "Started") {
         updaterStore.setState({
           downloadSize: event.data.contentLength ?? 0,
@@ -116,9 +131,10 @@ async function downloadAndInstall() {
       } else if (event.event === "Finished") {
         updaterStore.setState({ progress: 100 });
       }
-    });
+    };
+
+    await invoke("install_update", { onEvent });
     updaterStore.setState({ status: "ready" });
-    await relaunch();
   } catch (error) {
     updaterStore.setState({
       status: "error",

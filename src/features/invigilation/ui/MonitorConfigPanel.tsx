@@ -496,7 +496,7 @@ export default function MonitorConfigPanel() {
           : null;
 
   const groupedExamSessionRuleOptions = useMemo<DraftRuleTimeScopeOption[]>(() => {
-    // 考试时段按开始/结束时间合并，保持和 Vue 版一致的“同时间多年级同科目合并展示”。
+    // 考试时段按开始/结束时间合并，保证同时间的多年级同科目合并展示。
     const grouped = new Map<string, DraftRuleTimeScopeOption>();
     for (const option of state.customRuleOptions.examSessionOptions) {
       const key = `${option.startAt}__${option.endAt}`;
@@ -661,7 +661,7 @@ export default function MonitorConfigPanel() {
       removeAssignmentProgressListener?.();
       removeAssignmentProgressListener = null;
     };
-  // 阶段 5 迁移先保持与原 Vue 生命周期一致，只在页面首次挂载时加载。
+  // 配置页数据仅在首次挂载时加载，避免重复初始化。
   }, []);
 
   async function showAssignmentNoticeMessage(type: AssignmentNotice["type"], text: string, options?: Partial<AssignmentNotice>) {
