@@ -12,11 +12,18 @@ const packageJson = JSON.parse(readFileSync(resolve(rootDir, "package.json"), "u
 const baseVersion = String(packageJson.version).split("-")[0];
 const runNumber = process.env.GITHUB_RUN_NUMBER ?? "0";
 const shortSha = (process.env.GITHUB_SHA ?? "dev").slice(0, 7);
-const buildDate = new Date().toISOString().slice(0, 10).replaceAll("-", "");
+const now = new Date();
+const utcYear = now.getUTCFullYear() % 100;
+const startOfYear = Date.UTC(now.getUTCFullYear(), 0, 1);
+const currentDay = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
+const dayOfYear = Math.floor((currentDay - startOfYear) / 86400000) + 1;
+const buildDate = now.toISOString().slice(0, 10).replaceAll("-", "");
 
-// Canary 版本保持唯一且单调递增，便于 GitHub Release 与 Tauri updater 做精确比较。
-const version = `${baseVersion}-canary.${buildDate}.${runNumber}`;
-const tag = `canary-v${version}`;
+// MSI 要求 pre-release 标识只能是 <= 65535 的数字段，因此这里使用 yy.dayOfYear.runNumber。
+// build metadata 继续携带 canary 与日期信息，便于界面展示和问题追踪。
+const prerelease = `${utcYear}.${dayOfYear}.${runNumber}`;
+const version = `${baseVersion}-${prerelease}+canary.${buildDate}.${shortSha}`;
+const tag = `canary-v${baseVersion}-${prerelease}`;
 
 console.log(
   JSON.stringify({

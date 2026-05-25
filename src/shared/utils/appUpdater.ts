@@ -38,7 +38,7 @@ const updaterStore = createStore<AppUpdaterState>(() => ({
 }));
 
 function detectChannel(version: string): UpdateChannel {
-  return version.includes("-canary.") ? "canary" : "stable";
+  return version.includes("+canary.") ? "canary" : "stable";
 }
 
 function statusLabel(state: AppUpdaterState) {

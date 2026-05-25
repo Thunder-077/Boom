@@ -76,7 +76,7 @@ pub struct UpdateMetadata {
 pub struct PendingUpdate(pub Mutex<Option<Update>>);
 
 fn detect_update_channel(version: &str) -> UpdateChannel {
-    if version.contains("-canary.") {
+    if version.contains("+canary.") {
         UpdateChannel::Canary
     } else {
         UpdateChannel::Stable
