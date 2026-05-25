@@ -139,7 +139,7 @@ export default function CourseManagementPanel() {
       sectionSpan: 1,
     }));
     let index = 0;
-    // Keep the same section grouping as the Vue grid so row spans remain stable.
+    // Preserve stable section grouping so row spans remain deterministic.
     while (index < rows.length) {
       const section = rows[index].section;
       let span = 1;

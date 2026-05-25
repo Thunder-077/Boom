@@ -3191,7 +3191,7 @@
   background: rgba(var(--accent-rgb), 0.08);
 }
 
-.vue-panel-host {
+.panel-host {
   width: 100%;
   min-width: 0;
 }
@@ -4995,7 +4995,7 @@
   }
 }
 
-/* monitor-config visual alignment: keep close to the original Vue values */
+/* monitor-config visual alignment: keep close to the established production values */
 .top-grid {
   align-items: stretch;
 }
