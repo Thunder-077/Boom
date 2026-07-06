@@ -1,19 +1,19 @@
 {
   "version": "0.1.2",
-  "notes": "这是 Canary 通道的自动构建，可用于提前验证主干上的最新改动。\n\n- **通道**：canary\n- **版本**：0.1.2-26.186.45+canary.20260705.59b1896\n- **编译时间**：手动/定时触发构建\n- **提交摘要**：无\n- **提交 SHA**：59b18963f90c2b232100ded90313a3e356762602",
-  "pub_date": "2026-07-05T19:33:49.900Z",
+  "notes": "这是 Canary 通道的自动构建，可用于提前验证主干上的最新改动。\n\n- **通道**：canary\n- **版本**：0.1.2-26.187.46+canary.20260706.59b1896\n- **编译时间**：手动/定时触发构建\n- **提交摘要**：无\n- **提交 SHA**：59b18963f90c2b232100ded90313a3e356762602",
+  "pub_date": "2026-07-06T20:13:01.118Z",
   "platforms": {
     "windows-x86_64": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVRbDU4RVVFTWJkUFZXcE4wZVR1T3FOdFczdkFwbm9HOVVZTnBPbzNxa1ZQNGZzWmZSMHVjcUlXUzJWWVdxbi8weHhUUzFUcCttK2ErN0EraUV0dkE0OXg5QTRQUlVQTGdvPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzgzMjgwMDI1CWZpbGU6Qm9vbV8wLjEuMl94NjRfZW4tVVMubXNpCmR1NnVCSFlIem9wam1SalprVnhxRHFGVXU0a1c5SVFFd2lSd2VUckRTZUNEWCt6Sld0MXBRN2JWVnJBNnkyQ0NrV09XWUgxeThpaDRNMlYzUXhrb0R3PT0K",
-      "url": "https://github.com/Thunder-077/Boom/releases/download/canary-v0.1.2-26.186.45/Boom_0.1.2_x64_en-US.msi"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVRbDU4RVVFTWJkUFoxMDdDN2ozZTJBdHpCZmpvUWJYNER1aUNrSE9RS3A2K3VEY1o5cDV0emEwWFRORm42WHM0STZmaWpyVzhoUzBpSWR3RVZEME9CcGRIc1lrTTBra3cwPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzgzMzY4Nzc1CWZpbGU6Qm9vbV8wLjEuMl94NjRfZW4tVVMubXNpCmxhQ2p0SEhnZVlaU3hVZlJyNFdodERMbFlyeEgvMkZMOFVheXFtQUVWTGdUK3l6OTJ6dWpVSmxVbUFhRjNsQkQrWWtBdnFaNnlDbWVqaEZXQzNGTkN3PT0K",
+      "url": "https://github.com/Thunder-077/Boom/releases/download/canary-v0.1.2-26.187.46/Boom_0.1.2_x64_en-US.msi"
     },
     "windows-x86_64-msi": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVRbDU4RVVFTWJkUFZXcE4wZVR1T3FOdFczdkFwbm9HOVVZTnBPbzNxa1ZQNGZzWmZSMHVjcUlXUzJWWVdxbi8weHhUUzFUcCttK2ErN0EraUV0dkE0OXg5QTRQUlVQTGdvPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzgzMjgwMDI1CWZpbGU6Qm9vbV8wLjEuMl94NjRfZW4tVVMubXNpCmR1NnVCSFlIem9wam1SalprVnhxRHFGVXU0a1c5SVFFd2lSd2VUckRTZUNEWCt6Sld0MXBRN2JWVnJBNnkyQ0NrV09XWUgxeThpaDRNMlYzUXhrb0R3PT0K",
-      "url": "https://github.com/Thunder-077/Boom/releases/download/canary-v0.1.2-26.186.45/Boom_0.1.2_x64_en-US.msi"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVRbDU4RVVFTWJkUFoxMDdDN2ozZTJBdHpCZmpvUWJYNER1aUNrSE9RS3A2K3VEY1o5cDV0emEwWFRORm42WHM0STZmaWpyVzhoUzBpSWR3RVZEME9CcGRIc1lrTTBra3cwPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzgzMzY4Nzc1CWZpbGU6Qm9vbV8wLjEuMl94NjRfZW4tVVMubXNpCmxhQ2p0SEhnZVlaU3hVZlJyNFdodERMbFlyeEgvMkZMOFVheXFtQUVWTGdUK3l6OTJ6dWpVSmxVbUFhRjNsQkQrWWtBdnFaNnlDbWVqaEZXQzNGTkN3PT0K",
+      "url": "https://github.com/Thunder-077/Boom/releases/download/canary-v0.1.2-26.187.46/Boom_0.1.2_x64_en-US.msi"
     },
     "windows-x86_64-nsis": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVRbDU4RVVFTWJkUFRSdFVMSE03U0JqU1Q2V29YaFhuUndnaVVlUGVna1BFTjcrd3pPYnhwMDRlVkF6T0pJOFJvQ055RkhTaUFCcTg2RVo1NUd5RXFyQ0RVSjhtNHlIUndnPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzgzMjgwMDI1CWZpbGU6Qm9vbV8wLjEuMl94NjQtc2V0dXAuZXhlClJHeTJqTDgxUjdveFhhK2dMTit3Y29RNzlHL3lyem9kRE5FOFhBU1Z4UmZyQTAxbGFLY2h0M2VjSDNoRjVqR1lTUUVvQjJUQjJSeHQrV1owdVFQcEJRPT0K",
-      "url": "https://github.com/Thunder-077/Boom/releases/download/canary-v0.1.2-26.186.45/Boom_0.1.2_x64-setup.exe"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVRbDU4RVVFTWJkUFFJSjZqZzFza3VvWVNvRno3dkMvT2daNkx4VnY4RXVrMVQ1MVUyVUJxRjVEeU01Rk1MVEVVemFyZWRuODltbHpRSE9sOWphSzZWbHM0eEkvWTlJc0FZPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzgzMzY4Nzc1CWZpbGU6Qm9vbV8wLjEuMl94NjQtc2V0dXAuZXhlCmFZUFFHMXpGQmNlWGhWaGx4VDJEeXVIcGF3UWh2YXk0MU81cUQwYjgrSlJuQnJyQUpIdGtRaXozK1BxTUF4V1BQcUtGTFlEcThja3pGYVVacWJiTUJ3PT0K",
+      "url": "https://github.com/Thunder-077/Boom/releases/download/canary-v0.1.2-26.187.46/Boom_0.1.2_x64-setup.exe"
     }
   }
 }
