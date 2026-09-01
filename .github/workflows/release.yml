@@ -42,9 +42,9 @@ jobs:
       - name: Generate release notes from commits
         shell: pwsh
         run: |
-          $prevTag = $(git describe --tags --abbrev=0 HEAD^ 2>$null) -replace '^v',''
-          if (-not $prevTag) { $prevTag = "HEAD~10" }
-          $commits = git log "v$prevTag..HEAD" --pretty=format:"%s" --no-merges
+          $prevTag = git describe --tags --abbrev=0 --match 'v[0-9]*' HEAD^ 2>$null
+          $range = if ($LASTEXITCODE -eq 0 -and $prevTag) { "$prevTag..HEAD" } else { "HEAD" }
+          $commits = git log $range --pretty=format:"%s" --no-merges
           $lines = $commits -split '\r?\n' | Where-Object { $_ -match '^\w+(\(.+\))?!?:' }
 
           $features = @(); $fixes = @(); $refactors = @(); $others = @()
@@ -93,4 +93,3 @@ jobs:
           releaseDraft: false
           prerelease: ${{ steps.check-prerelease.outputs.is_prerelease == 'true' }}
           includeUpdaterJson: true
-
