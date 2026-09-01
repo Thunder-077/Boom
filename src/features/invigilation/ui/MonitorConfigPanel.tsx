@@ -704,10 +704,14 @@ export default function MonitorConfigPanel() {
     setSelfStudyLoadError("");
     try {
       const classResult = await classConfigService.list({ configType: "teaching_class", gradeName: "", keyword: "" });
-      const rows = classResult.items
+      const activeGrades = new Set(state.sessions.map((session) => session.gradeName));
+      const relevantClasses = activeGrades.size > 0
+        ? classResult.items.filter((item) => activeGrades.has(item.gradeName))
+        : classResult.items;
+      const rows = relevantClasses
         .map((row) => mapClassRowToSelfStudyRow(row, []))
         .sort(compareTeachingClasses);
-      const grades = Array.from(new Set(classResult.items.map((item) => item.gradeName))).sort(
+      const grades = Array.from(new Set(relevantClasses.map((item) => item.gradeName))).sort(
         (a, b) => (gradeRankMap[a] ?? 99) - (gradeRankMap[b] ?? 99) || a.localeCompare(b, "zh-CN", { numeric: true }),
       );
       if (!mountedRef.current) {

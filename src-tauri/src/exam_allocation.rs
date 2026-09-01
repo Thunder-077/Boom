@@ -942,6 +942,21 @@ fn load_grade_contexts(db: &DatabaseConnection) -> Result<HashMap<String, GradeC
     Ok(ctx_map)
 }
 
+fn load_active_grade_subjects(
+    db: &DatabaseConnection,
+) -> Result<HashMap<String, HashSet<Subject>>, AppError> {
+    let mut active = HashMap::<String, HashSet<Subject>>::new();
+    for row in tauri::async_runtime::block_on(
+        exam_allocation_repo::list_active_grade_subjects(db),
+    )? {
+        let Some(subject) = Subject::from_key(&row.subject) else {
+            continue;
+        };
+        active.entry(row.grade_name).or_default().insert(subject);
+    }
+    Ok(active)
+}
+
 fn load_selected_participants(
     db: &DatabaseConnection,
     grade_name: &str,
@@ -994,11 +1009,48 @@ fn load_self_study_students_for_session(
     db: &DatabaseConnection,
     grade_name: &str,
     subject: Subject,
+    grade_sessions: &[SelfStudyScheduleSession],
+    current_start_ts: i64,
 ) -> Result<Vec<Participant>, AppError> {
     if is_foreign_subject(subject) {
         return Ok(Vec::new());
     }
-    load_not_selected_students(db, grade_name, subject)
+
+    let mut concurrent_subjects = grade_sessions
+        .iter()
+        .filter(|session| session.start_ts == current_start_ts)
+        .map(|session| session.subject)
+        .collect::<Vec<_>>();
+    concurrent_subjects.sort_by_key(|item| subject_order(*item));
+    concurrent_subjects.dedup();
+
+    // A self-study room belongs to the time slot, not to every subject session in that slot.
+    // Use the first non-foreign subject as the slot owner to avoid duplicate self-study tasks.
+    let slot_owner = concurrent_subjects
+        .iter()
+        .copied()
+        .find(|item| !is_foreign_subject(*item))
+        .unwrap_or(subject);
+    if subject != slot_owner {
+        return Ok(Vec::new());
+    }
+
+    let mut students = load_not_selected_students(db, grade_name, subject)?;
+    if concurrent_subjects.len() <= 1 {
+        return Ok(students);
+    }
+
+    let mut concurrent_examinees = HashSet::<String>::new();
+    for concurrent_subject in concurrent_subjects {
+        if concurrent_subject == subject {
+            continue;
+        }
+        for participant in load_selected_participants(db, grade_name, concurrent_subject)? {
+            concurrent_examinees.insert(participant.admission_no);
+        }
+    }
+    students.retain(|student| !concurrent_examinees.contains(&student.admission_no));
+    Ok(students)
 }
 
 fn build_round_robin_order(participants: &[Participant]) -> Vec<Participant> {
@@ -1098,7 +1150,13 @@ fn build_session(
     let mut warnings = 0_i64;
     let is_foreign = is_foreign_subject(subject);
     let foreign_seq = foreign_order(subject);
-    let not_selected = load_self_study_students_for_session(db, grade_name, subject)?;
+    let not_selected = load_self_study_students_for_session(
+        db,
+        grade_name,
+        subject,
+        grade_schedule_sessions,
+        current_start_ts,
+    )?;
     let self_study_class_names: HashSet<String> = not_selected
         .iter()
         .map(|item| item.class_name.clone())
@@ -1456,8 +1514,17 @@ fn generate_latest_exam_plan_internal(
     validate_capacity(default_capacity, max_capacity)?;
 
     let grade_contexts = load_grade_contexts(&db)?;
+    let active_grade_subjects = load_active_grade_subjects(&db)?;
     let grade_subject_schedule_order = load_grade_subject_schedule_order(&db)?;
-    let mut grades: Vec<String> = grade_contexts.keys().cloned().collect();
+    let mut grades: Vec<String> = grade_contexts
+        .keys()
+        .filter(|grade_name| {
+            active_grade_subjects
+                .get(*grade_name)
+                .is_some_and(|subjects| !subjects.is_empty())
+        })
+        .cloned()
+        .collect();
     grades.sort_by(|a, b| grade_order_key(a).cmp(&grade_order_key(b)).then(a.cmp(b)));
     let total_grades = grades.len() as i64;
     let _ = app_log::append_log(
@@ -1472,7 +1539,7 @@ fn generate_latest_exam_plan_internal(
     );
     if grades.is_empty() {
         return Err(AppError::new(
-            "未读取到可用于考场分配的班级配置，请先在班级配置中维护教学班和考场。",
+            "未读取到同时具备班级配置和实际考生的年级，请检查成绩导入与班级配置。",
         ));
     }
     update_exam_generation_progress(
@@ -1532,6 +1599,11 @@ fn generate_latest_exam_plan_internal(
             for subject in subjects {
                 subject_set.insert(*subject);
             }
+        }
+        if let Some(active_subjects) = active_grade_subjects.get(grade_name) {
+            subject_set.retain(|subject| active_subjects.contains(subject));
+        } else {
+            subject_set.clear();
         }
         let mut subjects: Vec<Subject> = subject_set.into_iter().collect();
         subjects.sort_by_key(|s| subject_order(*s));
@@ -2199,17 +2271,178 @@ mod tests {
             db
         });
 
-        let english_self_study =
-            load_self_study_students_for_session(&db, "高一", Subject::English).unwrap();
-        let russian_self_study =
-            load_self_study_students_for_session(&db, "高一", Subject::Russian).unwrap();
+        let english_self_study = load_self_study_students_for_session(
+            &db,
+            "高一",
+            Subject::English,
+            &[],
+            0,
+        )
+        .unwrap();
+        let russian_self_study = load_self_study_students_for_session(
+            &db,
+            "高一",
+            Subject::Russian,
+            &[],
+            0,
+        )
+        .unwrap();
         let math_self_study =
-            load_self_study_students_for_session(&db, "高一", Subject::Math).unwrap();
+            load_self_study_students_for_session(&db, "高一", Subject::Math, &[], 0).unwrap();
 
         assert!(english_self_study.is_empty());
         assert!(russian_self_study.is_empty());
         assert_eq!(math_self_study.len(), 1);
         assert_eq!(math_self_study[0].class_name, "高一1班");
+    }
+
+    #[test]
+    fn test_active_grade_subjects_only_include_selected_examinees() {
+        let db = tauri::async_runtime::block_on(async {
+            let db = Database::connect("sqlite::memory:").await.unwrap();
+            Migrator::up(&db, None).await.unwrap();
+            for (admission_no, grade_name, class_name) in [
+                ("g1", "高一", "高一1班"),
+                ("g3", "高三", "高三1班"),
+            ] {
+                latest_student_scores::ActiveModel {
+                    admission_no: Set(admission_no.to_string()),
+                    student_name: Set(admission_no.to_string()),
+                    class_name: Set(class_name.to_string()),
+                    grade_name: Set(grade_name.to_string()),
+                    subject_combination: Set(String::new()),
+                    language: Set(String::new()),
+                    total_score: Set(600.0),
+                    class_rank: Set(1),
+                    grade_rank: Set(1),
+                    selected_subject_count: Set(1),
+                }
+                .insert(&db)
+                .await
+                .unwrap();
+            }
+            for (admission_no, subject, is_selected) in
+                [("g1", "math", 0), ("g3", "chemistry", 1)]
+            {
+                latest_subject_scores::ActiveModel {
+                    id: sea_orm::ActiveValue::NotSet,
+                    admission_no: Set(admission_no.to_string()),
+                    subject: Set(subject.to_string()),
+                    score: Set(None),
+                    is_selected: Set(is_selected),
+                    is_absent: Set(0),
+                }
+                .insert(&db)
+                .await
+                .unwrap();
+            }
+            db
+        });
+
+        let active = load_active_grade_subjects(&db).unwrap();
+
+        assert!(!active.contains_key("高一"));
+        assert_eq!(
+            active.get("高三"),
+            Some(&HashSet::from([Subject::Chemistry]))
+        );
+    }
+
+    #[test]
+    fn test_concurrent_subject_examinees_are_not_assigned_to_self_study() {
+        let db = tauri::async_runtime::block_on(async {
+            let db = Database::connect("sqlite::memory:").await.unwrap();
+            Migrator::up(&db, None).await.unwrap();
+            for (admission_no, class_name) in [
+                ("chem", "高三1班"),
+                ("history", "高三5班"),
+                ("later", "高三9班"),
+            ] {
+                latest_student_scores::ActiveModel {
+                    admission_no: Set(admission_no.to_string()),
+                    student_name: Set(admission_no.to_string()),
+                    class_name: Set(class_name.to_string()),
+                    grade_name: Set("高三".to_string()),
+                    subject_combination: Set(String::new()),
+                    language: Set(String::new()),
+                    total_score: Set(600.0),
+                    class_rank: Set(1),
+                    grade_rank: Set(1),
+                    selected_subject_count: Set(1),
+                }
+                .insert(&db)
+                .await
+                .unwrap();
+            }
+            for (admission_no, subject, is_selected) in [
+                ("chem", "chemistry", 1),
+                ("chem", "history", 0),
+                ("history", "chemistry", 0),
+                ("history", "history", 1),
+                ("later", "chemistry", 0),
+                ("later", "history", 0),
+                ("later", "geography", 1),
+            ] {
+                latest_subject_scores::ActiveModel {
+                    id: sea_orm::ActiveValue::NotSet,
+                    admission_no: Set(admission_no.to_string()),
+                    subject: Set(subject.to_string()),
+                    score: Set(None),
+                    is_selected: Set(is_selected),
+                    is_absent: Set(0),
+                }
+                .insert(&db)
+                .await
+                .unwrap();
+            }
+            db
+        });
+        let sessions = vec![
+            SelfStudyScheduleSession {
+                subject: Subject::Chemistry,
+                start_ts: 1_000,
+                order_key: 1,
+                is_foreign_group: false,
+            },
+            SelfStudyScheduleSession {
+                subject: Subject::History,
+                start_ts: 1_000,
+                order_key: 2,
+                is_foreign_group: false,
+            },
+            SelfStudyScheduleSession {
+                subject: Subject::Geography,
+                start_ts: 2_000,
+                order_key: 3,
+                is_foreign_group: false,
+            },
+        ];
+
+        let chemistry_self_study = load_self_study_students_for_session(
+            &db,
+            "高三",
+            Subject::Chemistry,
+            &sessions,
+            1_000,
+        )
+        .unwrap();
+        let history_self_study = load_self_study_students_for_session(
+            &db,
+            "高三",
+            Subject::History,
+            &sessions,
+            1_000,
+        )
+        .unwrap();
+
+        assert_eq!(
+            chemistry_self_study
+                .iter()
+                .map(|student| student.admission_no.as_str())
+                .collect::<Vec<_>>(),
+            vec!["later"]
+        );
+        assert!(history_self_study.is_empty());
     }
 
     #[test]

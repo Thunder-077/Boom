@@ -53,6 +53,12 @@ pub struct ParticipantRow {
 }
 
 #[derive(Debug, Clone)]
+pub struct ActiveGradeSubjectRow {
+    pub grade_name: String,
+    pub subject: String,
+}
+
+#[derive(Debug, Clone)]
 pub struct SessionInsertRow {
     pub grade_name: String,
     pub subject: String,
@@ -369,6 +375,36 @@ pub async fn list_participants(
             score: subject_score.score,
         });
     }
+    Ok(out)
+}
+
+pub async fn list_active_grade_subjects(
+    db: &DatabaseConnection,
+) -> Result<Vec<ActiveGradeSubjectRow>, AppError> {
+    let rows = latest_subject_scores::Entity::find()
+        .find_also_related(latest_student_scores::Entity)
+        .filter(latest_subject_scores::Column::IsSelected.eq(1))
+        .all(db)
+        .await?;
+    let mut active = std::collections::HashSet::<(String, String)>::new();
+    for (subject_score, student) in rows {
+        let Some(student) = student else {
+            continue;
+        };
+        active.insert((student.grade_name, subject_score.subject));
+    }
+    let mut out = active
+        .into_iter()
+        .map(|(grade_name, subject)| ActiveGradeSubjectRow {
+            grade_name,
+            subject,
+        })
+        .collect::<Vec<_>>();
+    out.sort_by(|a, b| {
+        a.grade_name
+            .cmp(&b.grade_name)
+            .then(a.subject.cmp(&b.subject))
+    });
     Ok(out)
 }
 
