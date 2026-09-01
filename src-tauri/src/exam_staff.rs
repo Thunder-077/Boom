@@ -1273,6 +1273,20 @@ async fn load_teaching_classes(
         .collect())
 }
 
+fn teaching_classes_for_sessions<'a>(
+    teaching_classes: &'a [TeachingClassRuntime],
+    session_times: &[SessionTimeRuntime],
+) -> Vec<&'a TeachingClassRuntime> {
+    let active_grades = session_times
+        .iter()
+        .map(|session| session.grade_name.as_str())
+        .collect::<HashSet<_>>();
+    teaching_classes
+        .iter()
+        .filter(|teaching_class| active_grades.contains(teaching_class.grade_name.as_str()))
+        .collect()
+}
+
 fn load_exam_room_requirement(default_count: i64) -> Result<i64, AppError> {
     Ok(default_count.max(1))
 }
@@ -1716,6 +1730,8 @@ async fn build_staff_tasks(
     class_subject_map: &HashMap<(String, String), HashSet<Subject>>,
     teaching_classes: &[TeachingClassRuntime],
 ) -> Result<Vec<TaskBuild>, AppError> {
+    let active_teaching_classes =
+        teaching_classes_for_sessions(teaching_classes, session_times);
     let floor_rover_subjects_by_slot = build_floor_rover_subjects_by_slot(session_times);
     let mut sessions_by_grade: HashMap<String, Vec<exam_allocation::SelfStudyScheduleSession>> =
         HashMap::new();
@@ -1898,7 +1914,7 @@ async fn build_staff_tasks(
         }
     }
 
-    if !teaching_classes.is_empty() {
+    if !active_teaching_classes.is_empty() {
         let start_at = build_self_study_datetime(
             &invigilation_config.self_study_date,
             &invigilation_config.self_study_start_time,
@@ -1912,7 +1928,7 @@ async fn build_staff_tasks(
         let duration = duration_minutes(start_ts, end_ts)?;
         let (day_key, half_day) = parse_day_slot(&start_at)?;
 
-        for teaching_class in teaching_classes {
+        for teaching_class in active_teaching_classes {
             let Some(subject) = invigilation_config
                 .self_study_class_subjects
                 .get(&teaching_class.id)
@@ -3894,6 +3910,8 @@ async fn build_rule_target_options_from_spaces(
     config: &RuntimeInvigilationConfig,
     teaching_classes: &[TeachingClassRuntime],
 ) -> Result<Vec<InvigilationRuleTargetOption>, AppError> {
+    let active_teaching_classes =
+        teaching_classes_for_sessions(teaching_classes, session_times);
     let mut seen = HashSet::<(String, String, Option<i64>, String)>::new();
     let mut target_options = Vec::<InvigilationRuleTargetOption>::new();
 
@@ -3976,7 +3994,7 @@ async fn build_rule_target_options_from_spaces(
         let end_at =
             build_self_study_datetime(&config.self_study_date, &config.self_study_end_time)?;
         let subtitle = Some(format!("{} {}", start_at, end_at));
-        for teaching_class in teaching_classes {
+        for teaching_class in active_teaching_classes {
             if !config
                 .self_study_class_subjects
                 .contains_key(&teaching_class.id)
@@ -4542,6 +4560,49 @@ mod tests {
             half_day: HalfDay::Morning,
             rule_target_id: String::new(),
         }
+    }
+
+    #[test]
+    fn test_teaching_classes_for_sessions_excludes_inactive_grades() {
+        let teaching_classes = vec![
+            TeachingClassRuntime {
+                id: 1,
+                grade_name: "高一".to_string(),
+                class_name: "高一1班".to_string(),
+                floor: "3层".to_string(),
+            },
+            TeachingClassRuntime {
+                id: 2,
+                grade_name: "高三".to_string(),
+                class_name: "高三1班".to_string(),
+                floor: "5层".to_string(),
+            },
+        ];
+        let session_times = vec![SessionTimeRuntime {
+            session_id: 1,
+            grade_name: "高三".to_string(),
+            subject: Subject::Chemistry,
+            start_at: "2026-03-24T08:00".to_string(),
+            end_at: "2026-03-24T10:00".to_string(),
+            start_ts: 1_000,
+            end_ts: 2_000,
+        }];
+
+        let active = teaching_classes_for_sessions(&teaching_classes, &session_times);
+
+        assert_eq!(active.len(), 1);
+        assert_eq!(active[0].grade_name, "高三");
+    }
+
+    #[test]
+    fn test_session_time_rows_ignore_legacy_zero_participant_sessions() {
+        let db = setup_build_staff_tasks_test_db();
+        insert_test_plan_session(&db, 101, Subject::Chemistry);
+
+        let rows = tauri::async_runtime::block_on(exam_staff_repo::list_session_time_rows(&db))
+            .expect("session time rows should load");
+
+        assert!(rows.is_empty());
     }
 
     #[test]

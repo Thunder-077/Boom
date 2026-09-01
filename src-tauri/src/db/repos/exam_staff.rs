@@ -217,6 +217,7 @@ pub async fn list_session_time_rows(
     db: &DatabaseConnection,
 ) -> Result<Vec<SessionTimeRow>, AppError> {
     let sessions = latest_exam_plan_sessions::Entity::find()
+        .filter(latest_exam_plan_sessions::Column::ParticipantCount.gt(0))
         .order_by_asc(latest_exam_plan_sessions::Column::GradeName)
         .order_by_asc(latest_exam_plan_sessions::Column::Id)
         .all(db)
@@ -246,6 +247,7 @@ pub async fn list_session_subjects(
     db: &DatabaseConnection,
 ) -> Result<Vec<SessionSubjectRow>, AppError> {
     let rows = latest_exam_plan_sessions::Entity::find()
+        .filter(latest_exam_plan_sessions::Column::ParticipantCount.gt(0))
         .order_by_asc(latest_exam_plan_sessions::Column::Id)
         .all(db)
         .await?;
