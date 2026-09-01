@@ -16,6 +16,7 @@ import ConfigCard from "../../../widgets/common/ConfigCard";
 import FluentSelect from "../../../widgets/common/FluentSelect";
 import Pagination from "../../../widgets/common/composite/Pagination";
 import { classConfigService } from "../../classes/service";
+import { examAllocationService } from "../../dashboard/service";
 import { useReactExamAllocationStore } from "../../dashboard/store";
 import {
   AlertCircle,
@@ -703,11 +704,12 @@ export default function MonitorConfigPanel() {
     setSelfStudyLoading(true);
     setSelfStudyLoadError("");
     try {
-      const classResult = await classConfigService.list({ configType: "teaching_class", gradeName: "", keyword: "" });
-      const activeGrades = new Set(state.sessions.map((session) => session.gradeName));
-      const relevantClasses = activeGrades.size > 0
-        ? classResult.items.filter((item) => activeGrades.has(item.gradeName))
-        : classResult.items;
+      const [classResult, sessionResult] = await Promise.all([
+        classConfigService.list({ configType: "teaching_class", gradeName: "", keyword: "" }),
+        examAllocationService.listSessions({ page: 1, pageSize: 1000 }),
+      ]);
+      const activeGrades = new Set(sessionResult.items.map((session) => session.gradeName));
+      const relevantClasses = classResult.items.filter((item) => activeGrades.has(item.gradeName));
       const rows = relevantClasses
         .map((row) => mapClassRowToSelfStudyRow(row, []))
         .sort(compareTeachingClasses);
@@ -1175,7 +1177,14 @@ export default function MonitorConfigPanel() {
     }
     setSelfStudyValidationError("");
     await saveConfig();
-    await saveSelfStudyClassSubjects(selfStudyClasses.map((item) => ({ classId: item.id, subject: item.subject })));
+    const visibleClassIds = new Set(selfStudyClasses.map((item) => item.id));
+    const preservedHiddenSubjects = state.selfStudyClassSubjects.filter(
+      (item) => !visibleClassIds.has(item.classId),
+    );
+    await saveSelfStudyClassSubjects([
+      ...preservedHiddenSubjects,
+      ...selfStudyClasses.map((item) => ({ classId: item.id, subject: item.subject })),
+    ]);
     closeSelfStudyDrawer();
   }
 
@@ -1553,7 +1562,7 @@ export default function MonitorConfigPanel() {
             </div>
             {selfStudyLoadError ? <div className="empty-box error-box">{selfStudyLoadError}</div> : null}
             {!selfStudyLoadError && selfStudyLoading ? <div className="empty-box">正在加载教学班列表...</div> : null}
-            {!selfStudyLoadError && !selfStudyLoading && filteredClasses.length === 0 ? <div className="empty-box">暂无教学班数据，请先在班级配置中维护教学班。</div> : null}
+            {!selfStudyLoadError && !selfStudyLoading && filteredClasses.length === 0 ? <div className="empty-box">本次考试暂无涉及的教学班，请先生成包含实际考生的考场安排。</div> : null}
 
             {!selfStudyLoading && filteredClasses.length > 0 && selectedClassCount > 0 ? <div className="selection-strip">已选 {selectedClassCount} 个班级</div> : null}
 

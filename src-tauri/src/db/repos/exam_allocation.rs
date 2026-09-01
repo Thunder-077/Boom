@@ -595,7 +595,8 @@ pub async fn list_sessions(
     db: &DatabaseConnection,
     filters: SessionFilters,
 ) -> Result<ListResult<latest_exam_plan_sessions::Model>, AppError> {
-    let mut query = latest_exam_plan_sessions::Entity::find();
+    let mut query = latest_exam_plan_sessions::Entity::find()
+        .filter(latest_exam_plan_sessions::Column::ParticipantCount.gt(0));
     if let Some(grade_name) = filters.grade_name {
         query = query.filter(latest_exam_plan_sessions::Column::GradeName.eq(grade_name));
     }

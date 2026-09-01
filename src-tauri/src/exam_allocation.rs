@@ -1105,10 +1105,14 @@ fn fill_with_configured_exam_rooms(
     chosen_spaces: &mut Vec<SpaceCandidate>,
     required_room_count: usize,
     exam_rooms: &[ExamRoomResource],
+    occupied_exam_rooms: &mut HashSet<String>,
 ) -> Result<(), AppError> {
     for room in exam_rooms {
         if chosen_spaces.len() >= required_room_count {
             break;
+        }
+        if !occupied_exam_rooms.insert(room.room_name.clone()) {
+            continue;
         }
         chosen_spaces.push(SpaceCandidate {
             space_type: ExamPlanSpaceType::ExamRoom,
@@ -1145,7 +1149,8 @@ fn build_session(
     current_start_ts: i64,
     default_capacity: i64,
     max_capacity: i64,
-    foreign_occupied_classes: &mut HashSet<String>,
+    occupied_teaching_classes: &mut HashSet<String>,
+    occupied_exam_rooms: &mut HashSet<String>,
 ) -> Result<SessionBuildResult, AppError> {
     let mut warnings = 0_i64;
     let is_foreign = is_foreign_subject(subject);
@@ -1161,6 +1166,8 @@ fn build_session(
         .iter()
         .map(|item| item.class_name.clone())
         .collect();
+    // 自习教室和考场共享物理空间；同一时间槽内先保留自习教室，避免后续科目重复占用。
+    occupied_teaching_classes.extend(self_study_class_names.iter().cloned());
 
     let mut subject_classes = HashSet::new();
     if is_foreign {
@@ -1190,26 +1197,23 @@ fn build_session(
     let required_room_count = capacities.len();
 
     let mut chosen_spaces: Vec<SpaceCandidate> = Vec::new();
-    let mut used_teaching_classes = HashSet::new();
     let mut teaching_candidates: Vec<Classroom> = grade_ctx
         .teaching_classes
         .iter()
         .filter(|c| {
             subject_classes.contains(&c.class_name)
                 && !self_study_class_names.contains(&c.class_name)
+                && !occupied_teaching_classes.contains(&c.class_name)
         })
         .cloned()
         .collect();
-    if is_foreign {
-        teaching_candidates.retain(|c| !foreign_occupied_classes.contains(&c.class_name));
-    }
     teaching_candidates.sort_by(|a, b| sort_class_names(&a.class_name, &b.class_name));
 
     for classroom in teaching_candidates {
         if chosen_spaces.len() >= required_room_count {
             break;
         }
-        used_teaching_classes.insert(classroom.class_name.clone());
+        occupied_teaching_classes.insert(classroom.class_name.clone());
         chosen_spaces.push(SpaceCandidate {
             space_type: ExamPlanSpaceType::ExamRoom,
             space_source: ExamPlanSpaceSource::TeachingClass,
@@ -1228,12 +1232,8 @@ fn build_session(
         &mut chosen_spaces,
         required_room_count,
         &grade_ctx.exam_rooms,
+        occupied_exam_rooms,
     )?;
-    if is_foreign {
-        for class_name in &used_teaching_classes {
-            foreign_occupied_classes.insert(class_name.clone());
-        }
-    }
 
     let mut self_study_spaces: Vec<SpaceCandidate> = Vec::new();
     for classroom in &grade_ctx.teaching_classes {
@@ -1576,6 +1576,8 @@ fn generate_latest_exam_plan_internal(
 
     let mut session_count = 0_i64;
     let mut warning_count = 0_i64;
+    let mut occupied_teaching_classes = HashMap::<i64, HashSet<String>>::new();
+    let mut occupied_exam_rooms = HashMap::<i64, HashSet<String>>::new();
 
     for (grade_index, grade_name) in grades.iter().enumerate() {
         let alloc_percent = 28 + (((grade_index as i64) * 44) / total_grades.max(1));
@@ -1652,7 +1654,6 @@ fn generate_latest_exam_plan_internal(
             .collect::<Vec<_>>();
 
         let grade_tx = tauri::async_runtime::block_on(db.begin())?;
-        let mut foreign_occupied = HashSet::new();
         for subject in subjects {
             let current_start_ts = current_grade_schedule_order
                 .get(&subject)
@@ -1668,7 +1669,10 @@ fn generate_latest_exam_plan_internal(
                 current_start_ts,
                 default_capacity,
                 max_capacity,
-                &mut foreign_occupied,
+                occupied_teaching_classes
+                    .entry(current_start_ts)
+                    .or_default(),
+                occupied_exam_rooms.entry(current_start_ts).or_default(),
             )?;
             session_count += 1;
             warning_count += built.warning_count;
@@ -2181,8 +2185,15 @@ mod tests {
             },
         ];
 
-        fill_with_configured_exam_rooms("高一", Subject::Math, &mut chosen_spaces, 3, &exam_rooms)
-            .unwrap();
+        fill_with_configured_exam_rooms(
+            "高一",
+            Subject::Math,
+            &mut chosen_spaces,
+            3,
+            &exam_rooms,
+            &mut HashSet::new(),
+        )
+        .unwrap();
 
         assert_eq!(chosen_spaces.len(), 3);
         assert_eq!(
@@ -2225,6 +2236,7 @@ mod tests {
             &mut chosen_spaces,
             3,
             &exam_rooms,
+            &mut HashSet::new(),
         )
         .expect_err("应在 teaching_class + exam_room 仍不足时直接报错");
 
@@ -2233,6 +2245,37 @@ mod tests {
         assert!(message.contains("请在 class_configs 中补充 exam_room 配置"));
         assert_eq!(chosen_spaces.len(), 2);
         assert_eq!(chosen_spaces[1].space_source, ExamPlanSpaceSource::ExamRoom);
+    }
+
+    #[test]
+    fn test_fill_with_configured_exam_rooms_skips_rooms_occupied_in_same_slot() {
+        let exam_rooms = vec![
+            ExamRoomResource {
+                room_name: "高三9场".to_string(),
+                building: "向远楼".to_string(),
+                floor: "5层".to_string(),
+            },
+            ExamRoomResource {
+                room_name: "高三10场".to_string(),
+                building: "向远楼".to_string(),
+                floor: "5层".to_string(),
+            },
+        ];
+        let mut chosen_spaces = Vec::new();
+        let mut occupied_exam_rooms = HashSet::from(["高三9场".to_string()]);
+
+        fill_with_configured_exam_rooms(
+            "高三",
+            Subject::History,
+            &mut chosen_spaces,
+            1,
+            &exam_rooms,
+            &mut occupied_exam_rooms,
+        )
+        .unwrap();
+
+        assert_eq!(chosen_spaces.len(), 1);
+        assert_eq!(chosen_spaces[0].space_name, "高三10场");
     }
 
     #[test]

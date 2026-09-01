@@ -4595,6 +4595,17 @@ mod tests {
     }
 
     #[test]
+    fn test_session_time_rows_ignore_legacy_zero_participant_sessions() {
+        let db = setup_build_staff_tasks_test_db();
+        insert_test_plan_session(&db, 101, Subject::Chemistry);
+
+        let rows = tauri::async_runtime::block_on(exam_staff_repo::list_session_time_rows(&db))
+            .expect("session time rows should load");
+
+        assert!(rows.is_empty());
+    }
+
+    #[test]
     fn test_build_staff_tasks_deduplicates_foreign_group_floor_rovers_per_floor() {
         let db = setup_build_staff_tasks_test_db();
         insert_test_plan_session(&db, 101, Subject::English);
