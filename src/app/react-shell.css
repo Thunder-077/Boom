@@ -1774,10 +1774,6 @@
   gap: var(--space-lg);
 }
 
-.toolbar-fields label {
-  display: block;
-}
-
 .filter-select {
   width: 150px;
 }
@@ -2223,22 +2219,23 @@
 
 .filter-search-icon {
   color: var(--text-secondary);
-  font-size: var(--font-size-xl);
-  font-family: "Material Symbols Rounded";
-  flex-shrink: 0;
+  width: 18px;
+  height: 18px;
+  flex: 0 0 auto;
 }
 
 .filter-search input {
   flex: 1;
   display: block;
-  height: 100%;
+  width: 100%;
+  height: 40px;
   margin: 0;
   padding: 0;
   border: none;
   background: transparent;
   color: var(--text-primary);
   font-size: var(--font-size-base);
-  line-height: 1.2;
+  line-height: 40px;
   outline: none;
   min-width: 0;
 }
