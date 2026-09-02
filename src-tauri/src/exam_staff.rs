@@ -4036,26 +4036,49 @@ async fn build_rule_target_options_from_spaces(
         }
     }
 
+    let session_labels_by_id: HashMap<i64, String> = session_times
+        .iter()
+        .map(|session| {
+            (
+                session.session_id,
+                build_session_label(
+                    &session.grade_name,
+                    session.subject,
+                    &session.start_at,
+                    &session.end_at,
+                ),
+            )
+        })
+        .collect();
     for coverage in merge_floor_rover_coverages(floor_rover_coverages) {
-        let id = format!("floor:{}:{}", coverage.session_id, coverage.floor);
-        let key = (
-            RULE_TASK_SCOPE_FLOOR_ROVER.to_string(),
-            RULE_TIME_SCOPE_EXAM_SESSION.to_string(),
-            Some(coverage.session_id),
-            id.clone(),
-        );
-        if seen.insert(key) {
-            target_options.push(InvigilationRuleTargetOption {
-                id,
-                label: format!("{} 楼层流动", coverage.floor),
-                subtitle: Some(build_session_label(
+        // 合并区间覆盖的每个场次都生成一个楼层流动目标：
+        // 前端按所选场次过滤目标选项，若只生成首个场次的目标，
+        // 选择被覆盖场次（如同楼层的其他科目）时将看不到流动监考目标。
+        for session_id in &coverage.session_ids {
+            let id = format!("floor:{session_id}:{}", coverage.floor);
+            let key = (
+                RULE_TASK_SCOPE_FLOOR_ROVER.to_string(),
+                RULE_TIME_SCOPE_EXAM_SESSION.to_string(),
+                Some(*session_id),
+                id.clone(),
+            );
+            if !seen.insert(key) {
+                continue;
+            }
+            let subtitle = session_labels_by_id.get(session_id).cloned().unwrap_or_else(|| {
+                build_session_label(
                     &coverage.grade_name,
                     coverage.subject,
                     &coverage.start_at,
                     &coverage.end_at,
-                )),
+                )
+            });
+            target_options.push(InvigilationRuleTargetOption {
+                id,
+                label: format!("{} 楼层流动", coverage.floor),
+                subtitle: Some(subtitle),
                 time_scope_type: RULE_TIME_SCOPE_EXAM_SESSION.to_string(),
-                time_scope_id: Some(coverage.session_id),
+                time_scope_id: Some(*session_id),
                 task_scope_type: RULE_TASK_SCOPE_FLOOR_ROVER.to_string(),
             });
         }
@@ -4801,8 +4824,19 @@ mod tests {
             .filter(|option| option.task_scope_type == RULE_TASK_SCOPE_FLOOR_ROVER)
             .collect::<Vec<_>>();
 
-        assert_eq!(floor_targets.len(), 1);
+        assert_eq!(
+            floor_targets.len(),
+            2,
+            "合并区间覆盖的每个场次都应生成楼层流动目标"
+        );
         assert_eq!(floor_targets[0].id, "floor:201:3层");
+        assert_eq!(floor_targets[0].time_scope_id, Some(201));
+        assert_eq!(floor_targets[1].id, "floor:202:3层");
+        assert_eq!(floor_targets[1].time_scope_id, Some(202));
+        assert!(floor_targets[1]
+            .subtitle
+            .as_deref()
+            .is_some_and(|label| label.contains("历史")));
     }
 
     #[test]
@@ -4871,8 +4905,19 @@ mod tests {
             .filter(|option| option.task_scope_type == RULE_TASK_SCOPE_FLOOR_ROVER)
             .collect::<Vec<_>>();
 
-        assert_eq!(floor_targets.len(), 1);
+        assert_eq!(
+            floor_targets.len(),
+            2,
+            "部分重叠合并后，两个被覆盖场次都应有楼层流动目标"
+        );
         assert_eq!(floor_targets[0].id, "floor:301:3层");
+        assert_eq!(floor_targets[0].time_scope_id, Some(301));
+        assert_eq!(floor_targets[1].id, "floor:302:3层");
+        assert_eq!(floor_targets[1].time_scope_id, Some(302));
+        assert!(floor_targets[1]
+            .subtitle
+            .as_deref()
+            .is_some_and(|label| label.contains("历史")));
     }
 
     #[test]
