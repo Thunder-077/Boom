@@ -545,10 +545,8 @@ struct SessionTimeRuntime {
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 struct FloorRoverSlotKey {
-    grade_name: String,
     start_ts: i64,
     end_ts: i64,
-    subject_group_key: String,
 }
 
 #[derive(Debug, Clone)]
@@ -1689,25 +1687,14 @@ fn compute_plan_metrics(
     }
 }
 
-fn floor_rover_subject_group_key(subject: Subject) -> String {
-    // 外语同一时间考试时，共用同一组楼层流动监考，所以这里统一折叠成一个分组键。
-    if exam_allocation::is_foreign_subject(subject) {
-        "foreign_group".to_string()
-    } else {
-        subject.as_key().to_string()
-    }
-}
-
 fn build_floor_rover_subjects_by_slot(
     session_times: &[SessionTimeRuntime],
 ) -> HashMap<FloorRoverSlotKey, Vec<Subject>> {
     let mut subjects_by_slot = HashMap::<FloorRoverSlotKey, Vec<Subject>>::new();
     for session in session_times {
         let key = FloorRoverSlotKey {
-            grade_name: session.grade_name.clone(),
             start_ts: session.start_ts,
             end_ts: session.end_ts,
-            subject_group_key: floor_rover_subject_group_key(session.subject),
         };
         subjects_by_slot
             .entry(key)
@@ -1762,8 +1749,7 @@ async fn build_staff_tasks(
     }
 
     let mut tasks = Vec::<TaskBuild>::new();
-    // 同一年级、同一时间段、同一科目组、同一楼层只生成一条楼层流动任务。
-    // 这样外语场次即使拆成英语/日语/俄语多个 session，也仍然是一层一个老师。
+    // 同一时间段、同一楼层只生成一条楼层流动任务，与年级、科目和考场监考人数无关。
     let mut generated_floor_rovers = HashSet::<(FloorRoverSlotKey, String)>::new();
     for session in session_times {
         let spaces = load_spaces_for_session(db, session.session_id).await?;
@@ -1875,10 +1861,8 @@ async fn build_staff_tasks(
         }
 
         let floor_rover_slot_key = FloorRoverSlotKey {
-            grade_name: session.grade_name.clone(),
             start_ts: session.start_ts,
             end_ts: session.end_ts,
-            subject_group_key: floor_rover_subject_group_key(session.subject),
         };
         let subject_avoidance_subjects = floor_rover_subjects_by_slot
             .get(&floor_rover_slot_key)
@@ -3913,6 +3897,7 @@ async fn build_rule_target_options_from_spaces(
     let active_teaching_classes =
         teaching_classes_for_sessions(teaching_classes, session_times);
     let mut seen = HashSet::<(String, String, Option<i64>, String)>::new();
+    let mut generated_floor_rover_targets = HashSet::<(FloorRoverSlotKey, String)>::new();
     let mut target_options = Vec::<InvigilationRuleTargetOption>::new();
 
     for session in session_times {
@@ -3965,6 +3950,13 @@ async fn build_rule_target_options_from_spaces(
         }
 
         for floor in floors {
+            let slot_key = FloorRoverSlotKey {
+                start_ts: session.start_ts,
+                end_ts: session.end_ts,
+            };
+            if !generated_floor_rover_targets.insert((slot_key, floor.clone())) {
+                continue;
+            }
             let id = format!("floor:{}:{}", session.session_id, floor);
             let key = (
                 RULE_TASK_SCOPE_FLOOR_ROVER.to_string(),
@@ -4658,6 +4650,73 @@ mod tests {
                 vec![Subject::English, Subject::Russian]
             );
         }
+    }
+
+    #[test]
+    fn test_floor_rover_is_unique_per_time_slot_and_floor_across_subjects_and_grades() {
+        let db = setup_build_staff_tasks_test_db();
+        insert_test_plan_session(&db, 201, Subject::Chemistry);
+        insert_test_plan_session(&db, 202, Subject::History);
+        insert_test_plan_space(&db, 11, 201, "高一1考场", "3层", 1);
+        insert_test_plan_space(&db, 12, 202, "高二1考场", "3层", 1);
+
+        let session_times = vec![
+            SessionTimeRuntime {
+                session_id: 201,
+                grade_name: "高一".to_string(),
+                subject: Subject::Chemistry,
+                start_at: "2026-03-24T08:00".to_string(),
+                end_at: "2026-03-24T10:00".to_string(),
+                start_ts: 1_000,
+                end_ts: 2_000,
+            },
+            SessionTimeRuntime {
+                session_id: 202,
+                grade_name: "高二".to_string(),
+                subject: Subject::History,
+                start_at: "2026-03-24T08:00".to_string(),
+                end_at: "2026-03-24T10:00".to_string(),
+                start_ts: 1_000,
+                end_ts: 2_000,
+            },
+        ];
+
+        let tasks = tauri::async_runtime::block_on(build_staff_tasks(
+            &db,
+            &session_times,
+            &test_runtime_config(),
+            &HashMap::new(),
+            &[],
+        ))
+        .expect("same-slot tasks should build");
+        let floor_rovers = tasks
+            .iter()
+            .filter(|task| task.role == StaffRole::FloorRover)
+            .collect::<Vec<_>>();
+
+        assert_eq!(floor_rovers.len(), 1);
+        assert_eq!(floor_rovers[0].floor, "3层");
+        assert_eq!(
+            floor_rovers[0].subject_avoidance_subjects,
+            vec![Subject::Chemistry, Subject::History]
+        );
+
+        let target_options = tauri::async_runtime::block_on(
+            build_rule_target_options_from_spaces(
+                &db,
+                &session_times,
+                &test_runtime_config(),
+                &[],
+            ),
+        )
+        .expect("rule targets should build");
+        let floor_targets = target_options
+            .iter()
+            .filter(|option| option.task_scope_type == RULE_TASK_SCOPE_FLOOR_ROVER)
+            .collect::<Vec<_>>();
+
+        assert_eq!(floor_targets.len(), 1);
+        assert_eq!(floor_targets[0].id, "floor:201:3层");
     }
 
     #[test]
