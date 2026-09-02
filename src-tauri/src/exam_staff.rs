@@ -2584,7 +2584,9 @@ fn solve_with_cp_sat(
         HashMap::<(i64, i64), HashSet<(String, Subject)>>::new();
     for task in tasks {
         // “师生同考”禁排只对考试时段生效：同一时段内出现的全部(年级,科目)都应回避。
-        if task.session_id.is_some() {
+        // 楼层流动任务的时间是跨场次合并区间，其场次的(年级,科目)
+        // 已由对应考场/自习任务在各场次时段键下贡献，这里跳过避免污染时段键。
+        if task.session_id.is_some() && task.role != StaffRole::FloorRover {
             forbidden_grade_subjects_by_slot
                 .entry((task.start_ts, task.end_ts))
                 .or_default()
@@ -2596,9 +2598,22 @@ fn solve_with_cp_sat(
     let candidate_summaries: Vec<TaskCandidateSummary> = tasks
         .iter()
         .map(|task| {
-            let slot_forbidden_grade_subjects = forbidden_grade_subjects_by_slot
-                .get(&(task.start_ts, task.end_ts))
-                .unwrap_or(&empty_forbidden_pairs);
+            let rover_merged_pairs;
+            let slot_forbidden_grade_subjects = if task.role == StaffRole::FloorRover {
+                // 楼层流动覆盖多个重叠场次，需回避所有被覆盖时段的(年级,科目)并集。
+                let mut merged_pairs = HashSet::<(String, Subject)>::new();
+                for ((slot_start_ts, slot_end_ts), pairs) in &forbidden_grade_subjects_by_slot {
+                    if *slot_start_ts < task.end_ts && task.start_ts < *slot_end_ts {
+                        merged_pairs.extend(pairs.iter().cloned());
+                    }
+                }
+                rover_merged_pairs = merged_pairs;
+                &rover_merged_pairs
+            } else {
+                forbidden_grade_subjects_by_slot
+                    .get(&(task.start_ts, task.end_ts))
+                    .unwrap_or(&empty_forbidden_pairs)
+            };
             build_task_candidate_summary(
                 task,
                 teachers,
@@ -5365,6 +5380,155 @@ mod tests {
         assert!(
             summary.candidates.iter().any(|c| c.teacher_id == 3),
             "高一历史老师应该可以参与楼层流动监考"
+        );
+    }
+
+    #[test]
+    fn test_cp_sat_floor_rover_avoids_teachers_from_all_overlapping_slots() {
+        // 场景：3层 物理(14:00-15:40) 与 历史(14:10-16:00) 重叠，合并为一条
+        // 14:00-16:00 的楼层流动任务；同时 5层 有高二地理考试(14:20-15:20)。
+        // 高二地理老师的科目不在流动任务的科目回避列表里，
+        // 但"师生同考"禁排按重叠时段并集仍然要排除他。
+        let teachers = vec![
+            TeacherInfo {
+                id: 1,
+                name: "高二地理老师".to_string(),
+                subjects: HashSet::from([Subject::Geography]),
+                class_names: HashSet::from(["高二1班".to_string()]),
+                homeroom_classes: HashSet::new(),
+                is_middle_manager: false,
+            },
+            TeacherInfo {
+                id: 2,
+                name: "通用老师甲".to_string(),
+                subjects: HashSet::from([Subject::Chinese]),
+                class_names: HashSet::new(),
+                homeroom_classes: HashSet::new(),
+                is_middle_manager: false,
+            },
+            TeacherInfo {
+                id: 3,
+                name: "通用老师乙".to_string(),
+                subjects: HashSet::from([Subject::Chinese]),
+                class_names: HashSet::new(),
+                homeroom_classes: HashSet::new(),
+                is_middle_manager: false,
+            },
+            TeacherInfo {
+                id: 4,
+                name: "通用老师丙".to_string(),
+                subjects: HashSet::from([Subject::Chinese]),
+                class_names: HashSet::new(),
+                homeroom_classes: HashSet::new(),
+                is_middle_manager: false,
+            },
+        ];
+        let exam_task = |session_id: i64,
+                         grade: &str,
+                         subject: Subject,
+                         space_name: &str,
+                         floor: &str,
+                         start_ts: i64,
+                         end_ts: i64,
+                         minutes: i64| TaskBuild {
+            session_id: Some(session_id),
+            space_id: Some(session_id),
+            task_source: StaffTaskSource::Exam,
+            role: StaffRole::ExamRoomInvigilator,
+            grade_name: grade.to_string(),
+            subject,
+            space_name: space_name.to_string(),
+            floor: floor.to_string(),
+            start_at: "2026-03-24T14:00".to_string(),
+            end_at: "2026-03-24T16:00".to_string(),
+            start_ts,
+            end_ts,
+            duration_minutes: minutes,
+            subject_avoidance_subjects: vec![subject],
+            recommended_self_study_topic: None,
+            priority_self_study_chain: Vec::new(),
+            day_key: "2026-03-24".to_string(),
+            half_day: HalfDay::Afternoon,
+            rule_target_id: String::new(),
+        };
+        let floor_rover_task = TaskBuild {
+            session_id: Some(301),
+            space_id: None,
+            task_source: StaffTaskSource::Exam,
+            role: StaffRole::FloorRover,
+            grade_name: "高一".to_string(),
+            subject: Subject::Physics,
+            space_name: "3层 楼层流动".to_string(),
+            floor: "3层".to_string(),
+            start_at: "2026-03-24T14:00".to_string(),
+            end_at: "2026-03-24T16:00".to_string(),
+            start_ts: 1_000,
+            end_ts: 8_200,
+            duration_minutes: 120,
+            subject_avoidance_subjects: vec![Subject::Physics, Subject::History],
+            recommended_self_study_topic: None,
+            priority_self_study_chain: Vec::new(),
+            day_key: "2026-03-24".to_string(),
+            half_day: HalfDay::Afternoon,
+            rule_target_id: String::new(),
+        };
+        let tasks = vec![
+            exam_task(
+                301,
+                "高一",
+                Subject::Physics,
+                "高一物理考场",
+                "3层",
+                1_000,
+                7_000,
+                100,
+            ),
+            exam_task(
+                302,
+                "高二",
+                Subject::History,
+                "高二历史考场",
+                "3层",
+                1_600,
+                8_200,
+                110,
+            ),
+            exam_task(
+                303,
+                "高二",
+                Subject::Geography,
+                "高二地理考场",
+                "5层",
+                2_200,
+                5_200,
+                60,
+            ),
+            floor_rover_task,
+        ];
+        let empty_custom_rules = Vec::<GenerateExamStaffPlanCustomRule>::new();
+        let teacher_grade_subject_pairs = build_test_teacher_grade_subject_pairs(&teachers);
+        let cp_sat_attempt = solve_with_cp_sat(
+            &tasks,
+            &teachers,
+            &empty_custom_rules,
+            &test_runtime_config(),
+            &teacher_grade_subject_pairs,
+            None,
+        );
+        let cp_sat_plan = cp_sat_attempt.plan.expect("cp-sat should produce a plan");
+        let rover_record = cp_sat_plan
+            .records
+            .iter()
+            .find(|record| record.task.role == StaffRole::FloorRover)
+            .expect("plan should contain the floor rover task");
+        assert_ne!(
+            rover_record.teacher_id,
+            Some(1),
+            "高二地理老师的学生正在同时段考试，不应被安排为楼层流动监考"
+        );
+        assert!(
+            rover_record.teacher_id.is_some(),
+            "教师充足时楼层流动监考应被分配"
         );
     }
 
