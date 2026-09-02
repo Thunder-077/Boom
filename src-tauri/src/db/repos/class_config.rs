@@ -456,7 +456,7 @@ fn trim_optional(value: Option<&String>) -> Option<String> {
 }
 
 /// 年级排序权重：按学段顺序排列（高一/高二/高三、初一/初二/初三），其余年级排在最后。
-fn grade_sort_rank(grade_name: &str) -> i32 {
+pub(crate) fn grade_sort_rank(grade_name: &str) -> i32 {
     match grade_name {
         "高一" => 1,
         "高二" => 2,

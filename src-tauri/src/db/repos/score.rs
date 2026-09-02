@@ -229,6 +229,32 @@ pub async fn update_student_scores(
     Ok(())
 }
 
+pub async fn list_grade_options(db: &DatabaseConnection) -> Result<Vec<String>, AppError> {
+    let rows = latest_student_scores::Entity::find()
+        .order_by_asc(latest_student_scores::Column::GradeName)
+        .all(db)
+        .await?;
+    Ok(dedup_sorted_grade_names(
+        rows.into_iter().map(|row| row.grade_name),
+    ))
+}
+
+/// 对成绩表中的年级去重并按学段顺序排序（复用班级配置的年级权重规则）。
+fn dedup_sorted_grade_names(names: impl Iterator<Item = String>) -> Vec<String> {
+    let mut items = Vec::new();
+    for name in names {
+        if !items.contains(&name) {
+            items.push(name);
+        }
+    }
+    items.sort_by(|a, b| {
+        super::class_config::grade_sort_rank(a)
+            .cmp(&super::class_config::grade_sort_rank(b))
+            .then_with(|| a.cmp(b))
+    });
+    items
+}
+
 pub async fn summary(db: &DatabaseConnection) -> Result<LatestSummary, AppError> {
     let imported_at = latest_import_meta::Entity::find_by_id(1)
         .one(db)
@@ -340,4 +366,29 @@ fn subject_row_to_item(row: latest_subject_scores::Model) -> Option<ScoreSubject
         score: row.score,
         state,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn dedup_sorted_grade_names_orders_by_stage_and_dedups() {
+        let names = vec![
+            "高三".to_string(),
+            "高一".to_string(),
+            "高二".to_string(),
+            "高一".to_string(),
+        ];
+        assert_eq!(
+            dedup_sorted_grade_names(names.into_iter()),
+            vec!["高一".to_string(), "高二".to_string(), "高三".to_string()]
+        );
+    }
+
+    #[test]
+    fn dedup_sorted_grade_names_handles_empty_input() {
+        let items: Vec<String> = Vec::new();
+        assert_eq!(dedup_sorted_grade_names(std::iter::empty()), items);
+    }
 }

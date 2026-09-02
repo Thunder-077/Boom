@@ -41,6 +41,7 @@ pub fn run() {
             score::get_score_detail,
             score::update_score_row,
             score::get_latest_summary,
+            score::list_score_grade_options,
             class_config::list_class_configs,
             class_config::get_class_config_detail,
             class_config::create_class_config,

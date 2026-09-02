@@ -66,13 +66,14 @@ export function createScoreStore(service: ScoreService = scoreService) {
     store.setState({ loading: true });
     try {
       const { filters, page, pageSize } = store.getState();
-      const [listResult, summaryResult] = await Promise.all([
+      const [listResult, summaryResult, grades] = await Promise.all([
         service.list({
           ...filters,
           page,
           pageSize,
         }),
         service.getLatestSummary(),
+        service.listGradeOptions(),
       ]);
       store.setState((state) =>
         withTotalPages({
@@ -80,6 +81,7 @@ export function createScoreStore(service: ScoreService = scoreService) {
           rows: listResult.items,
           total: listResult.total,
           summary: summaryResult,
+          gradeOptions: grades,
         }),
       );
     } finally {

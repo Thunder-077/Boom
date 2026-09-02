@@ -731,6 +731,16 @@ pub async fn update_score_row(
 }
 
 #[tauri::command]
+pub async fn list_score_grade_options(app: AppHandle) -> Result<Vec<String>, String> {
+    let result = async {
+        let db = crate::db::connect(&app).await?;
+        crate::db::repos::score::list_grade_options(&db).await
+    }
+    .await;
+    result.map_err(|e| e.to_string())
+}
+
+#[tauri::command]
 pub async fn get_latest_summary(app: AppHandle) -> Result<LatestSummary, String> {
     let result = async {
         let db = crate::db::connect(&app).await?;

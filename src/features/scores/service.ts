@@ -12,6 +12,7 @@ import type { ListResult, PageQuery } from "../../shared/types/api";
 export interface ScoreService {
   list(params: ScoreQuery & PageQuery): Promise<ListResult<ScoreRow>>;
   getLatestSummary(): Promise<LatestScoreSummary>;
+  listGradeOptions(): Promise<string[]>;
   importExcel(filePath: string): Promise<ImportResult>;
   getDetail(admissionNo: string): Promise<ScoreDetail>;
   updateScore(payload: ScoreUpdatePayload): Promise<{ success: boolean }>;
@@ -23,6 +24,9 @@ export const scoreService: ScoreService = {
   },
   getLatestSummary() {
     return invoke<LatestScoreSummary>("get_latest_summary");
+  },
+  listGradeOptions() {
+    return invoke<string[]>("list_score_grade_options");
   },
   importExcel(filePath) {
     return invoke<ImportResult>("import_scores_from_excel", { filePath });

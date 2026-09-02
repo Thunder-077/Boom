@@ -221,7 +221,10 @@ export default function ScoreManagementPanel() {
         <div className="toolbar-fields">
           <FluentSelect
             modelValue={state.filters.gradeName ?? ""}
-            options={[...GRADE_OPTIONS]}
+            options={[
+              { label: "全部年级", value: "" },
+              ...state.gradeOptions.map((grade) => ({ label: grade, value: grade })),
+            ]}
             onUpdateModelValue={(value) => void store.setFilters({ gradeName: value as string })}
             className="grade-select"
           />
