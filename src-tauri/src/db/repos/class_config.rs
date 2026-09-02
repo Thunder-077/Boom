@@ -1,3 +1,5 @@
+use std::cmp::Ordering;
+
 use chrono::Utc;
 use sea_orm::{
     ActiveModelTrait, ColumnTrait, Condition, DatabaseConnection, EntityTrait, PaginatorTrait,
@@ -239,13 +241,13 @@ pub async fn list(
         .all(db)
         .await?;
 
-    Ok(ListResult {
-        total,
-        items: rows
-            .into_iter()
-            .map(row_to_list_item)
-            .collect::<Result<_, _>>()?,
-    })
+    let mut items = rows
+        .into_iter()
+        .map(row_to_list_item)
+        .collect::<Result<Vec<_>, _>>()?;
+    items.sort_by(compare_class_config_rows);
+
+    Ok(ListResult { total, items })
 }
 
 pub async fn get_detail(db: &DatabaseConnection, id: i64) -> Result<ClassConfigDetail, AppError> {
@@ -328,6 +330,11 @@ pub async fn list_grade_options(db: &DatabaseConnection) -> Result<Vec<String>, 
             items.push(row.grade_name);
         }
     }
+    items.sort_by(|a, b| {
+        grade_sort_rank(a)
+            .cmp(&grade_sort_rank(b))
+            .then_with(|| a.cmp(b))
+    });
     Ok(items)
 }
 
@@ -446,4 +453,109 @@ fn trim_optional(value: Option<&String>) -> Option<String> {
         .map(|item| item.trim())
         .filter(|item| !item.is_empty())
         .map(ToOwned::to_owned)
+}
+
+/// 年级排序权重：按学段顺序排列（高一/高二/高三、初一/初二/初三），其余年级排在最后。
+fn grade_sort_rank(grade_name: &str) -> i32 {
+    match grade_name {
+        "高一" => 1,
+        "高二" => 2,
+        "高三" => 3,
+        "初一" => 11,
+        "初二" => 12,
+        "初三" => 13,
+        _ => i32::MAX,
+    }
+}
+
+/// 提取班级名中最后一组连续数字作为排序键（如"高二10班"→10、"高一5场"→5），
+/// 无数字的名称排在有数字的之后，避免字符串字典序导致"10班"排在"1班"之前。
+fn class_name_number(class_name: &str) -> i32 {
+    let mut current = String::new();
+    let mut last: Option<i32> = None;
+    for ch in class_name.chars() {
+        if ch.is_ascii_digit() {
+            current.push(ch);
+        } else if !current.is_empty() {
+            last = current.parse().ok().or(last);
+            current.clear();
+        }
+    }
+    if !current.is_empty() {
+        last = current.parse().ok().or(last);
+    }
+    last.unwrap_or(i32::MAX)
+}
+
+fn compare_class_config_rows(a: &ClassConfigRow, b: &ClassConfigRow) -> Ordering {
+    grade_sort_rank(&a.grade_name)
+        .cmp(&grade_sort_rank(&b.grade_name))
+        .then_with(|| class_name_number(&a.class_name).cmp(&class_name_number(&b.class_name)))
+        .then_with(|| a.class_name.cmp(&b.class_name))
+        .then_with(|| a.id.cmp(&b.id))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn row(grade_name: &str, class_name: &str, id: i64) -> ClassConfigRow {
+        ClassConfigRow {
+            id,
+            config_type: ClassConfigType::TeachingClass,
+            grade_name: grade_name.to_string(),
+            class_name: class_name.to_string(),
+            building: "向远楼".to_string(),
+            floor: "1层".to_string(),
+            room_label: None,
+            updated_at: String::new(),
+        }
+    }
+
+    #[test]
+    fn class_name_number_extracts_last_number_group() {
+        assert_eq!(class_name_number("高二1班"), 1);
+        assert_eq!(class_name_number("高二10班"), 10);
+        assert_eq!(class_name_number("高一5场"), 5);
+        assert_eq!(class_name_number("2026高二11班"), 11);
+        assert_eq!(class_name_number("无数字班"), i32::MAX);
+    }
+
+    #[test]
+    fn grade_sort_rank_orders_by_stage() {
+        assert!(grade_sort_rank("高一") < grade_sort_rank("高二"));
+        assert!(grade_sort_rank("高二") < grade_sort_rank("高三"));
+        assert!(grade_sort_rank("高一") < grade_sort_rank("初一"));
+        assert_eq!(grade_sort_rank("高三"), 3);
+    }
+
+    #[test]
+    fn sort_orders_classes_numerically_within_grade() {
+        let mut items = vec![
+            row("高二", "高二1班", 5),
+            row("高一", "高一2班", 2),
+            row("高二", "高二11班", 6),
+            row("高一", "高一1班", 1),
+            row("高二", "高二10班", 4),
+            row("高二", "高二2班", 3),
+        ];
+        items.sort_by(compare_class_config_rows);
+
+        let names: Vec<&str> = items.iter().map(|r| r.class_name.as_str()).collect();
+        assert_eq!(
+            names,
+            vec!["高一1班", "高一2班", "高二1班", "高二2班", "高二10班", "高二11班"]
+        );
+    }
+
+    #[test]
+    fn sort_falls_back_to_name_when_no_numbers() {
+        let mut items = vec![
+            row("高二", "高二A班", 2),
+            row("高二", "高二B班", 1),
+        ];
+        items.sort_by(compare_class_config_rows);
+        assert_eq!(items[0].class_name, "高二A班");
+        assert_eq!(items[1].class_name, "高二B班");
+    }
 }
