@@ -1852,6 +1852,116 @@ mod tests {
     }
 
     #[test]
+    fn test_floor_rover_at_realistic_millis_scale_skips_non_overlapping_slots() {
+        // 使用真实毫秒时间戳（2026-03-24T08:00 UTC = 1_774_339_200_000），
+        // 防止 start_ts 秒/毫秒单位混用导致非重叠时段被误判为重叠。
+        let base = 1_774_339_200_000_i64;
+        let row = |session_id: i64,
+                   space_id: Option<i64>,
+                   role: &str,
+                   subject: Subject,
+                   space_name: &str,
+                   start_at: &str,
+                   end_at: &str,
+                   start_offset_ms: i64,
+                   minutes: i64,
+                   teacher: &str| TaskExportRow {
+            session_id: Some(session_id),
+            space_id,
+            task_source: "exam".to_string(),
+            role: role.to_string(),
+            grade_name: "高一".to_string(),
+            subject,
+            space_name: space_name.to_string(),
+            floor: "3层".to_string(),
+            start_at: start_at.to_string(),
+            end_at: end_at.to_string(),
+            start_ts: base + start_offset_ms,
+            duration_minutes: minutes,
+            recommended_self_study_topic_label: None,
+            teacher_name: Some(teacher.to_string()),
+        };
+        let rows = vec![
+            // 上午场 08:00-09:00，与下午的楼层流动完全不重叠
+            row(
+                401,
+                Some(31),
+                "exam_room_invigilator",
+                Subject::Chinese,
+                "高一语文考场",
+                "2026-03-24T08:00",
+                "2026-03-24T09:00",
+                0,
+                60,
+                "语文监考",
+            ),
+            // 物理 14:00-15:40
+            row(
+                301,
+                Some(21),
+                "exam_room_invigilator",
+                Subject::Physics,
+                "高一物理考场",
+                "2026-03-24T14:00",
+                "2026-03-24T15:40",
+                6 * 3_600_000,
+                100,
+                "物理监考",
+            ),
+            // 历史 14:10-16:00
+            row(
+                302,
+                Some(22),
+                "exam_room_invigilator",
+                Subject::History,
+                "高二历史考场",
+                "2026-03-24T14:10",
+                "2026-03-24T16:00",
+                6 * 3_600_000 + 10 * 60_000,
+                110,
+                "历史监考",
+            ),
+            // 楼层流动 14:00-16:00（合并区间）
+            row(
+                301,
+                None,
+                "floor_rover",
+                Subject::Physics,
+                "3层 楼层流动",
+                "2026-03-24T14:00",
+                "2026-03-24T16:00",
+                6 * 3_600_000,
+                120,
+                "流动老师",
+            ),
+        ];
+
+        let slots = build_slots(&rows).expect("slots should build");
+        assert_eq!(slots.len(), 3, "上午场、物理、历史各一列");
+
+        let (_, floor_cells) = collect_floor_cells(&rows, &slots);
+        for slot in &slots {
+            let cell = floor_cells
+                .get(&("三楼".to_string(), slot.key.clone()))
+                .map(|cell| cell.teachers.clone())
+                .unwrap_or_default();
+            let label = slot.time_label.clone();
+            if label.starts_with("08:00") {
+                assert!(
+                    cell.is_empty(),
+                    "楼层流动与上午场不重叠，不应出现在上午列"
+                );
+            } else {
+                assert_eq!(
+                    cell,
+                    vec!["流动老师".to_string()],
+                    "重叠时段列应显示楼层流动老师: {label}"
+                );
+            }
+        }
+    }
+
+    #[test]
     fn test_finalize_slot_header_lines_collapses_same_subject_labels() {
         let slot = SlotDef {
             key: SlotKey {

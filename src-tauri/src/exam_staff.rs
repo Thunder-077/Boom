@@ -546,6 +546,9 @@ struct SessionTimeRuntime {
 #[derive(Debug, Clone)]
 struct FloorRoverCoverage {
     session_id: i64,
+    // 合并区间覆盖到的全部场次 ID（含首个 session_id）。
+    // 自定义规则按场次/目标精确匹配时，需要用整个列表判断是否命中。
+    session_ids: Vec<i64>,
     grade_name: String,
     subject: Subject,
     subjects: Vec<Subject>,
@@ -633,6 +636,9 @@ struct TaskBuild {
     // 同楼层、时间有重叠的考试会合并成一条楼层流动任务。
     // 这里保留整个覆盖区间内需要回避的科目，避免合并后漏掉任一科目教师。
     subject_avoidance_subjects: Vec<Subject>,
+    // 楼层流动任务覆盖的全部场次 ID（其他任务为空）：
+    // 自定义规则按场次/目标匹配时用整个列表判断，避免只认首个场次。
+    covered_session_ids: Vec<i64>,
     recommended_self_study_topic: Option<exam_allocation::SelfStudyTopic>,
     priority_self_study_chain: Vec<exam_allocation::SelfStudyTopic>,
     day_key: String,
@@ -1318,7 +1324,15 @@ fn task_matches_custom_rule(task: &TaskBuild, rule: &GenerateExamStaffPlanCustom
             let Some(session_id) = task.session_id else {
                 return false;
             };
-            if !rule.time_scope_ids.iter().any(|id| *id == session_id) {
+            // 楼层流动任务是跨场次合并区间，除首个场次外，
+            // 还需匹配区间覆盖到的其余场次，避免针对被覆盖场次的规则失效。
+            let session_hit = rule.time_scope_ids.iter().any(|id| *id == session_id)
+                || (task.role == StaffRole::FloorRover
+                    && rule
+                        .time_scope_ids
+                        .iter()
+                        .any(|id| task.covered_session_ids.contains(id)));
+            if !session_hit {
                 return false;
             }
         }
@@ -1331,7 +1345,17 @@ fn task_matches_custom_rule(task: &TaskBuild, rule: &GenerateExamStaffPlanCustom
     }
     match rule.target_scope_type.as_str() {
         RULE_TARGET_SCOPE_ALL => true,
-        RULE_TARGET_SCOPE_SELECTED => rule.target_ids.iter().any(|id| id == &task.rule_target_id),
+        RULE_TARGET_SCOPE_SELECTED => {
+            // 楼层流动的合并任务只保留首个场次的 rule_target_id，
+            // 这里额外匹配被覆盖场次的 floor:{session_id}:{floor} 目标。
+            rule.target_ids.iter().any(|id| id == &task.rule_target_id)
+                || (task.role == StaffRole::FloorRover
+                    && rule.target_ids.iter().any(|id| {
+                        task.covered_session_ids
+                            .iter()
+                            .any(|sid| id == &format!("floor:{sid}:{}", task.floor))
+                    }))
+        }
         _ => false,
     }
 }
@@ -1699,6 +1723,7 @@ fn floor_rover_coverage(
 ) -> FloorRoverCoverage {
     FloorRoverCoverage {
         session_id: session.session_id,
+        session_ids: vec![session.session_id],
         grade_name: session.grade_name.clone(),
         subject: session.subject,
         subjects: vec![session.subject],
@@ -1731,6 +1756,7 @@ fn merge_floor_rover_coverages(
                     current.end_at = coverage.end_at;
                 }
                 current.subjects.extend(coverage.subjects);
+                current.session_ids.extend(coverage.session_ids);
                 continue;
             }
         }
@@ -1742,6 +1768,8 @@ fn merge_floor_rover_coverages(
             .subjects
             .sort_by_key(|subject| subject_order(*subject));
         coverage.subjects.dedup();
+        coverage.session_ids.sort();
+        coverage.session_ids.dedup();
     }
     merged.sort_by(|left, right| {
         left.start_ts
@@ -1841,6 +1869,7 @@ async fn build_staff_tasks(
                             end_ts: session.end_ts,
                             duration_minutes: duration_minutes(session.start_ts, session.end_ts)?,
                             subject_avoidance_subjects: vec![session.subject],
+                            covered_session_ids: Vec::new(),
                             recommended_self_study_topic: None,
                             priority_self_study_chain: Vec::new(),
                             day_key: day_key.clone(),
@@ -1890,6 +1919,7 @@ async fn build_staff_tasks(
                         end_ts: session.end_ts,
                         duration_minutes: duration_minutes(session.start_ts, session.end_ts)?,
                         subject_avoidance_subjects: vec![session.subject],
+                        covered_session_ids: Vec::new(),
                         recommended_self_study_topic,
                         priority_self_study_chain,
                         day_key: day_key.clone(),
@@ -1925,6 +1955,7 @@ async fn build_staff_tasks(
             end_ts: coverage.end_ts,
             duration_minutes: duration_minutes(coverage.start_ts, coverage.end_ts)?,
             subject_avoidance_subjects: coverage.subjects,
+            covered_session_ids: coverage.session_ids,
             recommended_self_study_topic: None,
             priority_self_study_chain: Vec::new(),
             day_key,
@@ -1973,6 +2004,7 @@ async fn build_staff_tasks(
                 end_ts,
                 duration_minutes: duration,
                 subject_avoidance_subjects: vec![subject],
+                covered_session_ids: Vec::new(),
                 recommended_self_study_topic: Some(
                     exam_allocation::build_subject_self_study_topic(subject),
                 ),
@@ -4563,6 +4595,7 @@ mod tests {
             end_ts: 2_000,
             duration_minutes: 120,
             subject_avoidance_subjects: vec![subject],
+            covered_session_ids: Vec::new(),
             recommended_self_study_topic: None,
             priority_self_study_chain: Vec::new(),
             day_key: "2026-03-24".to_string(),
@@ -4595,6 +4628,7 @@ mod tests {
             end_ts: 2_000,
             duration_minutes: 120,
             subject_avoidance_subjects: vec![Subject::Biology],
+            covered_session_ids: Vec::new(),
             recommended_self_study_topic: Some(topic_subject(Subject::Physics)),
             priority_self_study_chain: vec![
                 topic_subject(Subject::Physics),
@@ -4884,6 +4918,7 @@ mod tests {
             end_ts: 2_000,
             duration_minutes: 120,
             subject_avoidance_subjects: vec![Subject::English, Subject::Russian],
+            covered_session_ids: Vec::new(),
             recommended_self_study_topic: None,
             priority_self_study_chain: Vec::new(),
             day_key: "2026-03-24".to_string(),
@@ -5355,6 +5390,7 @@ mod tests {
             end_ts: 2_000,
             duration_minutes: 120,
             subject_avoidance_subjects: vec![Subject::English],
+            covered_session_ids: Vec::new(),
             recommended_self_study_topic: None,
             priority_self_study_chain: Vec::new(),
             day_key: "2026-03-24".to_string(),
@@ -5381,6 +5417,77 @@ mod tests {
             summary.candidates.iter().any(|c| c.teacher_id == 3),
             "高一历史老师应该可以参与楼层流动监考"
         );
+    }
+
+    #[test]
+    fn test_floor_rover_custom_rule_matches_covered_sessions() {
+        // 合并后的楼层流动任务只保留首个场次（301）的 session_id 和
+        // rule_target_id；针对被覆盖场次（302）的规则必须仍然命中，
+        // 否则规则不生效且会被校验判定为"未命中任何可用对象"。
+        let floor_rover_task = TaskBuild {
+            session_id: Some(301),
+            space_id: None,
+            task_source: StaffTaskSource::Exam,
+            role: StaffRole::FloorRover,
+            grade_name: "高一".to_string(),
+            subject: Subject::Physics,
+            space_name: "3层 楼层流动".to_string(),
+            floor: "3层".to_string(),
+            start_at: "2026-03-24T14:00".to_string(),
+            end_at: "2026-03-24T16:00".to_string(),
+            start_ts: 1_000,
+            end_ts: 8_200,
+            duration_minutes: 120,
+            subject_avoidance_subjects: vec![Subject::Physics, Subject::History],
+            covered_session_ids: vec![301, 302],
+            recommended_self_study_topic: None,
+            priority_self_study_chain: Vec::new(),
+            day_key: "2026-03-24".to_string(),
+            half_day: HalfDay::Afternoon,
+            rule_target_id: "floor:301:3层".to_string(),
+        };
+        let rule = |time_scope_ids: Vec<i64>, target_ids: Vec<String>| {
+            GenerateExamStaffPlanCustomRule {
+                action_type: RULE_ACTION_REQUIRE.to_string(),
+                teacher_id: 9,
+                teacher_name: Some("指定老师".to_string()),
+                time_scope_type: RULE_TIME_SCOPE_EXAM_SESSION.to_string(),
+                time_scope_ids,
+                time_scope_labels: Vec::new(),
+                task_scope_type: RULE_TASK_SCOPE_FLOOR_ROVER.to_string(),
+                target_scope_type: RULE_TARGET_SCOPE_SELECTED.to_string(),
+                target_ids,
+                target_labels: Vec::new(),
+            }
+        };
+
+        // 针对被覆盖场次 302 的时段 + 目标：应命中
+        assert!(task_matches_custom_rule(
+            &floor_rover_task,
+            &rule(vec![302], vec!["floor:302:3层".to_string()])
+        ));
+        // 时段选被覆盖场次、目标选首个场次：应命中
+        assert!(task_matches_custom_rule(
+            &floor_rover_task,
+            &rule(vec![302], vec!["floor:301:3层".to_string()])
+        ));
+        // 目标范围为全部（ALL）：应命中
+        let mut all_scope_rule = rule(vec![302], Vec::new());
+        all_scope_rule.target_scope_type = RULE_TARGET_SCOPE_ALL.to_string();
+        assert!(task_matches_custom_rule(
+            &floor_rover_task,
+            &all_scope_rule
+        ));
+        // 时段不在覆盖范围内：不应命中
+        assert!(!task_matches_custom_rule(
+            &floor_rover_task,
+            &rule(vec![999], vec!["floor:302:3层".to_string()])
+        ));
+        // 目标楼层不在任务楼层：不应命中
+        assert!(!task_matches_custom_rule(
+            &floor_rover_task,
+            &rule(vec![302], vec!["floor:302:5层".to_string()])
+        ));
     }
 
     #[test]
@@ -5445,6 +5552,7 @@ mod tests {
             end_ts,
             duration_minutes: minutes,
             subject_avoidance_subjects: vec![subject],
+            covered_session_ids: Vec::new(),
             recommended_self_study_topic: None,
             priority_self_study_chain: Vec::new(),
             day_key: "2026-03-24".to_string(),
@@ -5466,6 +5574,7 @@ mod tests {
             end_ts: 8_200,
             duration_minutes: 120,
             subject_avoidance_subjects: vec![Subject::Physics, Subject::History],
+            covered_session_ids: vec![301, 302],
             recommended_self_study_topic: None,
             priority_self_study_chain: Vec::new(),
             day_key: "2026-03-24".to_string(),
@@ -5803,6 +5912,7 @@ mod tests {
                 end_ts: 2_000,
                 duration_minutes: 120,
                 subject_avoidance_subjects: vec![Subject::Math],
+                covered_session_ids: Vec::new(),
                 recommended_self_study_topic: None,
                 priority_self_study_chain: Vec::new(),
                 day_key: "2026-03-24".to_string(),
@@ -5824,6 +5934,7 @@ mod tests {
                 end_ts: 2_000,
                 duration_minutes: 120,
                 subject_avoidance_subjects: vec![Subject::Biology],
+                covered_session_ids: Vec::new(),
                 recommended_self_study_topic: Some(topic_subject(Subject::English)),
                 priority_self_study_chain: vec![topic_subject(Subject::English)],
                 day_key: "2026-03-24".to_string(),
@@ -5883,6 +5994,7 @@ mod tests {
                 end_ts: 2_000,
                 duration_minutes: 60,
                 subject_avoidance_subjects: vec![Subject::Math],
+                covered_session_ids: Vec::new(),
                 recommended_self_study_topic: None,
                 priority_self_study_chain: Vec::new(),
                 day_key: "2026-03-24".to_string(),
@@ -5904,6 +6016,7 @@ mod tests {
                 end_ts: 3_000,
                 duration_minutes: 60,
                 subject_avoidance_subjects: vec![Subject::Biology],
+                covered_session_ids: Vec::new(),
                 recommended_self_study_topic: None,
                 priority_self_study_chain: Vec::new(),
                 day_key: "2026-03-24".to_string(),
@@ -5925,6 +6038,7 @@ mod tests {
                 end_ts: 4_000,
                 duration_minutes: 60,
                 subject_avoidance_subjects: vec![Subject::Physics],
+                covered_session_ids: Vec::new(),
                 recommended_self_study_topic: None,
                 priority_self_study_chain: Vec::new(),
                 day_key: "2026-03-24".to_string(),
@@ -5946,6 +6060,7 @@ mod tests {
                 end_ts: 5_000,
                 duration_minutes: 60,
                 subject_avoidance_subjects: vec![Subject::English],
+                covered_session_ids: Vec::new(),
                 recommended_self_study_topic: Some(topic_subject(Subject::English)),
                 priority_self_study_chain: vec![topic_subject(Subject::English)],
                 day_key: "2026-03-24".to_string(),
@@ -5998,6 +6113,7 @@ mod tests {
                 end_ts: 2_000,
                 duration_minutes: 120,
                 subject_avoidance_subjects: vec![Subject::Math],
+                covered_session_ids: Vec::new(),
                 recommended_self_study_topic: None,
                 priority_self_study_chain: Vec::new(),
                 day_key: "2026-03-24".to_string(),
@@ -6019,6 +6135,7 @@ mod tests {
                 end_ts: 2_000,
                 duration_minutes: 120,
                 subject_avoidance_subjects: vec![Subject::Math],
+                covered_session_ids: Vec::new(),
                 recommended_self_study_topic: None,
                 priority_self_study_chain: Vec::new(),
                 day_key: "2026-03-24".to_string(),

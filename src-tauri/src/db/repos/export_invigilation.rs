@@ -40,9 +40,7 @@ pub async fn task_export_rows(db: &DatabaseConnection) -> Result<Vec<TaskExportR
     for task in tasks {
         let subject = Subject::from_key(&task.subject)
             .ok_or_else(|| AppError::new(format!("无法识别监考任务科目: {}", task.subject)))?;
-        let start_ts = parse_datetime(&task.start_at)
-            .map(|dt| dt.and_utc().timestamp())
-            .ok_or_else(|| AppError::new(format!("无法解析任务开始时间: {}", task.start_at)))?;
+        let start_ts = task_start_ts_millis(&task.start_at)?;
         let teacher_names = assignments_by_task.remove(&task.id).unwrap_or_default();
         if teacher_names.is_empty() {
             out.push(task_to_export_row(&task, subject, start_ts, None));
@@ -245,6 +243,30 @@ fn parse_datetime(value: &str) -> Option<NaiveDateTime> {
     NaiveDateTime::parse_from_str(value, "%Y-%m-%dT%H:%M")
         .ok()
         .or_else(|| NaiveDateTime::parse_from_str(value, "%Y-%m-%d %H:%M:%S").ok())
+}
+
+// 导出侧重叠匹配（楼层流动填格、津贴锚定列）统一以毫秒为时间戳单位：
+// start_ts 与 duration_minutes × 60_000 同尺度，避免秒/毫秒混用导致
+// 非重叠时段被误判为重叠。
+fn task_start_ts_millis(start_at: &str) -> Result<i64, AppError> {
+    parse_datetime(start_at)
+        .map(|dt| dt.and_utc().timestamp_millis())
+        .ok_or_else(|| AppError::new(format!("无法解析任务开始时间: {start_at}")))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_task_start_ts_millis_uses_millisecond_scale() {
+        // 2026-03-24T08:00 UTC 的毫秒时间戳；若退化为秒级 timestamp()，
+        // 该断言会失败，并连带楼层流动重叠匹配在真实数据上失效。
+        let ts = task_start_ts_millis("2026-03-24T08:00").expect("should parse");
+        assert_eq!(ts, 1_774_339_200_000_i64);
+
+        assert!(task_start_ts_millis("not-a-date").is_err());
+    }
 }
 
 fn normalize_subject_group(subject: Subject) -> &'static str {
