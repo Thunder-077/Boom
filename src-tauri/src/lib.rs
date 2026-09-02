@@ -10,8 +10,6 @@ mod exam_staff;
 mod export_bundle;
 mod export_invigilation;
 mod invigilation;
-mod pdf_editor;
-mod pdf_engine;
 mod score;
 mod teacher;
 
@@ -90,10 +88,7 @@ pub fn run() {
             invigilation::export_latest_invigilation_schedule,
             teacher::import_teachers_from_excel,
             teacher::list_latest_teachers,
-            teacher::get_latest_teacher_summary,
-            pdf_engine::analyze_pdf_native_editability,
-            pdf_editor::get_pdf_editor_font,
-            pdf_editor::save_pdf_file
+            teacher::get_latest_teacher_summary
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application");

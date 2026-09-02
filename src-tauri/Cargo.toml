@@ -33,7 +33,3 @@ cp_sat = { path = "third_party/cp_sat" }
 tauri-plugin-updater = "2.10.1"
 tauri-plugin-process = "2.3.1"
 tauri-plugin-dialog = "2"
-mupdf = { version = "0.6.0", default-features = false }
-
-[patch.crates-io]
-mupdf = { path = "vendor/mupdf-0.6.0" }

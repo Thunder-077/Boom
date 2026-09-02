@@ -66,7 +66,7 @@ export default function AppShell({
           </div>
         ) : null}
       </aside>
-      <main className={`content-wrap ${activeSecondary === "pdf-editor" ? "pdf-content-wrap" : ""}`}>{children}</main>
+      <main className="content-wrap">{children}</main>
     </section>
   );
 }
