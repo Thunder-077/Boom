@@ -543,8 +543,15 @@ struct SessionTimeRuntime {
     end_ts: i64,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-struct FloorRoverSlotKey {
+#[derive(Debug, Clone)]
+struct FloorRoverCoverage {
+    session_id: i64,
+    grade_name: String,
+    subject: Subject,
+    subjects: Vec<Subject>,
+    floor: String,
+    start_at: String,
+    end_at: String,
     start_ts: i64,
     end_ts: i64,
 }
@@ -623,9 +630,8 @@ struct TaskBuild {
     start_ts: i64,
     end_ts: i64,
     duration_minutes: i64,
-    // 楼层流动在外语分组场景下会把同一时间段的多门外语合并成一条任务。
-    // 这里保留整组需要回避的科目，保证英语/日语/俄语老师都会被排除，
-    // 不会因为只生成了一条楼层流动任务就漏掉科目回避。
+    // 同楼层、时间有重叠的考试会合并成一条楼层流动任务。
+    // 这里保留整个覆盖区间内需要回避的科目，避免合并后漏掉任一科目教师。
     subject_avoidance_subjects: Vec<Subject>,
     recommended_self_study_topic: Option<exam_allocation::SelfStudyTopic>,
     priority_self_study_chain: Vec<exam_allocation::SelfStudyTopic>,
@@ -1687,27 +1693,63 @@ fn compute_plan_metrics(
     }
 }
 
-fn build_floor_rover_subjects_by_slot(
-    session_times: &[SessionTimeRuntime],
-) -> HashMap<FloorRoverSlotKey, Vec<Subject>> {
-    let mut subjects_by_slot = HashMap::<FloorRoverSlotKey, Vec<Subject>>::new();
-    for session in session_times {
-        let key = FloorRoverSlotKey {
-            start_ts: session.start_ts,
-            end_ts: session.end_ts,
-        };
-        subjects_by_slot
-            .entry(key)
-            .or_default()
-            .push(session.subject);
+fn floor_rover_coverage(
+    session: &SessionTimeRuntime,
+    floor: String,
+) -> FloorRoverCoverage {
+    FloorRoverCoverage {
+        session_id: session.session_id,
+        grade_name: session.grade_name.clone(),
+        subject: session.subject,
+        subjects: vec![session.subject],
+        floor,
+        start_at: session.start_at.clone(),
+        end_at: session.end_at.clone(),
+        start_ts: session.start_ts,
+        end_ts: session.end_ts,
+    }
+}
+
+fn merge_floor_rover_coverages(
+    mut coverages: Vec<FloorRoverCoverage>,
+) -> Vec<FloorRoverCoverage> {
+    coverages.sort_by(|left, right| {
+        left.floor
+            .cmp(&right.floor)
+            .then(left.start_ts.cmp(&right.start_ts))
+            .then(left.session_id.cmp(&right.session_id))
+            .then(left.end_ts.cmp(&right.end_ts))
+    });
+
+    let mut merged = Vec::<FloorRoverCoverage>::new();
+    for coverage in coverages {
+        if let Some(current) = merged.last_mut() {
+            // 使用半开区间判断：只有实际重叠才共用老师，相邻但不重叠的场次仍可分别排班。
+            if current.floor == coverage.floor && coverage.start_ts < current.end_ts {
+                if coverage.end_ts > current.end_ts {
+                    current.end_ts = coverage.end_ts;
+                    current.end_at = coverage.end_at;
+                }
+                current.subjects.extend(coverage.subjects);
+                continue;
+            }
+        }
+        merged.push(coverage);
     }
 
-    for subjects in subjects_by_slot.values_mut() {
-        subjects.sort_by_key(|subject| subject_order(*subject));
-        subjects.dedup();
+    for coverage in &mut merged {
+        coverage
+            .subjects
+            .sort_by_key(|subject| subject_order(*subject));
+        coverage.subjects.dedup();
     }
-
-    subjects_by_slot
+    merged.sort_by(|left, right| {
+        left.start_ts
+            .cmp(&right.start_ts)
+            .then(left.floor.cmp(&right.floor))
+            .then(left.session_id.cmp(&right.session_id))
+    });
+    merged
 }
 
 async fn build_staff_tasks(
@@ -1719,7 +1761,6 @@ async fn build_staff_tasks(
 ) -> Result<Vec<TaskBuild>, AppError> {
     let active_teaching_classes =
         teaching_classes_for_sessions(teaching_classes, session_times);
-    let floor_rover_subjects_by_slot = build_floor_rover_subjects_by_slot(session_times);
     let mut sessions_by_grade: HashMap<String, Vec<exam_allocation::SelfStudyScheduleSession>> =
         HashMap::new();
     for session in session_times {
@@ -1749,8 +1790,7 @@ async fn build_staff_tasks(
     }
 
     let mut tasks = Vec::<TaskBuild>::new();
-    // 同一时间段、同一楼层只生成一条楼层流动任务，与年级、科目和考场监考人数无关。
-    let mut generated_floor_rovers = HashSet::<(FloorRoverSlotKey, String)>::new();
+    let mut floor_rover_coverages = Vec::<FloorRoverCoverage>::new();
     for session in session_times {
         let spaces = load_spaces_for_session(db, session.session_id).await?;
         if spaces.is_empty() {
@@ -1860,42 +1900,37 @@ async fn build_staff_tasks(
             }
         }
 
-        let floor_rover_slot_key = FloorRoverSlotKey {
-            start_ts: session.start_ts,
-            end_ts: session.end_ts,
-        };
-        let subject_avoidance_subjects = floor_rover_subjects_by_slot
-            .get(&floor_rover_slot_key)
-            .cloned()
-            .unwrap_or_else(|| vec![session.subject]);
         let mut sorted_floors: Vec<String> = floors.into_iter().collect();
         sorted_floors.sort();
         for floor in sorted_floors {
-            if !generated_floor_rovers.insert((floor_rover_slot_key.clone(), floor.clone())) {
-                continue;
-            }
-            tasks.push(TaskBuild {
-                session_id: Some(session.session_id),
-                space_id: None,
-                task_source: StaffTaskSource::Exam,
-                role: StaffRole::FloorRover,
-                grade_name: session.grade_name.clone(),
-                subject: session.subject,
-                space_name: format!("{} 楼层流动", floor),
-                floor: floor.clone(),
-                start_at: session.start_at.clone(),
-                end_at: session.end_at.clone(),
-                start_ts: session.start_ts,
-                end_ts: session.end_ts,
-                duration_minutes: duration_minutes(session.start_ts, session.end_ts)?,
-                subject_avoidance_subjects: subject_avoidance_subjects.clone(),
-                recommended_self_study_topic: None,
-                priority_self_study_chain: Vec::new(),
-                day_key: day_key.clone(),
-                half_day,
-                rule_target_id: format!("floor:{}:{}", session.session_id, floor),
-            });
+            floor_rover_coverages.push(floor_rover_coverage(session, floor));
         }
+    }
+
+    // 同楼层的重叠考试区间只需要一名流动监考；任务覆盖整个区间并合并科目回避。
+    for coverage in merge_floor_rover_coverages(floor_rover_coverages) {
+        let (day_key, half_day) = parse_day_slot(&coverage.start_at)?;
+        tasks.push(TaskBuild {
+            session_id: Some(coverage.session_id),
+            space_id: None,
+            task_source: StaffTaskSource::Exam,
+            role: StaffRole::FloorRover,
+            grade_name: coverage.grade_name,
+            subject: coverage.subject,
+            space_name: format!("{} 楼层流动", coverage.floor),
+            floor: coverage.floor.clone(),
+            start_at: coverage.start_at,
+            end_at: coverage.end_at,
+            start_ts: coverage.start_ts,
+            end_ts: coverage.end_ts,
+            duration_minutes: duration_minutes(coverage.start_ts, coverage.end_ts)?,
+            subject_avoidance_subjects: coverage.subjects,
+            recommended_self_study_topic: None,
+            priority_self_study_chain: Vec::new(),
+            day_key,
+            half_day,
+            rule_target_id: format!("floor:{}:{}", coverage.session_id, coverage.floor),
+        });
     }
 
     if !active_teaching_classes.is_empty() {
@@ -3897,7 +3932,7 @@ async fn build_rule_target_options_from_spaces(
     let active_teaching_classes =
         teaching_classes_for_sessions(teaching_classes, session_times);
     let mut seen = HashSet::<(String, String, Option<i64>, String)>::new();
-    let mut generated_floor_rover_targets = HashSet::<(FloorRoverSlotKey, String)>::new();
+    let mut floor_rover_coverages = Vec::<FloorRoverCoverage>::new();
     let mut target_options = Vec::<InvigilationRuleTargetOption>::new();
 
     for session in session_times {
@@ -3950,30 +3985,32 @@ async fn build_rule_target_options_from_spaces(
         }
 
         for floor in floors {
-            let slot_key = FloorRoverSlotKey {
-                start_ts: session.start_ts,
-                end_ts: session.end_ts,
-            };
-            if !generated_floor_rover_targets.insert((slot_key, floor.clone())) {
-                continue;
-            }
-            let id = format!("floor:{}:{}", session.session_id, floor);
-            let key = (
-                RULE_TASK_SCOPE_FLOOR_ROVER.to_string(),
-                RULE_TIME_SCOPE_EXAM_SESSION.to_string(),
-                Some(session.session_id),
-                id.clone(),
-            );
-            if seen.insert(key) {
-                target_options.push(InvigilationRuleTargetOption {
-                    id,
-                    label: format!("{} 楼层流动", floor),
-                    subtitle: Some(subtitle.clone()),
-                    time_scope_type: RULE_TIME_SCOPE_EXAM_SESSION.to_string(),
-                    time_scope_id: Some(session.session_id),
-                    task_scope_type: RULE_TASK_SCOPE_FLOOR_ROVER.to_string(),
-                });
-            }
+            floor_rover_coverages.push(floor_rover_coverage(session, floor));
+        }
+    }
+
+    for coverage in merge_floor_rover_coverages(floor_rover_coverages) {
+        let id = format!("floor:{}:{}", coverage.session_id, coverage.floor);
+        let key = (
+            RULE_TASK_SCOPE_FLOOR_ROVER.to_string(),
+            RULE_TIME_SCOPE_EXAM_SESSION.to_string(),
+            Some(coverage.session_id),
+            id.clone(),
+        );
+        if seen.insert(key) {
+            target_options.push(InvigilationRuleTargetOption {
+                id,
+                label: format!("{} 楼层流动", coverage.floor),
+                subtitle: Some(build_session_label(
+                    &coverage.grade_name,
+                    coverage.subject,
+                    &coverage.start_at,
+                    &coverage.end_at,
+                )),
+                time_scope_type: RULE_TIME_SCOPE_EXAM_SESSION.to_string(),
+                time_scope_id: Some(coverage.session_id),
+                task_scope_type: RULE_TASK_SCOPE_FLOOR_ROVER.to_string(),
+            });
         }
     }
 
@@ -4717,6 +4754,76 @@ mod tests {
 
         assert_eq!(floor_targets.len(), 1);
         assert_eq!(floor_targets[0].id, "floor:201:3层");
+    }
+
+    #[test]
+    fn test_floor_rover_merges_overlapping_time_ranges_on_same_floor() {
+        let db = setup_build_staff_tasks_test_db();
+        insert_test_plan_session(&db, 301, Subject::Physics);
+        insert_test_plan_session(&db, 302, Subject::History);
+        insert_test_plan_space(&db, 21, 301, "高一物理考场", "3层", 1);
+        insert_test_plan_space(&db, 22, 302, "高二历史考场", "3层", 1);
+
+        let session_times = vec![
+            SessionTimeRuntime {
+                session_id: 301,
+                grade_name: "高一".to_string(),
+                subject: Subject::Physics,
+                start_at: "2026-03-24T14:00".to_string(),
+                end_at: "2026-03-24T15:40".to_string(),
+                start_ts: 1_000_000,
+                end_ts: 7_000_000,
+            },
+            SessionTimeRuntime {
+                session_id: 302,
+                grade_name: "高二".to_string(),
+                subject: Subject::History,
+                start_at: "2026-03-24T14:10".to_string(),
+                end_at: "2026-03-24T16:00".to_string(),
+                start_ts: 1_600_000,
+                end_ts: 8_200_000,
+            },
+        ];
+
+        let tasks = tauri::async_runtime::block_on(build_staff_tasks(
+            &db,
+            &session_times,
+            &test_runtime_config(),
+            &HashMap::new(),
+            &[],
+        ))
+        .expect("overlapping tasks should build");
+        let floor_rovers = tasks
+            .iter()
+            .filter(|task| task.role == StaffRole::FloorRover)
+            .collect::<Vec<_>>();
+
+        assert_eq!(floor_rovers.len(), 1);
+        assert_eq!(floor_rovers[0].floor, "3层");
+        assert_eq!(floor_rovers[0].start_at, "2026-03-24T14:00");
+        assert_eq!(floor_rovers[0].end_at, "2026-03-24T16:00");
+        assert_eq!(floor_rovers[0].duration_minutes, 120);
+        assert_eq!(
+            floor_rovers[0].subject_avoidance_subjects,
+            vec![Subject::Physics, Subject::History]
+        );
+
+        let target_options = tauri::async_runtime::block_on(
+            build_rule_target_options_from_spaces(
+                &db,
+                &session_times,
+                &test_runtime_config(),
+                &[],
+            ),
+        )
+        .expect("overlapping rule targets should build");
+        let floor_targets = target_options
+            .iter()
+            .filter(|option| option.task_scope_type == RULE_TASK_SCOPE_FLOOR_ROVER)
+            .collect::<Vec<_>>();
+
+        assert_eq!(floor_targets.len(), 1);
+        assert_eq!(floor_targets[0].id, "floor:301:3层");
     }
 
     #[test]

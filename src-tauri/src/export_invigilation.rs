@@ -61,6 +61,7 @@ struct SlotDef {
     left_header: &'static str,
     right_header: &'static str,
     start_ts: i64,
+    end_ts: i64,
     teacher_cols: usize,
 }
 
@@ -384,6 +385,10 @@ fn build_slots(rows: &[TaskExportRow]) -> Result<Vec<SlotDef>, AppError> {
     let mut header_lines_by_slot = HashMap::<SlotKey, Vec<String>>::new();
     let mut slots = Vec::<SlotDef>::new();
     for row in rows {
+        // 合并后的楼层流动任务可能跨越多个考试时段，不能因此额外生成一个导出列。
+        if row.role == "floor_rover" {
+            continue;
+        }
         let key = SlotKey {
             bucket: slot_bucket(&row.task_source).to_string(),
             start_at: row.start_at.clone(),
@@ -412,6 +417,9 @@ fn build_slots(rows: &[TaskExportRow]) -> Result<Vec<SlotDef>, AppError> {
                     "监考员"
                 },
                 start_ts: row.start_ts,
+                end_ts: row
+                    .start_ts
+                    .saturating_add(row.duration_minutes.saturating_mul(60_000)),
                 teacher_cols: 1,
             });
         }
@@ -494,7 +502,6 @@ fn collect_floor_cells(
     rows: &[TaskExportRow],
     slots: &[SlotDef],
 ) -> (Vec<String>, HashMap<(String, SlotKey), CellValue>) {
-    let slot_lookup: HashSet<SlotKey> = slots.iter().map(|slot| slot.key.clone()).collect();
     let mut floors = HashSet::<String>::new();
     let mut cells = HashMap::<(String, SlotKey), CellValue>::new();
 
@@ -502,25 +509,29 @@ fn collect_floor_cells(
         if row.role != "floor_rover" {
             continue;
         }
-        let slot_key = SlotKey {
-            bucket: slot_bucket(&row.task_source).to_string(),
-            start_at: row.start_at.clone(),
-            end_at: row.end_at.clone(),
-        };
-        if !slot_lookup.contains(&slot_key) {
-            continue;
-        }
+        let bucket = slot_bucket(&row.task_source);
+        let rover_end_ts = row
+            .start_ts
+            .saturating_add(row.duration_minutes.saturating_mul(60_000));
         let floor_label = pretty_floor(&row.floor);
-        floors.insert(floor_label.clone());
-        let entry = cells.entry((floor_label.clone(), slot_key)).or_default();
-        if entry.left.is_empty() {
-            entry.left = floor_label;
+        for slot in slots.iter().filter(|slot| {
+            slot.key.bucket == bucket
+                && row.start_ts < slot.end_ts
+                && slot.start_ts < rover_end_ts
+        }) {
+            floors.insert(floor_label.clone());
+            let entry = cells
+                .entry((floor_label.clone(), slot.key.clone()))
+                .or_default();
+            if entry.left.is_empty() {
+                entry.left = floor_label.clone();
+            }
+            entry.teachers.push(
+                row.teacher_name
+                    .clone()
+                    .unwrap_or_else(|| "待分配".to_string()),
+            );
         }
-        entry.teachers.push(
-            row.teacher_name
-                .clone()
-                .unwrap_or_else(|| "待分配".to_string()),
-        );
     }
 
     let mut ordered_floors = floors.into_iter().collect::<Vec<_>>();
@@ -918,7 +929,15 @@ fn accounting_theme_for_task(
         start_at: row.start_at.clone(),
         end_at: row.end_at.clone(),
     };
-    if let Some(labels) = slot_header_labels.get(&slot_key) {
+    accounting_theme_for_task_at_slot(row, &slot_key, slot_header_labels)
+}
+
+fn accounting_theme_for_task_at_slot(
+    row: &TaskExportRow,
+    slot_key: &SlotKey,
+    slot_header_labels: &HashMap<SlotKey, Vec<String>>,
+) -> String {
+    if let Some(labels) = slot_header_labels.get(slot_key) {
         // 与监考表保持一致：一个时段块只对应一个核算列。
         return labels.join("\n");
     }
@@ -944,10 +963,31 @@ fn build_accounting_formula_bindings(
     let mut bindings = Vec::with_capacity(rows.len());
 
     for row in rows {
-        let slot_key = SlotKey {
-            bucket: slot_bucket(&row.task_source).to_string(),
-            start_at: row.start_at.clone(),
-            end_at: row.end_at.clone(),
+        let slot_key = if row.role == "floor_rover" {
+            let bucket = slot_bucket(&row.task_source);
+            let rover_end_ts = row
+                .start_ts
+                .saturating_add(row.duration_minutes.saturating_mul(60_000));
+            slots
+                .iter()
+                .find(|slot| {
+                    slot.key.bucket == bucket
+                        && row.start_ts < slot.end_ts
+                        && slot.start_ts < rover_end_ts
+                })
+                .map(|slot| slot.key.clone())
+                .ok_or_else(|| {
+                    AppError::new(format!(
+                        "导出监考表失败：楼层流动任务未匹配到考试时段 {} {}-{}",
+                        row.floor, row.start_at, row.end_at
+                    ))
+                })?
+        } else {
+            SlotKey {
+                bucket: slot_bucket(&row.task_source).to_string(),
+                start_at: row.start_at.clone(),
+                end_at: row.end_at.clone(),
+            }
         };
         let left_col = slot_left_columns.get(&slot_key).copied().ok_or_else(|| {
             AppError::new(format!(
@@ -984,7 +1024,11 @@ fn build_accounting_formula_bindings(
         bindings.push(AccountingFormulaBinding {
             teacher_cell_row,
             teacher_cell_col,
-            theme_label: accounting_theme_for_task(row, &slot_header_labels),
+            theme_label: if row.role == "floor_rover" {
+                accounting_theme_for_task_at_slot(row, &slot_key, &slot_header_labels)
+            } else {
+                accounting_theme_for_task(row, &slot_header_labels)
+            },
             duration_minutes: row.duration_minutes,
             is_outdoor,
         });
@@ -1637,6 +1681,85 @@ mod tests {
     }
 
     #[test]
+    fn test_overlapping_floor_rover_uses_exam_slots_and_is_accounted_once() {
+        let rows = vec![
+            TaskExportRow {
+                session_id: Some(301),
+                space_id: Some(21),
+                task_source: "exam".to_string(),
+                role: "exam_room_invigilator".to_string(),
+                grade_name: "高一".to_string(),
+                subject: Subject::Physics,
+                space_name: "高一物理考场".to_string(),
+                floor: "3层".to_string(),
+                start_at: "2026-03-24T14:00".to_string(),
+                end_at: "2026-03-24T15:40".to_string(),
+                start_ts: 1_000_000,
+                duration_minutes: 100,
+                recommended_self_study_topic_label: None,
+                teacher_name: Some("物理监考".to_string()),
+            },
+            TaskExportRow {
+                session_id: Some(302),
+                space_id: Some(22),
+                task_source: "exam".to_string(),
+                role: "exam_room_invigilator".to_string(),
+                grade_name: "高二".to_string(),
+                subject: Subject::History,
+                space_name: "高二历史考场".to_string(),
+                floor: "3层".to_string(),
+                start_at: "2026-03-24T14:10".to_string(),
+                end_at: "2026-03-24T16:00".to_string(),
+                start_ts: 1_600_000,
+                duration_minutes: 110,
+                recommended_self_study_topic_label: None,
+                teacher_name: Some("历史监考".to_string()),
+            },
+            TaskExportRow {
+                session_id: Some(301),
+                space_id: None,
+                task_source: "exam".to_string(),
+                role: "floor_rover".to_string(),
+                grade_name: "高一".to_string(),
+                subject: Subject::Physics,
+                space_name: "3层 楼层流动".to_string(),
+                floor: "3层".to_string(),
+                start_at: "2026-03-24T14:00".to_string(),
+                end_at: "2026-03-24T16:00".to_string(),
+                start_ts: 1_000_000,
+                duration_minutes: 120,
+                recommended_self_study_topic_label: None,
+                teacher_name: Some("流动老师".to_string()),
+            },
+        ];
+
+        let slots = build_slots(&rows).expect("slots should build");
+        assert_eq!(slots.len(), 2, "流动任务不应额外生成 14:00-16:00 列");
+
+        let (room_names, _) = collect_room_cells(&rows, &slots, &HashMap::new());
+        let (floors, floor_cells) = collect_floor_cells(&rows, &slots);
+        assert_eq!(floors, vec!["三楼".to_string()]);
+        for slot in &slots {
+            assert_eq!(
+                floor_cells
+                    .get(&("三楼".to_string(), slot.key.clone()))
+                    .expect("both overlapping slots should show the rover")
+                    .teachers,
+                vec!["流动老师".to_string()]
+            );
+        }
+
+        let bindings = build_accounting_formula_bindings(&rows, &room_names, &floors, &slots)
+            .expect("accounting bindings should build");
+        let outdoor_bindings = bindings
+            .iter()
+            .filter(|binding| binding.is_outdoor)
+            .collect::<Vec<_>>();
+        assert_eq!(outdoor_bindings.len(), 1);
+        assert_eq!(outdoor_bindings[0].duration_minutes, 120);
+    }
+
+    #[test]
     fn test_finalize_slot_header_lines_collapses_same_subject_labels() {
         let slot = SlotDef {
             key: SlotKey {
@@ -1650,6 +1773,7 @@ mod tests {
             left_header: "班级",
             right_header: "教师",
             start_ts: 1_000,
+            end_ts: 2_000,
             teacher_cols: 1,
         };
 
@@ -1671,6 +1795,7 @@ mod tests {
                 left_header: "考生数",
                 right_header: "监考员",
                 start_ts: 1_000,
+                end_ts: 2_000,
                 teacher_cols: 2,
             },
             SlotDef {
@@ -1685,6 +1810,7 @@ mod tests {
                 left_header: "考生数",
                 right_header: "监考员",
                 start_ts: 2_000,
+                end_ts: 3_000,
                 teacher_cols: 2,
             },
             SlotDef {
@@ -1699,6 +1825,7 @@ mod tests {
                 left_header: "班级",
                 right_header: "教师",
                 start_ts: 3_000,
+                end_ts: 4_000,
                 teacher_cols: 1,
             },
         ];
