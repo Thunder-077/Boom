@@ -378,7 +378,10 @@ export default function MonitorConfigPanel() {
   const middleManagerDefaultEnabled = state.invigilationConfig.middleManagerDefaultEnabled;
   const middleManagerExceptionCount = state.invigilationConfig.middleManagerExceptionTeacherIds.length;
   const teacherSelectOptions = useMemo(
-    () => [{ label: "选择教师", value: "" as const }].concat(state.teachers.map((item) => ({ label: item.teacherName, value: item.id }))),
+    () => [
+      { label: "选择教师", value: "" as const },
+      ...state.teachers.map((item) => ({ label: item.teacherName, value: item.id })),
+    ],
     [state.teachers],
   );
   const middleManagerTeachers = useMemo(

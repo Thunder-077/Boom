@@ -30,6 +30,7 @@ interface ScoreStoreState {
   filters: ScoreQuery;
   rows: ScoreRow[];
   total: number;
+  gradeOptions: string[];
   summary: LatestScoreSummary;
   importStatus: ImportStatus;
   importMessage: string;
@@ -53,6 +54,8 @@ export function createScoreStore(service: ScoreService = scoreService) {
       filters: { ...defaultFilters },
       rows: [],
       total: 0,
+      // 成绩页首次渲染发生在异步加载完成之前，年级选项必须先使用空数组。
+      gradeOptions: [],
       summary: { ...emptySummary },
       importStatus: "idle",
       importMessage: "",
