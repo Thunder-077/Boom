@@ -3633,13 +3633,30 @@
 }
 
 .time-input {
-  width: 88px;
+  /* 保留完整时间和时钟按钮所需空间，避免过宽将两者拉成独立元素。 */
+  width: 7em;
+  min-width: 7em;
   border: 1px solid transparent;
   background: transparent;
   border-radius: var(--radius-sm);
   padding: 4px var(--space-sm);
   color: var(--text-primary);
   font-family: var(--font-ui);
+  font-size: inherit;
+  font-variant-numeric: tabular-nums;
+}
+
+.time-input::-webkit-calendar-picker-indicator {
+  margin-inline-start: 0.5em;
+  padding: 0;
+}
+
+/* 时间表头与已有配置、新增科目的时间框使用同一列中心线。 */
+.exam-table th:nth-child(3),
+.exam-table th:nth-child(4),
+.exam-table td:nth-child(3),
+.exam-table td:nth-child(4) {
+  text-align: center;
 }
 
 .month-day-input {
@@ -5421,9 +5438,12 @@
   font-weight: 600;
 }
 
-.time-input,
 .date-input {
   width: 86px;
+  letter-spacing: 0.02em;
+}
+
+.time-input {
   letter-spacing: 0.02em;
 }
 
