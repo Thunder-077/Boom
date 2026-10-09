@@ -9,7 +9,62 @@ impl MigratorTrait for Migrator {
             Box::new(m20260517_000000_legacy_baseline_name::Migration),
             Box::new(m20260517_000001_baseline::Migration),
             Box::new(m20260517_000002_course_import_settings::Migration),
+            Box::new(m20261009_000003_grade_capacity::Migration),
         ]
+    }
+}
+
+mod m20261009_000003_grade_capacity {
+    use sea_orm_migration::prelude::*;
+
+    pub struct Migration;
+
+    impl MigrationName for Migration {
+        fn name(&self) -> &str {
+            "m20261009_000003_grade_capacity"
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl MigrationTrait for Migration {
+        async fn up(&self, manager: &SchemaManager) -> Result<(), DbErr> {
+            // 仅新增覆盖配置表；空表表示所有年级继续继承旧的全局人数。
+            manager
+                .create_table(
+                    Table::create()
+                        .table(Alias::new("exam_grade_capacity_settings"))
+                        .if_not_exists()
+                        .col(
+                            ColumnDef::new(Alias::new("grade_name"))
+                                .string()
+                                .not_null()
+                                .primary_key(),
+                        )
+                        .col(
+                            ColumnDef::new(Alias::new("default_capacity"))
+                                .big_integer()
+                                .not_null(),
+                        )
+                        .col(
+                            ColumnDef::new(Alias::new("max_capacity"))
+                                .big_integer()
+                                .not_null(),
+                        )
+                        .col(ColumnDef::new(Alias::new("updated_at")).string().not_null())
+                        .to_owned(),
+                )
+                .await
+        }
+
+        async fn down(&self, manager: &SchemaManager) -> Result<(), DbErr> {
+            manager
+                .drop_table(
+                    Table::drop()
+                        .table(Alias::new("exam_grade_capacity_settings"))
+                        .to_owned(),
+                )
+                .await
+        }
     }
 }
 

@@ -3,6 +3,7 @@ import { createStore } from "zustand/vanilla";
 import { Subject } from "../../entities/score/model";
 import type {
   ExamAllocationSettings,
+  GradeCapacitySettings,
   ExamGenerationProgress,
   ExamPlanOverview,
   ExamPlanSession,
@@ -34,6 +35,7 @@ const emptyOverview: ExamPlanOverview = {
 };
 
 const emptySettings: ExamAllocationSettings = {
+  gradeCapacities: [],
   defaultCapacity: 40,
   maxCapacity: 41,
   examTitle: "",
@@ -417,11 +419,11 @@ export function createExamAllocationStore(service: ExamAllocationService = examA
     }
   }
 
-  async function saveSettings(defaultCapacity: number, maxCapacity: number, examTitle: string, examNotices: string[]) {
+  async function saveSettings(defaultCapacity: number, maxCapacity: number, examTitle: string, examNotices: string[], gradeCapacities: GradeCapacitySettings[] = state.settings.gradeCapacities) {
     state.saving = true;
     state.errorMessage = "";
     try {
-      await service.updateSettings({ defaultCapacity, maxCapacity, examTitle, examNotices });
+      await service.updateSettings({ defaultCapacity, maxCapacity, examTitle, examNotices, gradeCapacities });
       state.settings = await service.getSettings();
       state.overview.defaultCapacity = state.settings.defaultCapacity;
       state.overview.maxCapacity = state.settings.maxCapacity;

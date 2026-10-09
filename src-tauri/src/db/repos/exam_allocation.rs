@@ -1,13 +1,15 @@
 use sea_orm::{
-    ActiveModelTrait, ActiveValue::Set, ColumnTrait, DatabaseConnection, DatabaseTransaction,
-    EntityTrait, IntoActiveModel, PaginatorTrait, QueryFilter, QueryOrder, QuerySelect,
+    ActiveModelTrait, ActiveValue::Set, ColumnTrait, ConnectionTrait, DatabaseConnection,
+    DatabaseTransaction, EntityTrait, IntoActiveModel, PaginatorTrait, QueryFilter, QueryOrder,
+    QuerySelect,
 };
 
 use crate::entity::{
     class_config_subjects, class_configs, exam_allocation_settings, exam_generation_progress,
-    exam_grade_subject_time_templates, invigilation_config_settings, latest_exam_plan_meta,
-    latest_exam_plan_sessions, latest_exam_plan_spaces, latest_exam_plan_staff_assignments,
-    latest_exam_plan_student_allocations, latest_student_scores, latest_subject_scores,
+    exam_grade_capacity_settings, exam_grade_subject_time_templates, invigilation_config_settings,
+    latest_exam_plan_meta, latest_exam_plan_sessions, latest_exam_plan_spaces,
+    latest_exam_plan_staff_assignments, latest_exam_plan_student_allocations,
+    latest_student_scores, latest_subject_scores,
 };
 use crate::score::{AppError, ListResult};
 
@@ -221,8 +223,8 @@ pub async fn get_settings(db: &DatabaseConnection) -> Result<SettingsRow, AppErr
     })
 }
 
-pub async fn update_settings(
-    db: &DatabaseConnection,
+pub async fn update_settings<C: ConnectionTrait>(
+    db: &C,
     default_capacity: i64,
     max_capacity: i64,
     exam_title: &str,
@@ -240,6 +242,37 @@ pub async fn update_settings(
     active.exam_notices_json = Set(exam_notices_json.to_string());
     active.updated_at = Set(now.to_string());
     active.update(db).await?;
+    Ok(())
+}
+
+pub async fn list_grade_capacities(
+    db: &DatabaseConnection,
+) -> Result<Vec<exam_grade_capacity_settings::Model>, AppError> {
+    Ok(exam_grade_capacity_settings::Entity::find()
+        .order_by_asc(exam_grade_capacity_settings::Column::GradeName)
+        .all(db)
+        .await?)
+}
+
+pub async fn replace_grade_capacities(
+    tx: &DatabaseTransaction,
+    items: &[crate::exam_allocation::GradeCapacitySettings],
+    now: &str,
+) -> Result<(), AppError> {
+    // 全量替换仅限年级覆盖配置，删除某行即恢复全局默认；事务由应用服务统一控制。
+    exam_grade_capacity_settings::Entity::delete_many()
+        .exec(tx)
+        .await?;
+    for item in items {
+        exam_grade_capacity_settings::ActiveModel {
+            grade_name: Set(item.grade_name.clone()),
+            default_capacity: Set(item.default_capacity),
+            max_capacity: Set(item.max_capacity),
+            updated_at: Set(now.to_string()),
+        }
+        .insert(tx)
+        .await?;
+    }
     Ok(())
 }
 

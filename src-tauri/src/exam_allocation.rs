@@ -105,9 +105,18 @@ impl ExamAllocationType {
 pub struct ExamAllocationSettings {
     default_capacity: i64,
     max_capacity: i64,
+    grade_capacities: Vec<GradeCapacitySettings>,
     exam_title: String,
     exam_notices: Vec<String>,
     updated_at: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GradeCapacitySettings {
+    pub grade_name: String,
+    pub default_capacity: i64,
+    pub max_capacity: i64,
 }
 
 #[derive(Debug, Deserialize)]
@@ -115,6 +124,8 @@ pub struct ExamAllocationSettings {
 pub struct UpdateExamAllocationSettingsPayload {
     pub default_capacity: i64,
     pub max_capacity: i64,
+    #[serde(default)]
+    pub grade_capacities: Option<Vec<GradeCapacitySettings>>,
     pub exam_title: String,
     pub exam_notices: Vec<String>,
 }
@@ -772,6 +783,19 @@ fn deserialize_self_study_topic(
     }))
 }
 
+fn effective_grade_capacity(
+    items: &[GradeCapacitySettings],
+    grade_name: &str,
+    default_capacity: i64,
+    max_capacity: i64,
+) -> (i64, i64) {
+    items
+        .iter()
+        .find(|item| item.grade_name == grade_name)
+        .map(|item| (item.default_capacity, item.max_capacity))
+        .unwrap_or((default_capacity, max_capacity))
+}
+
 fn validate_capacity(default_capacity: i64, max_capacity: i64) -> Result<(), AppError> {
     if default_capacity <= 0 {
         return Err(AppError::new("默认容量必须大于 0"));
@@ -888,6 +912,16 @@ fn load_settings(db: &DatabaseConnection) -> Result<ExamAllocationSettings, AppE
     Ok(ExamAllocationSettings {
         default_capacity: row.default_capacity,
         max_capacity: row.max_capacity,
+        grade_capacities: tauri::async_runtime::block_on(
+            exam_allocation_repo::list_grade_capacities(db),
+        )?
+        .into_iter()
+        .map(|item| GradeCapacitySettings {
+            grade_name: item.grade_name,
+            default_capacity: item.default_capacity,
+            max_capacity: item.max_capacity,
+        })
+        .collect(),
         exam_title: row.exam_title,
         exam_notices,
         updated_at: Some(row.updated_at),
@@ -946,9 +980,8 @@ fn load_active_grade_subjects(
     db: &DatabaseConnection,
 ) -> Result<HashMap<String, HashSet<Subject>>, AppError> {
     let mut active = HashMap::<String, HashSet<Subject>>::new();
-    for row in tauri::async_runtime::block_on(
-        exam_allocation_repo::list_active_grade_subjects(db),
-    )? {
+    for row in tauri::async_runtime::block_on(exam_allocation_repo::list_active_grade_subjects(db))?
+    {
         let Some(subject) = Subject::from_key(&row.subject) else {
             continue;
         };
@@ -1459,6 +1492,19 @@ pub fn update_exam_allocation_settings(
 ) -> Result<SuccessResponse, String> {
     let result = (|| -> Result<SuccessResponse, AppError> {
         validate_capacity(payload.default_capacity, payload.max_capacity)?;
+        if let Some(items) = &payload.grade_capacities {
+            let mut names = HashSet::new();
+            for item in items {
+                if item.grade_name.trim().is_empty()
+                    || item.grade_name != item.grade_name.trim()
+                    || !names.insert(&item.grade_name)
+                {
+                    return Err(AppError::new("年级名称不能为空、包含首尾空格或重复"));
+                }
+                validate_capacity(item.default_capacity, item.max_capacity)
+                    .map_err(|error| AppError::new(format!("{}：{error}", item.grade_name)))?;
+            }
+        }
         let exam_title = payload.exam_title.trim().to_string();
         let exam_notices = payload
             .exam_notices
@@ -1471,14 +1517,22 @@ pub fn update_exam_allocation_settings(
         let db = open_exam_allocation_db(&app)?;
         ensure_exam_allocation_defaults(&db)?;
         let now = Utc::now().to_rfc3339();
+        let tx = tauri::async_runtime::block_on(db.begin())?;
         tauri::async_runtime::block_on(exam_allocation_repo::update_settings(
-            &db,
+            &tx,
             payload.default_capacity,
             payload.max_capacity,
             &exam_title,
             &exam_notices_json,
             &now,
         ))?;
+        // 兼容旧调用方：未传覆盖配置时保留原数据，显式空数组则恢复所有年级默认。
+        if let Some(items) = &payload.grade_capacities {
+            tauri::async_runtime::block_on(exam_allocation_repo::replace_grade_capacities(
+                &tx, items, &now,
+            ))?;
+        }
+        tauri::async_runtime::block_on(tx.commit())?;
         Ok(SuccessResponse::ok())
     })();
     result.map_err(|e| e.to_string())
@@ -1512,6 +1566,11 @@ fn generate_latest_exam_plan_internal(
         .and_then(|p| p.max_capacity)
         .unwrap_or(settings.max_capacity);
     validate_capacity(default_capacity, max_capacity)?;
+
+    // 在清理旧结果前校验并固定整轮生成使用的年级配置。
+    for item in &settings.grade_capacities {
+        validate_capacity(item.default_capacity, item.max_capacity)?;
+    }
 
     let grade_contexts = load_grade_contexts(&db)?;
     let active_grade_subjects = load_active_grade_subjects(&db)?;
@@ -1580,6 +1639,12 @@ fn generate_latest_exam_plan_internal(
     let mut occupied_exam_rooms = HashMap::<i64, HashSet<String>>::new();
 
     for (grade_index, grade_name) in grades.iter().enumerate() {
+        let (default_capacity, max_capacity) = effective_grade_capacity(
+            &settings.grade_capacities,
+            grade_name,
+            default_capacity,
+            max_capacity,
+        );
         let alloc_percent = 28 + (((grade_index as i64) * 44) / total_grades.max(1));
         update_exam_generation_progress(
             &db,
@@ -2023,6 +2088,86 @@ mod tests {
     use sea_orm_migration::MigratorTrait;
 
     #[test]
+    fn test_grade_capacity_isolation_and_tail_room_limit() {
+        let items = vec![
+            GradeCapacitySettings {
+                grade_name: "高一".into(),
+                default_capacity: 30,
+                max_capacity: 30,
+            },
+            GradeCapacitySettings {
+                grade_name: "高三".into(),
+                default_capacity: 35,
+                max_capacity: 36,
+            },
+        ];
+        for (grade, expected) in [("高一", (30, 30)), ("高二", (40, 41)), ("高三", (35, 36))]
+        {
+            let (normal, maximum) = effective_grade_capacity(&items, grade, 40, 41);
+            assert_eq!((normal, maximum), expected);
+            let rooms = calculate_room_capacities(122, normal, maximum);
+            assert_eq!(rooms.iter().sum::<i64>(), 122);
+            assert!(rooms.iter().all(|capacity| *capacity <= maximum));
+        }
+    }
+
+    #[test]
+    fn test_grade_capacity_upgrade_and_restore_defaults() {
+        tauri::async_runtime::block_on(async {
+            let db = Database::connect("sqlite::memory:").await.unwrap();
+            // 模拟旧版本：先执行原有三条迁移，保存用户全局配置，再升级。
+            Migrator::up(&db, Some(3)).await.unwrap();
+            exam_allocation_repo::ensure_defaults(&db, 32, 33, "历史考试", "[]", "before")
+                .await
+                .unwrap();
+            Migrator::up(&db, None).await.unwrap();
+            Migrator::up(&db, None).await.unwrap();
+            let settings = exam_allocation_repo::get_settings(&db).await.unwrap();
+            assert_eq!((settings.default_capacity, settings.max_capacity), (32, 33));
+            assert_eq!(settings.exam_title, "历史考试");
+            assert!(exam_allocation_repo::list_grade_capacities(&db)
+                .await
+                .unwrap()
+                .is_empty());
+
+            let tx = db.begin().await.unwrap();
+            exam_allocation_repo::replace_grade_capacities(
+                &tx,
+                &[GradeCapacitySettings {
+                    grade_name: "高一".into(),
+                    default_capacity: 30,
+                    max_capacity: 30,
+                }],
+                "after",
+            )
+            .await
+            .unwrap();
+            tx.commit().await.unwrap();
+            let items = exam_allocation_repo::list_grade_capacities(&db)
+                .await
+                .unwrap();
+            assert_eq!(items.len(), 1);
+            assert_eq!((items[0].default_capacity, items[0].max_capacity), (30, 30));
+            let tx = db.begin().await.unwrap();
+            exam_allocation_repo::replace_grade_capacities(&tx, &[], "restore")
+                .await
+                .unwrap();
+            tx.commit().await.unwrap();
+            assert!(exam_allocation_repo::list_grade_capacities(&db)
+                .await
+                .unwrap()
+                .is_empty());
+            assert_eq!(
+                exam_allocation_repo::get_settings(&db)
+                    .await
+                    .unwrap()
+                    .default_capacity,
+                32
+            );
+        });
+    }
+
+    #[test]
     fn test_capacity_rebalance() {
         let rooms = calculate_room_capacities(122, 40, 41);
         assert_eq!(rooms, vec![41, 41, 40]);
@@ -2314,22 +2459,10 @@ mod tests {
             db
         });
 
-        let english_self_study = load_self_study_students_for_session(
-            &db,
-            "高一",
-            Subject::English,
-            &[],
-            0,
-        )
-        .unwrap();
-        let russian_self_study = load_self_study_students_for_session(
-            &db,
-            "高一",
-            Subject::Russian,
-            &[],
-            0,
-        )
-        .unwrap();
+        let english_self_study =
+            load_self_study_students_for_session(&db, "高一", Subject::English, &[], 0).unwrap();
+        let russian_self_study =
+            load_self_study_students_for_session(&db, "高一", Subject::Russian, &[], 0).unwrap();
         let math_self_study =
             load_self_study_students_for_session(&db, "高一", Subject::Math, &[], 0).unwrap();
 
@@ -2344,10 +2477,9 @@ mod tests {
         let db = tauri::async_runtime::block_on(async {
             let db = Database::connect("sqlite::memory:").await.unwrap();
             Migrator::up(&db, None).await.unwrap();
-            for (admission_no, grade_name, class_name) in [
-                ("g1", "高一", "高一1班"),
-                ("g3", "高三", "高三1班"),
-            ] {
+            for (admission_no, grade_name, class_name) in
+                [("g1", "高一", "高一1班"), ("g3", "高三", "高三1班")]
+            {
                 latest_student_scores::ActiveModel {
                     admission_no: Set(admission_no.to_string()),
                     student_name: Set(admission_no.to_string()),
@@ -2364,8 +2496,7 @@ mod tests {
                 .await
                 .unwrap();
             }
-            for (admission_no, subject, is_selected) in
-                [("g1", "math", 0), ("g3", "chemistry", 1)]
+            for (admission_no, subject, is_selected) in [("g1", "math", 0), ("g3", "chemistry", 1)]
             {
                 latest_subject_scores::ActiveModel {
                     id: sea_orm::ActiveValue::NotSet,
@@ -2461,22 +2592,12 @@ mod tests {
             },
         ];
 
-        let chemistry_self_study = load_self_study_students_for_session(
-            &db,
-            "高三",
-            Subject::Chemistry,
-            &sessions,
-            1_000,
-        )
-        .unwrap();
-        let history_self_study = load_self_study_students_for_session(
-            &db,
-            "高三",
-            Subject::History,
-            &sessions,
-            1_000,
-        )
-        .unwrap();
+        let chemistry_self_study =
+            load_self_study_students_for_session(&db, "高三", Subject::Chemistry, &sessions, 1_000)
+                .unwrap();
+        let history_self_study =
+            load_self_study_students_for_session(&db, "高三", Subject::History, &sessions, 1_000)
+                .unwrap();
 
         assert_eq!(
             chemistry_self_study

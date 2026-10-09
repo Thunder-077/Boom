@@ -6,6 +6,7 @@ import type { ExamAllocationService } from "../service";
 const fakeService: ExamAllocationService = {
   async getSettings() {
     return {
+      gradeCapacities: [],
       defaultCapacity: 40,
       maxCapacity: 41,
       examTitle: "测试考试",
@@ -232,6 +233,16 @@ const fakeService: ExamAllocationService = {
 };
 
 describe("exam allocation store", () => {
+  it("saves grade overrides and clears them when restoring defaults", async () => {
+    const updateSettings = vi.fn(fakeService.updateSettings);
+    const store = createExamAllocationStore({ ...fakeService, updateSettings });
+    const overrides = [{ gradeName: "高一", defaultCapacity: 30, maxCapacity: 30 }];
+    await store.saveSettings(40, 41, "考试", [], overrides);
+    expect(updateSettings).toHaveBeenLastCalledWith(expect.objectContaining({ gradeCapacities: overrides }));
+    await store.saveSettings(40, 41, "考试", [], []);
+    expect(updateSettings).toHaveBeenLastCalledWith(expect.objectContaining({ gradeCapacities: [] }));
+  });
+
   it("loads overview and sessions", async () => {
     const store = createExamAllocationStore(fakeService);
     await store.loadAll();

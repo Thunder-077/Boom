@@ -1,6 +1,13 @@
 import type { Subject } from "../score/model";
 
+export interface GradeCapacitySettings {
+  gradeName: string;
+  defaultCapacity: number;
+  maxCapacity: number;
+}
+
 export interface ExamAllocationSettings {
+  gradeCapacities: GradeCapacitySettings[];
   defaultCapacity: number;
   maxCapacity: number;
   examTitle: string;

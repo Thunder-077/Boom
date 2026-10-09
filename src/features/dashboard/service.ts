@@ -1,6 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import type {
   ExamAllocationSettings,
+  GradeCapacitySettings,
   ExamGenerationProgress,
   ExamSessionTime,
   ExamSessionTimeUpsert,
@@ -28,6 +29,7 @@ import type { ListResult } from "../../shared/types/api";
 export interface ExamAllocationService {
   getSettings(): Promise<ExamAllocationSettings>;
   updateSettings(payload: {
+    gradeCapacities: GradeCapacitySettings[];
     defaultCapacity: number;
     maxCapacity: number;
     examTitle: string;

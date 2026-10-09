@@ -6,6 +6,7 @@ pub mod course_schedule_entries;
 pub mod course_schedule_imports;
 pub mod course_schedule_periods;
 pub mod exam_allocation_settings;
+pub mod exam_grade_capacity_settings;
 pub mod exam_generation_progress;
 pub mod exam_grade_subject_time_templates;
 pub mod exam_session_times;

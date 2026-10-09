@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Trash2 } from "lucide-react";
 import { SUBJECT_LABELS } from "../../../entities/class-config/model";
 import { Subject } from "../../../entities/score/model";
+import type { GradeCapacitySettings } from "../../../entities/exam-plan/model";
 import { revealInExplorer } from "../../../shared/utils/appLog";
 import { hasDesktopRuntime } from "../../../shared/utils/desktopRuntime";
 import { ConfigCard, FluentSelect, TableCard } from "../../../widgets/common/index.react";
@@ -87,6 +88,7 @@ export default function ExamAssignmentPanel() {
   const store = useReactExamAllocationStore();
   const { state } = store;
   const [capacityForm, setCapacityForm] = useState({
+    gradeCapacities: [] as GradeCapacitySettings[],
     defaultCapacity: 40,
     maxCapacity: 41,
     examTitle: "",
@@ -101,7 +103,8 @@ export default function ExamAssignmentPanel() {
   const [autoSaving, setAutoSaving] = useState(false);
   const [autoSaveError, setAutoSaveError] = useState("");
   const [autoSavedAt, setAutoSavedAt] = useState(0);
-  const [autoSaveDirty, setAutoSaveDirty] = useState(false);
+  // 延迟回调必须读取最新的待保存标记，避免一次保存后捕获旧状态而漏掉后续修改。
+  const autoSaveDirtyRef = useRef(false);
   const [isPreparingGenerate, setIsPreparingGenerate] = useState(false);
   const autoSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const suppressAutoSaveRef = useRef(false);
@@ -114,6 +117,30 @@ export default function ExamAssignmentPanel() {
     () => state.sessionTimeGradeOptions.map((grade) => ({ label: grade, value: grade })),
     [state.sessionTimeGradeOptions],
   );
+
+  const capacityGrades = useMemo(() => {
+    const order = ["高一", "高二", "高三", "初一", "初二", "初三"];
+    const rank = (grade: string) => order.includes(grade) ? order.indexOf(grade) : order.length;
+    return [...new Set([...state.sessionTimeGradeOptions, ...capacityForm.gradeCapacities.map((item) => item.gradeName)])]
+      .sort((a, b) => rank(a) - rank(b) || a.localeCompare(b, "zh-CN", { numeric: true }));
+  }, [state.sessionTimeGradeOptions, capacityForm.gradeCapacities]);
+
+  function changeGradeCapacity(gradeName: string, patch: Partial<GradeCapacitySettings> | null) {
+    setCapacityForm((current) => {
+      const existing = current.gradeCapacities.find((item) => item.gradeName === gradeName);
+      const remaining = current.gradeCapacities.filter((item) => item.gradeName !== gradeName);
+      return {
+        ...current,
+        gradeCapacities: patch === null ? remaining : [...remaining, {
+          gradeName,
+          defaultCapacity: current.defaultCapacity,
+          maxCapacity: current.maxCapacity,
+          ...existing,
+          ...patch,
+        }],
+      };
+    });
+  }
 
   const progressPercent = useMemo(() => {
     if (state.generating || state.generationProgress.status === "running") {
@@ -220,7 +247,7 @@ export default function ExamAssignmentPanel() {
 
   function scheduleAutoSave(delay = 700) {
     if (!autoSaveReady || suppressAutoSaveRef.current) return;
-    setAutoSaveDirty(true);
+    autoSaveDirtyRef.current = true;
     clearAutoSaveTimer();
     autoSaveTimerRef.current = setTimeout(() => {
       void flushAutoSave();
@@ -229,6 +256,13 @@ export default function ExamAssignmentPanel() {
 
   async function persistDrafts(options: { strictManualRows?: boolean; clearManualRows?: boolean } = {}) {
     const { strictManualRows = true, clearManualRows = true } = options;
+    const capacities = [{ gradeName: "全局默认", ...capacityForm }, ...capacityForm.gradeCapacities];
+    for (const item of capacities) {
+      if (!Number.isInteger(item.defaultCapacity) || !Number.isInteger(item.maxCapacity)
+        || item.defaultCapacity < 1 || item.maxCapacity < item.defaultCapacity || item.maxCapacity > 200) {
+        throw new Error(`${item.gradeName}：人数须为整数，且满足 1 ≤ 默认人数 ≤ 最大人数 ≤ 200`);
+      }
+    }
     const examNotices = capacityForm.examNoticesText
       .split(/\r?\n/)
       .map((line) => line.trim())
@@ -239,6 +273,7 @@ export default function ExamAssignmentPanel() {
       capacityForm.maxCapacity,
       capacityForm.examTitle,
       examNotices,
+      capacityForm.gradeCapacities,
     );
 
     const extraItems: Array<{ sessionId: number; gradeName: string; subject: Subject; startAt: string; endAt: string }> = [];
@@ -274,12 +309,12 @@ export default function ExamAssignmentPanel() {
   }
 
   async function flushAutoSave() {
-    if (!autoSaveReady || suppressAutoSaveRef.current || !autoSaveDirty) return;
+    if (!autoSaveReady || suppressAutoSaveRef.current || !autoSaveDirtyRef.current) return;
     if (state.generating || state.saving || state.savingTimes) {
       scheduleAutoSave(400);
       return;
     }
-    setAutoSaveDirty(false);
+    autoSaveDirtyRef.current = false;
     setAutoSaving(true);
     setAutoSaveError("");
     suppressAutoSaveRef.current = true;
@@ -287,7 +322,7 @@ export default function ExamAssignmentPanel() {
       await persistDrafts({ strictManualRows: false, clearManualRows: false });
       setAutoSavedAt(Date.now());
     } catch (error) {
-      setAutoSaveDirty(true);
+      autoSaveDirtyRef.current = true;
       setAutoSaveError(error instanceof Error ? error.message : String(error));
       scheduleAutoSave(1200);
     } finally {
@@ -301,7 +336,7 @@ export default function ExamAssignmentPanel() {
     setIsPreparingGenerate(true);
     setAutoSaveError("");
     clearAutoSaveTimer();
-    setAutoSaveDirty(false);
+    autoSaveDirtyRef.current = false;
     suppressAutoSaveRef.current = true;
     try {
       await persistDrafts();
@@ -340,6 +375,7 @@ export default function ExamAssignmentPanel() {
     // before auto-save starts observing local edits.
     suppressAutoSaveRef.current = true;
     setCapacityForm({
+      gradeCapacities: state.settings.gradeCapacities ?? [],
       defaultCapacity: state.settings.defaultCapacity,
       maxCapacity: state.settings.maxCapacity,
       examTitle: state.settings.examTitle ?? "",
@@ -356,6 +392,7 @@ export default function ExamAssignmentPanel() {
       capacityForm.examNoticesText,
       capacityForm.defaultCapacity,
       capacityForm.maxCapacity,
+      capacityForm.gradeCapacities,
     ]);
     if (!prevFieldSignatureRef.current) {
       prevFieldSignatureRef.current = signature;
@@ -716,7 +753,8 @@ export default function ExamAssignmentPanel() {
         <section className="overview-card card-shell">
           <h2 className="ov-main-title">配置与结果</h2>
 
-          <h3 className="ov-section-title">考场容量参数</h3>
+          <h3 className="ov-section-title">考场人数配置</h3>
+          <p className="capacity-help">全局默认：未单独配置的年级使用以下人数。</p>
           <div className="ov-capacity-grid">
             <div className="ov-capacity-box">
               <div className="ov-box-label">考场默认容量</div>
@@ -726,6 +764,9 @@ export default function ExamAssignmentPanel() {
                   className="ov-capacity-input"
                   type="number"
                   min="1"
+                  max="200"
+                  step="1"
+                  disabled={state.loading || state.generating || isPreparingGenerate || autoSaving}
                   onChange={(event) => setCapacityForm((current) => ({ ...current, defaultCapacity: Number(event.target.value) || 1 }))}
                 />
                 <span className="ov-box-unit">人</span>
@@ -739,12 +780,51 @@ export default function ExamAssignmentPanel() {
                   className="ov-capacity-input"
                   type="number"
                   min="1"
+                  max="200"
+                  step="1"
+                  disabled={state.loading || state.generating || isPreparingGenerate || autoSaving}
                   onChange={(event) => setCapacityForm((current) => ({ ...current, maxCapacity: Number(event.target.value) || 1 }))}
                 />
                 <span className="ov-box-unit">人</span>
               </div>
             </div>
           </div>
+
+          <div className="grade-capacity-list">
+            {capacityGrades.map((gradeName) => {
+              const override = capacityForm.gradeCapacities.find((item) => item.gradeName === gradeName);
+              const effective = override ?? capacityForm;
+              const invalid = !Number.isInteger(effective.defaultCapacity) || !Number.isInteger(effective.maxCapacity)
+                || effective.defaultCapacity < 1 || effective.maxCapacity < effective.defaultCapacity || effective.maxCapacity > 200;
+              return (
+                <div className="grade-capacity-row" key={gradeName}>
+                  <div className="grade-capacity-heading">
+                    <strong>{gradeName}</strong>
+                    <button type="button" disabled={state.loading || state.generating || isPreparingGenerate || autoSaving}
+                      onClick={() => changeGradeCapacity(gradeName, override ? null : {})}>
+                      {override ? "恢复默认" : "单独配置"}
+                    </button>
+                  </div>
+                  <div className="grade-capacity-inputs">
+                    <label>默认人数<input type="number" min={1} max={200} step={1}
+                      aria-label={`${gradeName}默认人数`} value={effective.defaultCapacity}
+                      disabled={!override || state.loading || state.generating || isPreparingGenerate || autoSaving}
+                      onChange={(event) => changeGradeCapacity(gradeName, { defaultCapacity: Number(event.target.value) })} /></label>
+                    <label>最大人数<input type="number" min={1} max={200} step={1}
+                      aria-label={`${gradeName}最大人数`} value={effective.maxCapacity}
+                      disabled={!override || state.loading || state.generating || isPreparingGenerate || autoSaving}
+                      onChange={(event) => changeGradeCapacity(gradeName, { maxCapacity: Number(event.target.value) })} /></label>
+                  </div>
+                  <small className={invalid ? "grade-capacity-error" : "capacity-help"}>
+                    {invalid ? "人数须为整数，且满足 1 ≤ 默认人数 ≤ 最大人数 ≤ 200" : override ? "单独配置" : "使用全局默认"}
+                  </small>
+                </div>
+              );
+            })}
+            {capacityGrades.length === 0 && <p className="capacity-help">导入成绩并配置班级后，可按年级设置人数。</p>}
+          </div>
+          <p className="capacity-help">默认人数用于分场，最大人数为合并尾场时的上限。修改后需重新生成考场安排。</p>
+          <p className={autoSaveError ? "grade-capacity-error" : "capacity-help"} role="status">{autoSaveError || autoSaveText}</p>
 
           <hr className="ov-divider" />
 

@@ -2204,6 +2204,17 @@
   width: 130px;
 }
 
+.grade-capacity-list { margin-top: 16px; }
+.grade-capacity-row { padding: 12px 0; border-top: 1px solid var(--border-default); }
+.grade-capacity-heading { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
+.grade-capacity-heading button { color: var(--accent-primary); background: transparent; border: none; cursor: pointer; }
+.grade-capacity-inputs { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.grade-capacity-inputs label { display: flex; flex-direction: column; gap: 4px; font-size: var(--font-size-sm); color: var(--text-secondary); }
+.grade-capacity-inputs input { width: 100%; min-width: 0; padding: 8px; border: 1px solid var(--border-default); border-radius: var(--radius-sm); background: var(--surface-input); color: var(--text-primary); }
+.grade-capacity-inputs input:disabled { opacity: 0.65; }
+.capacity-help { color: var(--text-secondary); font-size: var(--font-size-sm); line-height: 1.6; }
+.grade-capacity-error { color: var(--status-error, #c62828); font-size: var(--font-size-sm); }
+
 .filter-search {
   position: relative;
   display: inline-flex;
