@@ -2207,6 +2207,9 @@
 .grade-capacity-list { margin-top: 16px; }
 .grade-capacity-row { padding: 12px 0; border-top: 1px solid var(--border-default); }
 .grade-capacity-heading { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
+.grade-capacity-selector { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.grade-capacity-selector .fluent-combo { width: 140px; min-width: 0; }
+.grade-capacity-selector .fluent-value { font-weight: 700; }
 .grade-capacity-heading button { color: var(--accent-primary); background: transparent; border: none; cursor: pointer; }
 .grade-capacity-inputs { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
 .grade-capacity-inputs label { display: flex; flex-direction: column; gap: 4px; font-size: var(--font-size-sm); color: var(--text-secondary); }
