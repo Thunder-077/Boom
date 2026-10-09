@@ -3449,6 +3449,28 @@
   margin-right: 12px;
 }
 
+/* 考试配置页的三块主标题统一主题色和装饰条，避免表格头部的灰色继承。 */
+.exam-dashboard-grid .config-card > h3,
+.exam-dashboard-grid .table-card > .head > .copy > h3,
+.exam-dashboard-grid .ov-main-title {
+  color: var(--text-primary);
+  display: flex;
+  align-items: center;
+}
+
+.exam-dashboard-grid .config-card > h3::before,
+.exam-dashboard-grid .table-card > .head > .copy > h3::before,
+.exam-dashboard-grid .ov-main-title::before {
+  content: "";
+  display: inline-block;
+  width: 4px;
+  height: 18px;
+  background: var(--accent-primary);
+  border-radius: 2px;
+  margin-right: var(--space-sm);
+  flex-shrink: 0;
+}
+
 .ov-section-title {
   font-size: 15px;
   font-weight: 600;
