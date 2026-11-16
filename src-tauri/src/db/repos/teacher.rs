@@ -358,6 +358,7 @@ fn row_to_teacher_row(
 
     TeacherRow {
         id: i64::from(teacher.id),
+        invigilation_grade_name: teacher.invigilation_grade_name,
         teacher_name: teacher.teacher_name,
         subjects,
         class_names,

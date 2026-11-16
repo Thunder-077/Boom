@@ -561,6 +561,7 @@ struct FloorRoverCoverage {
 
 #[derive(Debug, Clone)]
 struct TeacherInfo {
+    invigilation_grade_name: Option<String>,
     id: i64,
     name: String,
     subjects: HashSet<Subject>,
@@ -1157,6 +1158,7 @@ async fn load_teacher_pool(db: &sea_orm::DatabaseConnection) -> Result<Vec<Teach
         map.insert(
             row.id,
             TeacherInfo {
+                invigilation_grade_name: row.invigilation_grade_name,
                 id: row.id,
                 name: row.name,
                 subjects: HashSet::new(),
@@ -1185,6 +1187,18 @@ async fn load_teacher_pool(db: &sea_orm::DatabaseConnection) -> Result<Vec<Teach
     let mut teachers: Vec<TeacherInfo> = map.into_values().collect();
     teachers.sort_by(|a, b| a.id.cmp(&b.id));
     Ok(teachers)
+}
+
+fn validate_teacher_grade_ownership(teachers: &[TeacherInfo]) -> Result<(), AppError> {
+    if teachers.iter().any(|teacher| {
+        !matches!(
+            teacher.invigilation_grade_name.as_deref(),
+            Some("高一" | "高二" | "高三")
+        )
+    }) {
+        return Err(AppError::new("请重新导入教师表以补齐监考年级"));
+    }
+    Ok(())
 }
 
 fn infer_grade_name_from_class_name(class_name: &str) -> Option<String> {
@@ -1389,6 +1403,9 @@ fn build_task_candidate_summary(
     let required_teacher_ids: HashSet<i64> = teachers
         .iter()
         .filter(|teacher| {
+            if teacher.invigilation_grade_name.as_deref() != Some(task.grade_name.as_str()) {
+                return false;
+            }
             custom_rules.iter().any(|rule| {
                 rule.action_type == RULE_ACTION_REQUIRE
                     && rule.teacher_id == teacher.id
@@ -1401,6 +1418,19 @@ fn build_task_candidate_summary(
     let active_teachers: Vec<&TeacherInfo> = teachers
         .iter()
         .filter(|teacher| {
+            // Sheet归属是硬边界；自定义指定教师也不能绕过年级或明确禁排。
+            if teacher.invigilation_grade_name.as_deref() != Some(task.grade_name.as_str()) {
+                return false;
+            }
+            let is_excluded = custom_rules.iter().any(|rule| {
+                rule.action_type == RULE_ACTION_EXCLUDE
+                    && rule.teacher_id == teacher.id
+                    && task_matches_custom_rule(task, rule)
+            });
+            if is_excluded || !is_teacher_enabled_for_task_source(teacher, task.task_source, config)
+            {
+                return false;
+            }
             if required_teacher_ids.contains(&teacher.id) {
                 return true;
             }
@@ -1416,7 +1446,7 @@ fn build_task_candidate_summary(
                     .map(|pairs| pairs.contains(pair))
                     .unwrap_or(false)
             });
-            if hit_forbidden_slot_pair {
+            if task.role != StaffRole::ExamRoomInvigilator && hit_forbidden_slot_pair {
                 return false;
             }
 
@@ -1438,10 +1468,6 @@ fn build_task_candidate_summary(
     if task.role == StaffRole::ExamRoomInvigilator {
         let candidates: Vec<TaskCandidate> = active_teachers
             .iter()
-            .filter(|teacher| {
-                required_teacher_ids.contains(&teacher.id)
-                    || !teacher.subjects.contains(&task.subject)
-            })
             .map(|teacher| TaskCandidate {
                 teacher_id: teacher.id,
                 assignment_tier: None,
@@ -1717,10 +1743,7 @@ fn compute_plan_metrics(
     }
 }
 
-fn floor_rover_coverage(
-    session: &SessionTimeRuntime,
-    floor: String,
-) -> FloorRoverCoverage {
+fn floor_rover_coverage(session: &SessionTimeRuntime, floor: String) -> FloorRoverCoverage {
     FloorRoverCoverage {
         session_id: session.session_id,
         session_ids: vec![session.session_id],
@@ -1735,12 +1758,11 @@ fn floor_rover_coverage(
     }
 }
 
-fn merge_floor_rover_coverages(
-    mut coverages: Vec<FloorRoverCoverage>,
-) -> Vec<FloorRoverCoverage> {
+fn merge_floor_rover_coverages(mut coverages: Vec<FloorRoverCoverage>) -> Vec<FloorRoverCoverage> {
     coverages.sort_by(|left, right| {
-        left.floor
-            .cmp(&right.floor)
+        left.grade_name
+            .cmp(&right.grade_name)
+            .then(left.floor.cmp(&right.floor))
             .then(left.start_ts.cmp(&right.start_ts))
             .then(left.session_id.cmp(&right.session_id))
             .then(left.end_ts.cmp(&right.end_ts))
@@ -1750,7 +1772,10 @@ fn merge_floor_rover_coverages(
     for coverage in coverages {
         if let Some(current) = merged.last_mut() {
             // 使用半开区间判断：只有实际重叠才共用老师，相邻但不重叠的场次仍可分别排班。
-            if current.floor == coverage.floor && coverage.start_ts < current.end_ts {
+            if current.grade_name == coverage.grade_name
+                && current.floor == coverage.floor
+                && coverage.start_ts < current.end_ts
+            {
                 if coverage.end_ts > current.end_ts {
                     current.end_ts = coverage.end_ts;
                     current.end_at = coverage.end_at;
@@ -1787,8 +1812,7 @@ async fn build_staff_tasks(
     class_subject_map: &HashMap<(String, String), HashSet<Subject>>,
     teaching_classes: &[TeachingClassRuntime],
 ) -> Result<Vec<TaskBuild>, AppError> {
-    let active_teaching_classes =
-        teaching_classes_for_sessions(teaching_classes, session_times);
+    let active_teaching_classes = teaching_classes_for_sessions(teaching_classes, session_times);
     let mut sessions_by_grade: HashMap<String, Vec<exam_allocation::SelfStudyScheduleSession>> =
         HashMap::new();
     for session in session_times {
@@ -3420,6 +3444,68 @@ fn log_solver_outcome(
     let _ = app_log::append_log_to_path(log_path, level, scope, &message);
 }
 
+// 各年级独立优化负载，全部成功后由调用者一次性写入，避免后一个年级覆盖前一个。
+fn solve_by_grade(
+    tasks: &[TaskBuild],
+    teachers: &[TeacherInfo],
+    rules: &[GenerateExamStaffPlanCustomRule],
+    config: &RuntimeInvigilationConfig,
+    pairs: &HashMap<i64, HashSet<(String, Subject)>>,
+    progress: Option<&StaffAssignmentProgressReporter>,
+) -> CpSatAttempt {
+    let mut merged = SolvedPlan {
+        records: Vec::new(),
+        runtime: HashMap::new(),
+        metrics: PlanMetrics::default(),
+        solver_engine: SolverEngine::CpSat,
+        optimality_status: OptimalityStatus::Optimal,
+        solve_duration_ms: 0,
+        fallback_reason: None,
+    };
+    for grade in ["高一", "高二", "高三"] {
+        let grade_tasks: Vec<_> = tasks
+            .iter()
+            .filter(|task| task.grade_name == grade)
+            .cloned()
+            .collect();
+        if grade_tasks.is_empty() {
+            continue;
+        }
+        let grade_teachers: Vec<_> = teachers
+            .iter()
+            .filter(|teacher| teacher.invigilation_grade_name.as_deref() == Some(grade))
+            .cloned()
+            .collect();
+        let attempt = solve_with_cp_sat(
+            &grade_tasks,
+            &grade_teachers,
+            rules,
+            config,
+            pairs,
+            progress,
+        );
+        let Some(plan) = attempt.plan else {
+            return attempt;
+        };
+        merged.solve_duration_ms += attempt.solve_duration_ms;
+        if plan.optimality_status != OptimalityStatus::Optimal {
+            merged.optimality_status = OptimalityStatus::Feasible;
+        }
+        if plan.fallback_reason.is_some() {
+            merged.fallback_reason = plan.fallback_reason;
+        }
+        merged.records.extend(plan.records);
+        merged.runtime.extend(plan.runtime);
+    }
+    merged.metrics = compute_plan_metrics(teachers, &merged.runtime, &merged.records);
+    CpSatAttempt {
+        solve_duration_ms: merged.solve_duration_ms,
+        fallback_reason: merged.fallback_reason,
+        diagnostic_message: None,
+        plan: Some(merged),
+    }
+}
+
 async fn generate_latest_exam_staff_plan_internal(
     db: &sea_orm::DatabaseConnection,
     invigilation_config: RuntimeInvigilationConfig,
@@ -3451,6 +3537,7 @@ async fn generate_latest_exam_staff_plan_internal(
         );
     }
     let teachers = load_teacher_pool(db).await?;
+    validate_teacher_grade_ownership(&teachers)?;
     let teacher_grade_subject_pairs = load_teacher_grade_subject_pairs(db).await?;
     if let Some(progress) = progress {
         progress.emit_running(
@@ -3498,7 +3585,7 @@ async fn generate_latest_exam_staff_plan_internal(
     let persisted_rules = persisted_rules_from_payload(&custom_rules);
     validate_custom_rules_against_tasks(&persisted_rules, &tasks)?;
 
-    let cp_sat_attempt = solve_with_cp_sat(
+    let cp_sat_attempt = solve_by_grade(
         &tasks,
         &teachers,
         &custom_rules,
@@ -3976,8 +4063,7 @@ async fn build_rule_target_options_from_spaces(
     config: &RuntimeInvigilationConfig,
     teaching_classes: &[TeachingClassRuntime],
 ) -> Result<Vec<InvigilationRuleTargetOption>, AppError> {
-    let active_teaching_classes =
-        teaching_classes_for_sessions(teaching_classes, session_times);
+    let active_teaching_classes = teaching_classes_for_sessions(teaching_classes, session_times);
     let mut seen = HashSet::<(String, String, Option<i64>, String)>::new();
     let mut floor_rover_coverages = Vec::<FloorRoverCoverage>::new();
     let mut target_options = Vec::<InvigilationRuleTargetOption>::new();
@@ -4065,14 +4151,17 @@ async fn build_rule_target_options_from_spaces(
             if !seen.insert(key) {
                 continue;
             }
-            let subtitle = session_labels_by_id.get(session_id).cloned().unwrap_or_else(|| {
-                build_session_label(
-                    &coverage.grade_name,
-                    coverage.subject,
-                    &coverage.start_at,
-                    &coverage.end_at,
-                )
-            });
+            let subtitle = session_labels_by_id
+                .get(session_id)
+                .cloned()
+                .unwrap_or_else(|| {
+                    build_session_label(
+                        &coverage.grade_name,
+                        coverage.subject,
+                        &coverage.start_at,
+                        &coverage.end_at,
+                    )
+                });
             target_options.push(InvigilationRuleTargetOption {
                 id,
                 label: format!("{} 楼层流动", coverage.floor),
@@ -4511,6 +4600,135 @@ mod tests {
         }
     }
 
+    #[test]
+    fn test_sheet_grade_overrides_cross_grade_teaching_assignments() {
+        let teachers = vec![TeacherInfo {
+            invigilation_grade_name: Some("高一".into()),
+            id: 1,
+            name: "匿名教师".into(),
+            subjects: HashSet::from([Subject::Math]),
+            class_names: HashSet::from(["高二4班".into()]),
+            homeroom_classes: HashSet::new(),
+            is_middle_manager: false,
+        }];
+        let mut task = sample_exam_task(Subject::Math);
+        task.grade_name = "高二".into();
+        let rule = GenerateExamStaffPlanCustomRule {
+            action_type: RULE_ACTION_REQUIRE.into(), teacher_id: 1, teacher_name: None,
+            time_scope_type: RULE_TIME_SCOPE_EXAM_SESSION.into(), time_scope_ids: vec![1], time_scope_labels: vec![],
+            task_scope_type: RULE_TASK_SCOPE_EXAM_ROOM.into(), target_scope_type: RULE_TARGET_SCOPE_ALL.into(), target_ids: vec![], target_labels: vec![],
+        };
+        for role in [StaffRole::ExamRoomInvigilator, StaffRole::SelfStudySupervisor, StaffRole::FloorRover] {
+            task.role = role;
+            assert!(build_task_candidate_summary(&task, &teachers, &[rule.clone()], &test_runtime_config(), &HashSet::new(), &HashMap::new()).candidates.is_empty());
+        }
+        task.role = StaffRole::ExamRoomInvigilator;
+        let summary = build_task_candidate_summary(
+            &task,
+            &teachers,
+            &[],
+            &test_runtime_config(),
+            &HashSet::new(),
+            &HashMap::new(),
+        );
+        assert!(summary.candidates.is_empty());
+        task.grade_name = "高一".into();
+        assert_eq!(
+            build_task_candidate_summary(
+                &task,
+                &teachers,
+                &[],
+                &test_runtime_config(),
+                &HashSet::new(),
+                &HashMap::new()
+            )
+            .candidates
+            .len(),
+            1
+        );
+    }
+
+    #[test]
+    fn test_floor_rover_merge_stays_inside_grade() {
+        let first = SessionTimeRuntime {
+            session_id: 1,
+            grade_name: "高一".into(),
+            subject: Subject::Math,
+            start_at: "2026-11-18T08:00".into(),
+            end_at: "2026-11-18T10:00".into(),
+            start_ts: 100,
+            end_ts: 200,
+        };
+        let second = SessionTimeRuntime {
+            session_id: 2,
+            grade_name: "高二".into(),
+            ..first.clone()
+        };
+        let coverages = merge_floor_rover_coverages(vec![
+            floor_rover_coverage(&first, "一楼".into()),
+            floor_rover_coverage(&second, "一楼".into()),
+        ]);
+        assert_eq!(coverages.len(), 2);
+        assert!(coverages
+            .iter()
+            .all(|coverage| coverage.session_ids.len() == 1));
+    }
+
+    #[test]
+    fn test_missing_teacher_grade_preserves_previous_staff_snapshot() {
+        use sea_orm::EntityTrait;
+        let db = setup_build_staff_tasks_test_db();
+        tauri::async_runtime::block_on(async {
+            crate::entity::latest_teachers_v2::ActiveModel {
+                teacher_name: Set("旧教师".into()),
+                is_middle_manager: Set(0),
+                ..Default::default()
+            }
+            .insert(&db)
+            .await
+            .unwrap();
+            // 用一条已保存的任务验证失败前不会清理旧快照。
+            crate::entity::latest_exam_staff_tasks::ActiveModel {
+                id: Set(77),
+                session_id: Set(None),
+                space_id: Set(None),
+                task_source: Set("full_self_study".into()),
+                role: Set("self_study_supervisor".into()),
+                grade_name: Set("高一".into()),
+                subject: Set("数学".into()),
+                space_name: Set("高一1班".into()),
+                floor: Set("一楼".into()),
+                start_at: Set("2026-11-18T08:00".into()),
+                end_at: Set("2026-11-18T10:00".into()),
+                duration_minutes: Set(120),
+                priority_self_study_chain_json: Set("[]".into()),
+                status: Set("assigned".into()),
+                allowance_amount: Set(0.0),
+                ..Default::default()
+            }
+            .insert(&db)
+            .await
+            .unwrap();
+            let error = generate_latest_exam_staff_plan_internal(
+                &db,
+                test_runtime_config(),
+                vec![],
+                None,
+                None,
+            )
+            .await
+            .unwrap_err();
+            assert!(error.to_string().contains("请重新导入教师表以补齐监考年级"));
+            assert!(
+                crate::entity::latest_exam_staff_tasks::Entity::find_by_id(77)
+                    .one(&db)
+                    .await
+                    .unwrap()
+                    .is_some()
+            );
+        });
+    }
+
     fn build_test_teacher_grade_subject_pairs(
         teachers: &[TeacherInfo],
     ) -> HashMap<i64, HashSet<(String, Subject)>> {
@@ -4642,9 +4860,9 @@ mod tests {
             },
             task_source,
             role: StaffRole::SelfStudySupervisor,
-            grade_name: "高二".to_string(),
+            grade_name: "高一".to_string(),
             subject: Subject::Biology,
-            space_name: "高二3班".to_string(),
+            space_name: "高一3班".to_string(),
             floor: "4层".to_string(),
             start_at: "2026-03-24T08:00".to_string(),
             end_at: "2026-03-24T10:00".to_string(),
@@ -4804,21 +5022,19 @@ mod tests {
             .filter(|task| task.role == StaffRole::FloorRover)
             .collect::<Vec<_>>();
 
-        assert_eq!(floor_rovers.len(), 1);
+        assert_eq!(floor_rovers.len(), 2);
         assert_eq!(floor_rovers[0].floor, "3层");
         assert_eq!(
             floor_rovers[0].subject_avoidance_subjects,
-            vec![Subject::Chemistry, Subject::History]
+            vec![Subject::Chemistry]
         );
 
-        let target_options = tauri::async_runtime::block_on(
-            build_rule_target_options_from_spaces(
-                &db,
-                &session_times,
-                &test_runtime_config(),
-                &[],
-            ),
-        )
+        let target_options = tauri::async_runtime::block_on(build_rule_target_options_from_spaces(
+            &db,
+            &session_times,
+            &test_runtime_config(),
+            &[],
+        ))
         .expect("rule targets should build");
         let floor_targets = target_options
             .iter()
@@ -4846,7 +5062,7 @@ mod tests {
         insert_test_plan_session(&db, 301, Subject::Physics);
         insert_test_plan_session(&db, 302, Subject::History);
         insert_test_plan_space(&db, 21, 301, "高一物理考场", "3层", 1);
-        insert_test_plan_space(&db, 22, 302, "高二历史考场", "3层", 1);
+        insert_test_plan_space(&db, 22, 302, "高一历史考场", "3层", 1);
 
         let session_times = vec![
             SessionTimeRuntime {
@@ -4860,7 +5076,7 @@ mod tests {
             },
             SessionTimeRuntime {
                 session_id: 302,
-                grade_name: "高二".to_string(),
+                grade_name: "高一".to_string(),
                 subject: Subject::History,
                 start_at: "2026-03-24T14:10".to_string(),
                 end_at: "2026-03-24T16:00".to_string(),
@@ -4892,14 +5108,12 @@ mod tests {
             vec![Subject::Physics, Subject::History]
         );
 
-        let target_options = tauri::async_runtime::block_on(
-            build_rule_target_options_from_spaces(
-                &db,
-                &session_times,
-                &test_runtime_config(),
-                &[],
-            ),
-        )
+        let target_options = tauri::async_runtime::block_on(build_rule_target_options_from_spaces(
+            &db,
+            &session_times,
+            &test_runtime_config(),
+            &[],
+        ))
         .expect("overlapping rule targets should build");
         let floor_targets = target_options
             .iter()
@@ -4925,6 +5139,7 @@ mod tests {
     fn test_floor_rover_candidates_avoid_all_subjects_in_foreign_group() {
         let teachers = vec![
             TeacherInfo {
+                invigilation_grade_name: Some("高一".to_string()),
                 id: 1,
                 name: "英语老师".to_string(),
                 subjects: HashSet::from([Subject::English]),
@@ -4933,6 +5148,7 @@ mod tests {
                 is_middle_manager: false,
             },
             TeacherInfo {
+                invigilation_grade_name: Some("高一".to_string()),
                 id: 2,
                 name: "俄语老师".to_string(),
                 subjects: HashSet::from([Subject::Russian]),
@@ -4941,6 +5157,7 @@ mod tests {
                 is_middle_manager: false,
             },
             TeacherInfo {
+                invigilation_grade_name: Some("高一".to_string()),
                 id: 3,
                 name: "历史老师".to_string(),
                 subjects: HashSet::from([Subject::History]),
@@ -4954,7 +5171,7 @@ mod tests {
             space_id: None,
             task_source: StaffTaskSource::Exam,
             role: StaffRole::FloorRover,
-            grade_name: "高二".to_string(),
+            grade_name: "高一".to_string(),
             subject: Subject::English,
             space_name: "3层 楼层流动".to_string(),
             floor: "3层".to_string(),
@@ -4989,6 +5206,7 @@ mod tests {
     fn test_candidate_summary_exam_room_subject_conflict() {
         let teachers = vec![
             TeacherInfo {
+                invigilation_grade_name: Some("高一".to_string()),
                 id: 1,
                 name: "数学老师".to_string(),
                 subjects: HashSet::from([Subject::Math]),
@@ -4997,6 +5215,7 @@ mod tests {
                 is_middle_manager: false,
             },
             TeacherInfo {
+                invigilation_grade_name: Some("高一".to_string()),
                 id: 2,
                 name: "语文老师".to_string(),
                 subjects: HashSet::from([Subject::Chinese]),
@@ -5019,14 +5238,15 @@ mod tests {
                 .iter()
                 .map(|item| item.teacher_id)
                 .collect::<Vec<_>>(),
-            vec![2]
+            vec![1, 2]
         );
     }
 
     #[test]
-    fn test_candidate_summary_blocks_teachers_for_all_grade_subjects_in_same_slot() {
+    fn test_candidate_summary_uses_sheet_grade_and_allows_own_subject() {
         let teachers = vec![
             TeacherInfo {
+                invigilation_grade_name: Some("高二".to_string()),
                 id: 1,
                 name: "高二数学老师".to_string(),
                 subjects: HashSet::from([Subject::Math]),
@@ -5035,6 +5255,7 @@ mod tests {
                 is_middle_manager: false,
             },
             TeacherInfo {
+                invigilation_grade_name: Some("高一".to_string()),
                 id: 2,
                 name: "高一英语老师".to_string(),
                 subjects: HashSet::from([Subject::English]),
@@ -5043,10 +5264,11 @@ mod tests {
                 is_middle_manager: false,
             },
             TeacherInfo {
+                invigilation_grade_name: Some("高二".to_string()),
                 id: 3,
                 name: "高二历史老师".to_string(),
                 subjects: HashSet::from([Subject::History]),
-                class_names: HashSet::from(["高二3班".to_string()]),
+                class_names: HashSet::from(["高一3班".to_string()]),
                 homeroom_classes: HashSet::new(),
                 is_middle_manager: false,
             },
@@ -5072,7 +5294,7 @@ mod tests {
                 .iter()
                 .map(|item| item.teacher_id)
                 .collect::<Vec<_>>(),
-            vec![3]
+            vec![2]
         );
     }
 
@@ -5080,6 +5302,7 @@ mod tests {
     fn test_candidate_summary_blocks_teachers_for_cross_grade_slot_english_math() {
         let teachers = vec![
             TeacherInfo {
+                invigilation_grade_name: Some("高一".to_string()),
                 id: 1,
                 name: "高一英语老师".to_string(),
                 subjects: HashSet::from([Subject::English]),
@@ -5088,6 +5311,7 @@ mod tests {
                 is_middle_manager: false,
             },
             TeacherInfo {
+                invigilation_grade_name: Some("高二".to_string()),
                 id: 2,
                 name: "高二数学老师".to_string(),
                 subjects: HashSet::from([Subject::Math]),
@@ -5096,6 +5320,7 @@ mod tests {
                 is_middle_manager: false,
             },
             TeacherInfo {
+                invigilation_grade_name: Some("高一".to_string()),
                 id: 3,
                 name: "高一历史老师".to_string(),
                 subjects: HashSet::from([Subject::History]),
@@ -5120,11 +5345,11 @@ mod tests {
             &teacher_grade_subject_pairs,
         );
         assert!(
-            !summary_english_exam
+            summary_english_exam
                 .candidates
                 .iter()
                 .any(|c| c.teacher_id == 1),
-            "高一英语老师不应出现在高一英语考试监考候选中"
+            "高一英语老师可以监考本年级英语考试"
         );
         assert!(
             !summary_english_exam
@@ -5146,6 +5371,7 @@ mod tests {
     fn test_candidate_summary_blocks_teachers_for_cross_grade_slot_math_english() {
         let teachers = vec![
             TeacherInfo {
+                invigilation_grade_name: Some("高一".to_string()),
                 id: 1,
                 name: "高一数学老师".to_string(),
                 subjects: HashSet::from([Subject::Math]),
@@ -5154,6 +5380,7 @@ mod tests {
                 is_middle_manager: false,
             },
             TeacherInfo {
+                invigilation_grade_name: Some("高二".to_string()),
                 id: 2,
                 name: "高二英语老师".to_string(),
                 subjects: HashSet::from([Subject::English]),
@@ -5162,10 +5389,11 @@ mod tests {
                 is_middle_manager: false,
             },
             TeacherInfo {
+                invigilation_grade_name: Some("高二".to_string()),
                 id: 3,
                 name: "高二物理老师".to_string(),
                 subjects: HashSet::from([Subject::Physics]),
-                class_names: HashSet::from(["高二3班".to_string()]),
+                class_names: HashSet::from(["高一3班".to_string()]),
                 homeroom_classes: HashSet::new(),
                 is_middle_manager: false,
             },
@@ -5188,11 +5416,11 @@ mod tests {
             &teacher_grade_subject_pairs,
         );
         assert!(
-            !summary_math_exam
+            summary_math_exam
                 .candidates
                 .iter()
                 .any(|c| c.teacher_id == 1),
-            "高一数学老师不应出现在高一数学考试监考候选中"
+            "高一数学老师可以监考本年级数学考试"
         );
         assert!(
             !summary_math_exam
@@ -5202,11 +5430,11 @@ mod tests {
             "高二英语老师不应出现在高一数学考试监考候选中（同场有高二英语考试）"
         );
         assert!(
-            summary_math_exam
+            !summary_math_exam
                 .candidates
                 .iter()
                 .any(|c| c.teacher_id == 3),
-            "高二物理老师应该可以监考高一数学考试"
+            "高二归属的物理老师不能监考高一数学考试"
         );
     }
 
@@ -5214,6 +5442,7 @@ mod tests {
     fn test_candidate_summary_blocks_teachers_for_same_slot_geography() {
         let teachers = vec![
             TeacherInfo {
+                invigilation_grade_name: Some("高一".to_string()),
                 id: 1,
                 name: "高一地理老师".to_string(),
                 subjects: HashSet::from([Subject::Geography]),
@@ -5222,6 +5451,7 @@ mod tests {
                 is_middle_manager: false,
             },
             TeacherInfo {
+                invigilation_grade_name: Some("高二".to_string()),
                 id: 2,
                 name: "高二地理老师".to_string(),
                 subjects: HashSet::from([Subject::Geography]),
@@ -5230,6 +5460,7 @@ mod tests {
                 is_middle_manager: false,
             },
             TeacherInfo {
+                invigilation_grade_name: Some("高一".to_string()),
                 id: 3,
                 name: "高一历史老师".to_string(),
                 subjects: HashSet::from([Subject::History]),
@@ -5256,11 +5487,11 @@ mod tests {
             &teacher_grade_subject_pairs,
         );
         assert!(
-            !summary_geo_exam
+            summary_geo_exam
                 .candidates
                 .iter()
                 .any(|c| c.teacher_id == 1),
-            "高一地理老师不应出现在高一地理考试监考候选中"
+            "高一地理老师可以监考本年级地理考试"
         );
         assert!(
             !summary_geo_exam
@@ -5282,22 +5513,25 @@ mod tests {
     fn test_candidate_summary_self_study_tier_order() {
         let teachers = vec![
             TeacherInfo {
+                invigilation_grade_name: Some("高一".to_string()),
                 id: 1,
                 name: "物理老师".to_string(),
                 subjects: HashSet::from([Subject::Physics]),
-                class_names: HashSet::from(["高二3班".to_string()]),
+                class_names: HashSet::from(["高一3班".to_string()]),
                 homeroom_classes: HashSet::new(),
                 is_middle_manager: false,
             },
             TeacherInfo {
+                invigilation_grade_name: Some("高一".to_string()),
                 id: 2,
                 name: "班主任".to_string(),
                 subjects: HashSet::from([Subject::Chinese]),
                 class_names: HashSet::new(),
-                homeroom_classes: HashSet::from(["高二3班".to_string()]),
+                homeroom_classes: HashSet::from(["高一3班".to_string()]),
                 is_middle_manager: false,
             },
             TeacherInfo {
+                invigilation_grade_name: Some("高一".to_string()),
                 id: 3,
                 name: "通用老师".to_string(),
                 subjects: HashSet::from([Subject::History]),
@@ -5332,6 +5566,7 @@ mod tests {
     fn test_self_study_blocks_teachers_for_slot_forbidden_grade_subjects() {
         let teachers = vec![
             TeacherInfo {
+                invigilation_grade_name: Some("高一".to_string()),
                 id: 1,
                 name: "高一英语老师".to_string(),
                 subjects: HashSet::from([Subject::English]),
@@ -5340,6 +5575,7 @@ mod tests {
                 is_middle_manager: false,
             },
             TeacherInfo {
+                invigilation_grade_name: Some("高二".to_string()),
                 id: 2,
                 name: "高二数学老师".to_string(),
                 subjects: HashSet::from([Subject::Math]),
@@ -5348,6 +5584,7 @@ mod tests {
                 is_middle_manager: false,
             },
             TeacherInfo {
+                invigilation_grade_name: Some("高一".to_string()),
                 id: 3,
                 name: "高一历史老师".to_string(),
                 subjects: HashSet::from([Subject::History]),
@@ -5390,6 +5627,7 @@ mod tests {
     fn test_floor_rover_blocks_teachers_for_slot_forbidden_grade_subjects() {
         let teachers = vec![
             TeacherInfo {
+                invigilation_grade_name: Some("高一".to_string()),
                 id: 1,
                 name: "高一英语老师".to_string(),
                 subjects: HashSet::from([Subject::English]),
@@ -5398,6 +5636,7 @@ mod tests {
                 is_middle_manager: false,
             },
             TeacherInfo {
+                invigilation_grade_name: Some("高二".to_string()),
                 id: 2,
                 name: "高二数学老师".to_string(),
                 subjects: HashSet::from([Subject::Math]),
@@ -5406,6 +5645,7 @@ mod tests {
                 is_middle_manager: false,
             },
             TeacherInfo {
+                invigilation_grade_name: Some("高一".to_string()),
                 id: 3,
                 name: "高一历史老师".to_string(),
                 subjects: HashSet::from([Subject::History]),
@@ -5492,8 +5732,8 @@ mod tests {
             half_day: HalfDay::Afternoon,
             rule_target_id: "floor:301:3层".to_string(),
         };
-        let rule = |time_scope_ids: Vec<i64>, target_ids: Vec<String>| {
-            GenerateExamStaffPlanCustomRule {
+        let rule =
+            |time_scope_ids: Vec<i64>, target_ids: Vec<String>| GenerateExamStaffPlanCustomRule {
                 action_type: RULE_ACTION_REQUIRE.to_string(),
                 teacher_id: 9,
                 teacher_name: Some("指定老师".to_string()),
@@ -5504,8 +5744,7 @@ mod tests {
                 target_scope_type: RULE_TARGET_SCOPE_SELECTED.to_string(),
                 target_ids,
                 target_labels: Vec::new(),
-            }
-        };
+            };
 
         // 针对被覆盖场次 302 的时段 + 目标：应命中
         assert!(task_matches_custom_rule(
@@ -5520,10 +5759,7 @@ mod tests {
         // 目标范围为全部（ALL）：应命中
         let mut all_scope_rule = rule(vec![302], Vec::new());
         all_scope_rule.target_scope_type = RULE_TARGET_SCOPE_ALL.to_string();
-        assert!(task_matches_custom_rule(
-            &floor_rover_task,
-            &all_scope_rule
-        ));
+        assert!(task_matches_custom_rule(&floor_rover_task, &all_scope_rule));
         // 时段不在覆盖范围内：不应命中
         assert!(!task_matches_custom_rule(
             &floor_rover_task,
@@ -5544,6 +5780,7 @@ mod tests {
         // 但"师生同考"禁排按重叠时段并集仍然要排除他。
         let teachers = vec![
             TeacherInfo {
+                invigilation_grade_name: Some("高二".to_string()),
                 id: 1,
                 name: "高二地理老师".to_string(),
                 subjects: HashSet::from([Subject::Geography]),
@@ -5552,6 +5789,7 @@ mod tests {
                 is_middle_manager: false,
             },
             TeacherInfo {
+                invigilation_grade_name: Some("高一".to_string()),
                 id: 2,
                 name: "通用老师甲".to_string(),
                 subjects: HashSet::from([Subject::Chinese]),
@@ -5560,6 +5798,7 @@ mod tests {
                 is_middle_manager: false,
             },
             TeacherInfo {
+                invigilation_grade_name: Some("高一".to_string()),
                 id: 3,
                 name: "通用老师乙".to_string(),
                 subjects: HashSet::from([Subject::Chinese]),
@@ -5568,6 +5807,7 @@ mod tests {
                 is_middle_manager: false,
             },
             TeacherInfo {
+                invigilation_grade_name: Some("高一".to_string()),
                 id: 4,
                 name: "通用老师丙".to_string(),
                 subjects: HashSet::from([Subject::Chinese]),
@@ -5690,11 +5930,12 @@ mod tests {
     #[test]
     fn test_candidate_summary_respects_middle_manager_and_full_self_study_rules() {
         let middle_manager = vec![TeacherInfo {
+            invigilation_grade_name: Some("高一".to_string()),
             id: 1,
             name: "中层老师".to_string(),
             subjects: HashSet::from([Subject::Physics]),
-            class_names: HashSet::from(["高二3班".to_string()]),
-            homeroom_classes: HashSet::from(["高二3班".to_string()]),
+            class_names: HashSet::from(["高一3班".to_string()]),
+            homeroom_classes: HashSet::from(["高一3班".to_string()]),
             is_middle_manager: true,
         }];
         let summary = build_task_candidate_summary(
@@ -5734,6 +5975,7 @@ mod tests {
     #[test]
     fn test_candidate_summary_uses_fallback_pool_and_full_self_study_ignores_exam_exclusion() {
         let teachers = vec![TeacherInfo {
+            invigilation_grade_name: Some("高一".to_string()),
             id: 9,
             name: "通用老师".to_string(),
             subjects: HashSet::from([Subject::Chinese]),
@@ -5769,6 +6011,7 @@ mod tests {
     #[test]
     fn test_exam_exclusion_only_blocks_exam_room_not_self_study_or_floor_rover() {
         let teachers = vec![TeacherInfo {
+            invigilation_grade_name: Some("高一".to_string()),
             id: 11,
             name: "可排老师".to_string(),
             subjects: HashSet::from([Subject::Chinese]),
@@ -5831,26 +6074,29 @@ mod tests {
     fn test_candidate_summary_supports_foreign_group_and_free_study_topics() {
         let teachers = vec![
             TeacherInfo {
+                invigilation_grade_name: Some("高一".to_string()),
                 id: 1,
                 name: "英语老师".to_string(),
                 subjects: HashSet::from([Subject::English]),
-                class_names: HashSet::from(["高二3班".to_string()]),
+                class_names: HashSet::from(["高一3班".to_string()]),
                 homeroom_classes: HashSet::new(),
                 is_middle_manager: false,
             },
             TeacherInfo {
+                invigilation_grade_name: Some("高一".to_string()),
                 id: 2,
                 name: "俄语老师".to_string(),
                 subjects: HashSet::from([Subject::Russian]),
-                class_names: HashSet::from(["高二3班".to_string()]),
+                class_names: HashSet::from(["高一3班".to_string()]),
                 homeroom_classes: HashSet::new(),
                 is_middle_manager: false,
             },
             TeacherInfo {
+                invigilation_grade_name: Some("高一".to_string()),
                 id: 3,
                 name: "历史老师".to_string(),
                 subjects: HashSet::from([Subject::History]),
-                class_names: HashSet::from(["高二3班".to_string()]),
+                class_names: HashSet::from(["高一3班".to_string()]),
                 homeroom_classes: HashSet::new(),
                 is_middle_manager: false,
             },
@@ -5926,14 +6172,16 @@ mod tests {
     fn test_cp_sat_reduces_fallback_pool_in_direct_mode() {
         let teachers = vec![
             TeacherInfo {
+                invigilation_grade_name: Some("高一".to_string()),
                 id: 1,
                 name: "英语老师".to_string(),
                 subjects: HashSet::from([Subject::English]),
-                class_names: HashSet::from(["高二1班".to_string()]),
+                class_names: HashSet::from(["高一1班".to_string()]),
                 homeroom_classes: HashSet::new(),
                 is_middle_manager: false,
             },
             TeacherInfo {
+                invigilation_grade_name: Some("高一".to_string()),
                 id: 2,
                 name: "通用老师".to_string(),
                 subjects: HashSet::from([Subject::Chinese]),
@@ -5948,9 +6196,9 @@ mod tests {
                 space_id: Some(1),
                 task_source: StaffTaskSource::Exam,
                 role: StaffRole::ExamRoomInvigilator,
-                grade_name: "高二".to_string(),
+                grade_name: "高一".to_string(),
                 subject: Subject::Math,
-                space_name: "高二1场".to_string(),
+                space_name: "高一1场".to_string(),
                 floor: "4层".to_string(),
                 start_at: "2026-03-24T08:00".to_string(),
                 end_at: "2026-03-24T10:00".to_string(),
@@ -5970,9 +6218,9 @@ mod tests {
                 space_id: Some(2),
                 task_source: StaffTaskSource::ExamLinkedSelfStudy,
                 role: StaffRole::SelfStudySupervisor,
-                grade_name: "高二".to_string(),
+                grade_name: "高一".to_string(),
                 subject: Subject::Biology,
-                space_name: "高二1班".to_string(),
+                space_name: "高一1班".to_string(),
                 floor: "4层".to_string(),
                 start_at: "2026-03-24T08:00".to_string(),
                 end_at: "2026-03-24T10:00".to_string(),
@@ -6008,6 +6256,7 @@ mod tests {
     fn test_cp_sat_balances_total_and_task_type_minutes() {
         let teachers = vec![
             TeacherInfo {
+                invigilation_grade_name: Some("高一".to_string()),
                 id: 1,
                 name: "老师甲".to_string(),
                 subjects: HashSet::from([Subject::Chinese]),
@@ -6016,6 +6265,7 @@ mod tests {
                 is_middle_manager: false,
             },
             TeacherInfo {
+                invigilation_grade_name: Some("高一".to_string()),
                 id: 2,
                 name: "老师乙".to_string(),
                 subjects: HashSet::from([Subject::Chinese]),
@@ -6030,9 +6280,9 @@ mod tests {
                 space_id: Some(1),
                 task_source: StaffTaskSource::Exam,
                 role: StaffRole::ExamRoomInvigilator,
-                grade_name: "高二".to_string(),
+                grade_name: "高一".to_string(),
                 subject: Subject::Math,
-                space_name: "高二1场".to_string(),
+                space_name: "高一1场".to_string(),
                 floor: "4层".to_string(),
                 start_at: "2026-03-24T08:00".to_string(),
                 end_at: "2026-03-24T09:00".to_string(),
@@ -6052,9 +6302,9 @@ mod tests {
                 space_id: Some(2),
                 task_source: StaffTaskSource::ExamLinkedSelfStudy,
                 role: StaffRole::SelfStudySupervisor,
-                grade_name: "高二".to_string(),
+                grade_name: "高一".to_string(),
                 subject: Subject::Biology,
-                space_name: "高二1班".to_string(),
+                space_name: "高一1班".to_string(),
                 floor: "4层".to_string(),
                 start_at: "2026-03-24T09:00".to_string(),
                 end_at: "2026-03-24T10:00".to_string(),
@@ -6074,7 +6324,7 @@ mod tests {
                 space_id: Some(3),
                 task_source: StaffTaskSource::Exam,
                 role: StaffRole::FloorRover,
-                grade_name: "高二".to_string(),
+                grade_name: "高一".to_string(),
                 subject: Subject::Physics,
                 space_name: "4层 楼层流动".to_string(),
                 floor: "4层".to_string(),
@@ -6096,9 +6346,9 @@ mod tests {
                 space_id: Some(4),
                 task_source: StaffTaskSource::FullSelfStudy,
                 role: StaffRole::SelfStudySupervisor,
-                grade_name: "高二".to_string(),
+                grade_name: "高一".to_string(),
                 subject: Subject::English,
-                space_name: "高二2班".to_string(),
+                space_name: "高一2班".to_string(),
                 floor: "4层".to_string(),
                 start_at: "2026-03-24T11:00".to_string(),
                 end_at: "2026-03-24T12:00".to_string(),
@@ -6136,6 +6386,7 @@ mod tests {
     #[test]
     fn test_cp_sat_prioritizes_exam_room_over_floor_rover_when_teachers_are_insufficient() {
         let teachers = vec![TeacherInfo {
+            invigilation_grade_name: Some("高一".to_string()),
             id: 1,
             name: "老师甲".to_string(),
             subjects: HashSet::from([Subject::Chinese]),
@@ -6149,9 +6400,9 @@ mod tests {
                 space_id: Some(1),
                 task_source: StaffTaskSource::Exam,
                 role: StaffRole::ExamRoomInvigilator,
-                grade_name: "高二".to_string(),
+                grade_name: "高一".to_string(),
                 subject: Subject::Math,
-                space_name: "高二1场".to_string(),
+                space_name: "高一1场".to_string(),
                 floor: "4层".to_string(),
                 start_at: "2026-03-24T08:00".to_string(),
                 end_at: "2026-03-24T10:00".to_string(),
@@ -6171,7 +6422,7 @@ mod tests {
                 space_id: None,
                 task_source: StaffTaskSource::Exam,
                 role: StaffRole::FloorRover,
-                grade_name: "高二".to_string(),
+                grade_name: "高一".to_string(),
                 subject: Subject::Math,
                 space_name: "4层 楼层流动".to_string(),
                 floor: "4层".to_string(),

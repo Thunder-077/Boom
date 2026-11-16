@@ -38,6 +38,7 @@ pub struct SessionSubjectRow {
 
 #[derive(Debug, Clone)]
 pub struct TeacherRow {
+    pub invigilation_grade_name: Option<String>,
     pub id: i64,
     pub name: String,
     pub is_middle_manager: bool,
@@ -398,6 +399,7 @@ pub async fn load_teacher_rows(db: &DatabaseConnection) -> Result<Vec<TeacherRow
     Ok(rows
         .into_iter()
         .map(|row| TeacherRow {
+            invigilation_grade_name: row.invigilation_grade_name,
             id: row.id as i64,
             name: row.teacher_name,
             is_middle_manager: row.is_middle_manager == 1,

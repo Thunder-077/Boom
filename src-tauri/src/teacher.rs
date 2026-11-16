@@ -94,6 +94,7 @@ pub struct TeacherSummary {
 #[serde(rename_all = "camelCase")]
 pub struct TeacherRow {
     pub(crate) id: i64,
+    pub(crate) invigilation_grade_name: Option<String>,
     pub(crate) teacher_name: String,
     pub(crate) subjects: Vec<TeacherSubject>,
     pub(crate) class_names: Vec<String>,

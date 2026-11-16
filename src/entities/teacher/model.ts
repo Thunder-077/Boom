@@ -39,6 +39,7 @@ export const TEACHER_SUBJECT_LABELS: Record<TeacherSubject, string> = {
 
 export interface TeacherRow {
   id: number;
+  invigilationGradeName?: string | null;
   teacherName: string;
   subjects: TeacherSubject[];
   classNames: string[];
