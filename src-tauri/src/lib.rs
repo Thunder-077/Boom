@@ -9,6 +9,8 @@ mod exam_plan;
 mod exam_staff;
 mod export_bundle;
 mod export_batch;
+#[cfg(test)]
+mod multi_grade_tests;
 mod export_invigilation;
 mod invigilation;
 mod score;

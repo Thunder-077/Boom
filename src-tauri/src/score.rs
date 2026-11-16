@@ -560,12 +560,12 @@ fn parse_score_sheet(
 }
 
 #[cfg(test)]
-mod multi_sheet_tests {
+pub(crate) mod multi_sheet_tests {
     use super::*;
     use rust_xlsxwriter::Workbook;
     use std::path::PathBuf;
 
-    fn fixture(kind: &str) -> PathBuf {
+    pub(crate) fn fixture(kind: &str) -> PathBuf {
         let path = std::env::temp_dir().join(format!(
             "boom-score-{kind}-{}.xlsx",
             std::time::SystemTime::now()
@@ -604,6 +604,11 @@ mod multi_sheet_tests {
                 } else {
                     String::new()
                 });
+                if kind == "pipeline" && g == 3 && i == 1 {
+                    values[4] = "俄语".into();
+                    values[7] = String::new();
+                    values[14] = "10".into();
+                }
                 if kind == "duplicate" && g == 3 && i == 0 {
                     values[0] = "g1-0".into();
                 }

@@ -3991,6 +3991,16 @@ pub async fn generate_latest_exam_staff_plan(
     }
 }
 
+#[cfg(test)]
+pub(crate) async fn generate_staff_plan_for_test(
+    db: &sea_orm::DatabaseConnection,
+    root: &Path,
+) -> Result<GenerateLatestExamStaffPlanResult, AppError> {
+    let mut config = load_runtime_invigilation_config(db).await?;
+    config.default_exam_room_required_count = 2;
+    generate_latest_exam_staff_plan_internal(db, config, vec![], None, None, Some(root)).await
+}
+
 pub async fn list_invigilation_exclusion_session_options(
     app: AppHandle,
 ) -> Result<Vec<InvigilationExclusionSessionOption>, String> {

@@ -1542,6 +1542,44 @@ fn build_session_draft(
     })
 }
 
+#[cfg(test)]
+pub(crate) fn build_subject_draft_for_test(
+    db: &DatabaseConnection,
+    grade: &str,
+    subject: Subject,
+    draft: &mut crate::exam_plan_snapshot::ExamPlanDraft,
+    capacity: i64,
+) -> Result<(), AppError> {
+    let contexts = load_grade_contexts(db)?;
+    let context = contexts
+        .get(grade)
+        .ok_or_else(|| AppError::new("年级缺少配置"))?;
+    let start = parse_schedule_timestamp("2026-11-18T08:00").unwrap();
+    let end = parse_schedule_timestamp("2026-11-18T10:00").unwrap();
+    let schedule = vec![SelfStudyScheduleSession {
+        subject,
+        start_ts: start,
+        order_key: 0,
+        is_foreign_group: is_foreign_subject(subject),
+    }];
+    let id = draft.sessions.len() as i64 + 1;
+    build_session_draft(
+        db,
+        draft,
+        grade,
+        subject,
+        context,
+        &schedule,
+        start,
+        capacity,
+        capacity,
+        &mut HashSet::new(),
+        &mut HashSet::new(),
+    )?;
+    draft.windows.insert(id, (start, end));
+    crate::exam_plan_snapshot::validate_exam_plan_draft(draft)
+}
+
 fn update_exam_generation_progress(
     db: &DatabaseConnection,
     status: &str,
