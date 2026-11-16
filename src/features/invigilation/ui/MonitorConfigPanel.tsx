@@ -1279,7 +1279,9 @@ export default function MonitorConfigPanel() {
       const fallbackPart = result.fallbackPoolAssignments > 0 ? `，其他老师补位 ${result.fallbackPoolAssignments} 项` : "";
       const mainMessage = `${summary}：已分配 ${result.assignedCount} 项，未分配 ${result.unassignedCount} 项，${optimality}，耗时 ${formatSolveDuration(result.solveDurationMs)}${fallbackPart}。`;
       const unassignedPart = result.unassignedDetails.length > 0 ? `\n未分配的任务：${result.unassignedDetails.join("、")}。` : "";
-      await showAssignmentNoticeMessage(result.unassignedCount > 0 ? "warning" : "success", `${mainMessage}${unassignedPart}`);
+      const publicationWarnings = result.publicationWarnings ?? [];
+      const cleanupPart = publicationWarnings.length ? `\n${publicationWarnings.join("；")}` : "";
+      await showAssignmentNoticeMessage(result.unassignedCount > 0 || publicationWarnings.length > 0 ? "warning" : "success", `${mainMessage}${unassignedPart}${cleanupPart}`);
     } catch (error) {
       setAssignmentProgress(null);
       const message = state.errorMessage || (error instanceof Error ? error.message : String(error)) || "分配失败，请检查配置后重试。";
@@ -1290,7 +1292,8 @@ export default function MonitorConfigPanel() {
   async function handleExportInvigilationSchedule() {
     try {
       const result = await exportLatestInvigilationSchedule();
-      await showAssignmentNoticeMessage("success", `已导出 ${result.files.length} 个年级的监考表，点击打开目录。`, {
+      const warnings = result.publicationWarnings ?? [];
+      await showAssignmentNoticeMessage(warnings.length ? "warning" : "success", `已导出 ${result.files.length} 个年级的监考表，点击打开目录。${warnings.length ? `\n${warnings.join("；")}` : ""}`, {
         linkPath: result.folderPath,
         linkLabel: exportFileName(result.folderPath),
       });

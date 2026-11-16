@@ -307,6 +307,7 @@ pub struct ListExamSessionTimesParams {
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct GenerateLatestExamStaffPlanResult {
+    publication_warnings: Vec<String>,
     generated_at: String,
     task_count: i64,
     assigned_count: i64,
@@ -2657,8 +2658,29 @@ fn build_cp_sat_plan_from_response(
     }
 }
 
+#[cfg(test)]
 fn solve_with_cp_sat(
     tasks: &[TaskBuild],
+    teachers: &[TeacherInfo],
+    custom_rules: &[GenerateExamStaffPlanCustomRule],
+    invigilation_config: &RuntimeInvigilationConfig,
+    teacher_grade_subject_pairs: &HashMap<i64, HashSet<(String, Subject)>>,
+    progress: Option<&StaffAssignmentProgressReporter>,
+) -> CpSatAttempt {
+    solve_with_cp_sat_context(
+        tasks,
+        tasks,
+        teachers,
+        custom_rules,
+        invigilation_config,
+        teacher_grade_subject_pairs,
+        progress,
+    )
+}
+
+fn solve_with_cp_sat_context(
+    tasks: &[TaskBuild],
+    all_tasks: &[TaskBuild],
     teachers: &[TeacherInfo],
     custom_rules: &[GenerateExamStaffPlanCustomRule],
     invigilation_config: &RuntimeInvigilationConfig,
@@ -2668,7 +2690,7 @@ fn solve_with_cp_sat(
     let started_at = Instant::now();
     let mut forbidden_grade_subjects_by_slot =
         HashMap::<(i64, i64), HashSet<(String, Subject)>>::new();
-    for task in tasks {
+    for task in all_tasks {
         // “师生同考”禁排只对考试时段生效：同一时段内出现的全部(年级,科目)都应回避。
         // 楼层流动任务的时间是跨场次合并区间，其场次的(年级,科目)
         // 已由对应考场/自习任务在各场次时段键下贡献，这里跳过避免污染时段键。
@@ -3308,12 +3330,12 @@ async fn persist_solved_plan<C: sea_orm::ConnectionTrait>(
     session_count: i64,
     teachers: &[TeacherInfo],
     plan: &SolvedPlan,
+    generated_at: String,
 ) -> Result<GenerateLatestExamStaffPlanResult, AppError> {
     let teacher_by_id: HashMap<i64, &TeacherInfo> = teachers
         .iter()
         .map(|teacher| (teacher.id, teacher))
         .collect();
-    let generated_at = Utc::now().to_rfc3339();
     let mut task_rows = Vec::new();
 
     for record in &plan.records {
@@ -3433,6 +3455,7 @@ async fn persist_solved_plan<C: sea_orm::ConnectionTrait>(
         .collect();
 
     Ok(GenerateLatestExamStaffPlanResult {
+        publication_warnings: Vec::new(),
         generated_at,
         task_count: plan.records.len() as i64,
         assigned_count: plan.metrics.assigned_count,
@@ -3561,8 +3584,10 @@ fn solve_by_grade(
             .filter(|teacher| teacher.invigilation_grade_name.as_deref() == Some(grade))
             .cloned()
             .collect();
-        let attempt = solve_with_cp_sat(
+        // 教师按所属年级求解，辅助岗位回避仍需看到所有年级的同期考试。
+        let attempt = solve_with_cp_sat_context(
             &grade_tasks,
+            tasks,
             &grade_teachers,
             rules,
             config,
@@ -3599,6 +3624,7 @@ async fn prepare_staff_export_from_plan(
     plan: &SolvedPlan,
     plan_revision: &str,
     revision: &(Option<String>, Option<String>),
+    staff_revision: &str,
 ) -> Result<crate::export_batch::PreparedExportBatch, AppError> {
     use crate::export_invigilation::{AccountingTeacherRow, GradeStaffExportInput, TaskExportRow};
     let title = crate::db::repos::export_invigilation::exam_title(db).await?;
@@ -3682,7 +3708,7 @@ async fn prepare_staff_export_from_plan(
         inputs,
         &counts,
     )?;
-    crate::export_batch::write_staff_source(&batch.staging_dir, revision)?;
+    crate::export_batch::write_staff_source(&batch.staging_dir, revision, staff_revision)?;
     Ok(batch)
 }
 
@@ -3694,6 +3720,9 @@ async fn generate_latest_exam_staff_plan_internal(
     progress: Option<&StaffAssignmentProgressReporter>,
     output_root: Option<&Path>,
 ) -> Result<GenerateLatestExamStaffPlanResult, AppError> {
+    let _operation = output_root
+        .map(crate::export_batch::BatchOperationGuard::acquire)
+        .transpose()?;
     let source_revision = crate::db::repos::export_bundle::source_revision(db).await?;
     let plan_revision = if output_root.is_some() {
         Some(crate::db::repos::export_bundle::plan_revision(db).await?)
@@ -3811,6 +3840,7 @@ async fn generate_latest_exam_staff_plan_internal(
             ),
         );
     }
+    let generated_at = Utc::now().to_rfc3339();
     let prepared = if let Some(root) = output_root {
         Some(
             prepare_staff_export_from_plan(
@@ -3820,6 +3850,7 @@ async fn generate_latest_exam_staff_plan_internal(
                 &final_plan,
                 plan_revision.as_deref().unwrap(),
                 &source_revision,
+                &generated_at,
             )
             .await?,
         )
@@ -3836,20 +3867,23 @@ async fn generate_latest_exam_staff_plan_internal(
             "分配期间导入数据或考场快照已变化，请重新分配",
         ));
     }
-    let result =
-        persist_solved_plan(&tx, session_times.len() as i64, &teachers, &final_plan).await?;
-    let mut published = prepared
+    let mut result = persist_solved_plan(
+        &tx,
+        session_times.len() as i64,
+        &teachers,
+        &final_plan,
+        generated_at,
+    )
+    .await?;
+    let published = prepared
         .as_ref()
         .map(crate::export_batch::publish_prepared_batch)
         .transpose()?;
-    if let Err(error) = tx.commit().await {
-        if let Some(published) = &mut published {
-            published.rollback()?;
-        }
-        return Err(error.into());
-    }
     if let Some(published) = published {
-        published.finish()?;
+        result.publication_warnings =
+            crate::export_batch::complete_published_batch(published, tx.commit()).await?;
+    } else {
+        tx.commit().await?;
     }
     if let Some(progress) = progress {
         progress.emit_completed(format!(
@@ -5081,6 +5115,43 @@ mod tests {
         let plan = attempt.plan.unwrap();
         assert_eq!(plan.records[0].teacher_id, Some(1));
         assert_eq!(plan.optimality_status, OptimalityStatus::Feasible);
+    }
+
+    #[test]
+    fn test_auxiliary_grade_solver_preserves_other_grade_exam_avoidance() {
+        let teachers = vec![TeacherInfo {
+            id: 1,
+            name: "跨年级任课教师".into(),
+            invigilation_grade_name: Some("高一".into()),
+            subjects: HashSet::from([Subject::Math]),
+            class_names: HashSet::from(["高二1班".into()]),
+            homeroom_classes: HashSet::new(),
+            is_middle_manager: false,
+        }];
+        let mut rover = sample_exam_task(Subject::History);
+        rover.role = StaffRole::FloorRover;
+        rover.space_id = None;
+        let mut other_exam = sample_exam_task(Subject::Math);
+        other_exam.grade_name = "高二".into();
+        other_exam.session_id = Some(2);
+        let pairs = build_test_teacher_grade_subject_pairs(&teachers);
+        let plan = solve_by_grade(
+            &[rover, other_exam],
+            &teachers,
+            &[],
+            &test_runtime_config(),
+            &pairs,
+            None,
+        )
+        .plan
+        .unwrap();
+        assert!(plan
+            .records
+            .iter()
+            .find(|record| record.task.role == StaffRole::FloorRover)
+            .unwrap()
+            .teacher_id
+            .is_none());
     }
 
     #[test]

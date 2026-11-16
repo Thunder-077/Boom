@@ -103,6 +103,14 @@ pub async fn plan_revision<C: ConnectionTrait>(db: &C) -> Result<String, AppErro
         .ok_or_else(|| AppError::new("请先生成考场安排"))
 }
 
+pub async fn staff_revision<C: ConnectionTrait>(db: &C) -> Result<String, AppError> {
+    crate::entity::latest_exam_staff_plan_meta::Entity::find_by_id(1)
+        .one(db)
+        .await?
+        .map(|row| row.generated_at)
+        .ok_or_else(|| AppError::new("请先分配监考教师"))
+}
+
 fn class_number(name: &str) -> Option<i64> {
     let target = name.find('班').or_else(|| name.find('场'))?;
     let mut chars = name[..target].chars().rev().peekable();

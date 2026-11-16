@@ -7,6 +7,34 @@ use std::{
 
 static NEXT_BATCH: AtomicU64 = AtomicU64::new(1);
 
+static ACTIVE_ROOTS: std::sync::LazyLock<std::sync::Mutex<std::collections::HashSet<PathBuf>>> =
+    std::sync::LazyLock::new(|| std::sync::Mutex::new(std::collections::HashSet::new()));
+
+// 只保存目录键，不持有跨 await 的 MutexGuard；同一输出根目录的整次操作互斥。
+pub(crate) struct BatchOperationGuard(PathBuf);
+
+impl BatchOperationGuard {
+    pub fn acquire(root: &Path) -> Result<Self, AppError> {
+        fs::create_dir_all(root).map_err(|e| AppError::new(e.to_string()))?;
+        let key = fs::canonicalize(root).map_err(|e| AppError::new(e.to_string()))?;
+        let mut active = ACTIVE_ROOTS
+            .lock()
+            .map_err(|_| AppError::new("导出操作锁异常"))?;
+        if !active.insert(key.clone()) {
+            return Err(AppError::new("正在生成或导出本批次，请等待完成后重试"));
+        }
+        Ok(Self(key))
+    }
+}
+
+impl Drop for BatchOperationGuard {
+    fn drop(&mut self) {
+        if let Ok(mut active) = ACTIVE_ROOTS.lock() {
+            active.remove(&self.0);
+        }
+    }
+}
+
 pub(crate) struct PreparedExportBatch {
     pub staging_dir: PathBuf,
     pub final_dir: PathBuf,
@@ -148,6 +176,21 @@ pub(crate) fn copy_student_artifacts(source: &Path, target: &Path) -> Result<(),
     Ok(())
 }
 
+pub(crate) async fn complete_published_batch(
+    mut published: PublishedExportBatch,
+    commit: impl std::future::Future<Output = Result<(), sea_orm::DbErr>>,
+) -> Result<Vec<String>, AppError> {
+    if let Err(error) = commit.await {
+        published.rollback()?;
+        return Err(error.into());
+    }
+    // 提交是成功边界；之后的备份清理只能产生警告，不能把已完成的发布报成失败。
+    Ok(match published.finish() {
+        Ok(()) => Vec::new(),
+        Err(error) => vec![error.to_string()],
+    })
+}
+
 pub(crate) fn write_batch_identity(
     dir: &Path,
     generated_at: &str,
@@ -177,10 +220,12 @@ pub(crate) fn verify_batch_identity(
 pub(crate) fn write_staff_source(
     dir: &Path,
     revision: &(Option<String>, Option<String>),
+    staff_revision: &str,
 ) -> Result<(), AppError> {
     fs::write(
         dir.join(".boom-staff-source.json"),
-        serde_json::to_vec(revision).map_err(|e| AppError::new(e.to_string()))?,
+        serde_json::to_vec(&(revision, staff_revision))
+            .map_err(|e| AppError::new(e.to_string()))?,
     )
     .map_err(|e| AppError::new(format!("写入监考源版本失败: {e}")))
 }
@@ -188,12 +233,13 @@ pub(crate) fn write_staff_source(
 pub(crate) fn verify_staff_source(
     dir: &Path,
     revision: &(Option<String>, Option<String>),
+    staff_revision: &str,
 ) -> Result<(), AppError> {
     let bytes = fs::read(dir.join(".boom-staff-source.json"))
         .map_err(|_| AppError::new("监考资料缺少源版本，请重新分配监考教师"))?;
-    let saved: (Option<String>, Option<String>) =
+    let saved: ((Option<String>, Option<String>), String) =
         serde_json::from_slice(&bytes).map_err(|_| AppError::new("监考源版本无效，请重新分配"))?;
-    if saved != *revision {
+    if saved.0 != *revision || saved.1 != staff_revision {
         return Err(AppError::new("导入数据已变化，请重新分配监考教师"));
     }
     Ok(())
@@ -211,6 +257,104 @@ mod tests {
         score::Subject,
     };
     use std::collections::{HashMap, HashSet};
+
+    struct TestDirectory(PathBuf);
+    impl TestDirectory {
+        fn new() -> Self {
+            let path = std::env::temp_dir().join(format!(
+                "boom-batch-test-{}-{}",
+                std::process::id(),
+                NEXT_BATCH.fetch_add(1, Ordering::Relaxed)
+            ));
+            fs::create_dir_all(&path).unwrap();
+            Self(path)
+        }
+        fn path(&self) -> &Path {
+            &self.0
+        }
+    }
+    impl Drop for TestDirectory {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.0);
+        }
+    }
+
+    #[test]
+    fn test_batch_operations_serialize_same_root_only() {
+        let root = TestDirectory::new();
+        let other = TestDirectory::new();
+        let guard = BatchOperationGuard::acquire(root.path()).unwrap();
+        assert!(BatchOperationGuard::acquire(&root.path().join(".")).is_err());
+        assert!(BatchOperationGuard::acquire(other.path()).is_ok());
+        drop(guard);
+        assert!(BatchOperationGuard::acquire(root.path()).is_ok());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn test_committed_batch_cleanup_failure_is_success_with_warning() {
+        use std::os::windows::fs::OpenOptionsExt;
+        let root = TestDirectory::new();
+        fs::create_dir(root.path().join("batch")).unwrap();
+        fs::write(root.path().join("batch/old"), b"old").unwrap();
+        let batch = prepare_export_batch(root.path(), "batch").unwrap();
+        fs::write(batch.staging_dir.join("new"), b"new").unwrap();
+        let published = publish_prepared_batch(&batch).unwrap();
+        // Windows 文件占用允许读写但禁止删除，真实复现提交后的清理失败。
+        let locked = fs::OpenOptions::new()
+            .read(true)
+            .share_mode(3)
+            .open(batch.backup_dir.join("old"))
+            .unwrap();
+        let result =
+            tauri::async_runtime::block_on(complete_published_batch(published, async { Ok(()) }));
+        assert!(result.is_ok(), "数据库已提交，清理失败应返回成功及警告");
+        let warnings = result.unwrap();
+        assert_eq!(warnings.len(), 1);
+        assert!(warnings[0].contains(&batch.backup_dir.display().to_string()));
+        assert_eq!(fs::read(batch.final_dir.join("new")).unwrap(), b"new");
+        assert_eq!(fs::read(batch.backup_dir.join("old")).unwrap(), b"old");
+        drop(locked);
+    }
+
+    #[test]
+    fn test_failed_commit_restores_previous_export() {
+        let root = TestDirectory::new();
+        fs::create_dir(root.path().join("batch")).unwrap();
+        fs::write(root.path().join("batch/old"), b"old").unwrap();
+        let batch = prepare_export_batch(root.path(), "batch").unwrap();
+        fs::write(batch.staging_dir.join("new"), b"new").unwrap();
+        let published = publish_prepared_batch(&batch).unwrap();
+        let result = tauri::async_runtime::block_on(complete_published_batch(published, async {
+            Err(sea_orm::DbErr::Custom("injected commit failure".into()))
+        }));
+        assert!(result.is_err());
+        assert_eq!(fs::read(batch.final_dir.join("old")).unwrap(), b"old");
+        assert!(!batch.final_dir.join("new").exists());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn test_locked_previous_directory_preserves_completed_batch() {
+        use std::os::windows::fs::OpenOptionsExt;
+        let root = TestDirectory::new();
+        fs::create_dir(root.path().join("batch")).unwrap();
+        fs::write(root.path().join("batch/old"), b"old").unwrap();
+        let batch = prepare_export_batch(root.path(), "batch").unwrap();
+        fs::write(batch.staging_dir.join("new"), b"new").unwrap();
+        // 打开目录但不共享删除权限，触发 Windows 真实的 rename 失败。
+        let locked = fs::OpenOptions::new()
+            .read(true)
+            .share_mode(3)
+            .custom_flags(0x02000000)
+            .open(&batch.final_dir)
+            .unwrap();
+        assert!(publish_prepared_batch(&batch).is_err());
+        assert_eq!(fs::read(batch.final_dir.join("old")).unwrap(), b"old");
+        assert_eq!(fs::read(batch.staging_dir.join("new")).unwrap(), b"new");
+        assert!(!batch.backup_dir.exists());
+        drop(locked);
+    }
 
     #[test]
     fn test_export_rejects_duplicate_room_cells() {

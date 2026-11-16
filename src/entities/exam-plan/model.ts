@@ -146,6 +146,7 @@ export interface ExamSessionTimeUpsert {
 }
 
 export interface GenerateLatestExamStaffPlanResult {
+  publicationWarnings?: string[];
   generatedAt: string;
   taskCount: number;
   assignedCount: number;
@@ -161,6 +162,7 @@ export interface GenerateLatestExamStaffPlanResult {
 }
 
 export interface ExportLatestInvigilationScheduleResult {
+  publicationWarnings?: string[];
   folderPath: string;
   files: Array<{ gradeName: string; filePath: string }>;
   exportedAt: string;

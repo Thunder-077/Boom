@@ -1678,6 +1678,8 @@ fn generate_latest_exam_plan_internal(
     app: &AppHandle,
     payload: Option<GenerateLatestExamPlanPayload>,
 ) -> Result<GenerateLatestExamPlanResult, AppError> {
+    let export_root = export_bundle::export_root_dir(app)?;
+    let _operation = crate::export_batch::BatchOperationGuard::acquire(&export_root)?;
     let db = open_exam_allocation_db(app)?;
     ensure_exam_allocation_defaults(&db)?;
     let source_revision =
@@ -1942,6 +1944,7 @@ fn generate_latest_exam_plan_internal(
         ));
     }
 
+    let publication_warnings;
     {
         crate::exam_plan_snapshot::validate_exam_plan_draft(&draft)?;
         let bundle_settings =
@@ -1999,20 +2002,26 @@ fn generate_latest_exam_plan_internal(
                 warning_count,
             },
         ))?;
-        let mut published = crate::export_batch::publish_prepared_batch(&batch)?;
-        if let Err(error) = tauri::async_runtime::block_on(meta_tx.commit()) {
-            published.rollback()?;
-            return Err(error.into());
-        }
-        published.finish()?;
+        let published = crate::export_batch::publish_prepared_batch(&batch)?;
+        publication_warnings = tauri::async_runtime::block_on(
+            crate::export_batch::complete_published_batch(published, meta_tx.commit()),
+        )?;
     }
+    let completed_message = if publication_warnings.is_empty() {
+        "考场分配与导出文件生成已完成，可按需打包 ZIP".to_string()
+    } else {
+        format!(
+            "考场分配与导出文件生成已完成。{}",
+            publication_warnings.join("；")
+        )
+    };
     update_exam_generation_progress(
         &db,
         "completed",
         "completed",
         "已完成",
         100,
-        "考场分配与导出文件生成已完成，可按需打包 ZIP",
+        &completed_message,
         None,
         total_grades,
         total_grades,

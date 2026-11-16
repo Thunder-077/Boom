@@ -236,7 +236,9 @@ export default function ExamAssignmentPanel() {
       return progress.message ? `${stepPrefix}：${progress.message}` : stepPrefix;
     }
     if (state.overview.generatedAt) {
-      return "考场分配完成，点击导出打开结果目录。";
+      return progress.status === "completed" && progress.message
+        ? progress.message
+        : "考场分配完成，点击导出打开结果目录。";
     }
     return "等待开始，系统将按当前配置自动排考场。";
   }, [state.generating, state.generationProgress, state.overview.generatedAt]);

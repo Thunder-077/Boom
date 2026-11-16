@@ -23,6 +23,7 @@ const ALERT_RED: u32 = 0xC00000;
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ExportLatestInvigilationScheduleResult {
+    publication_warnings: Vec<String>,
     pub(crate) folder_path: String,
     pub(crate) files: Vec<GradeExportFile>,
     exported_at: String,
@@ -1635,12 +1636,29 @@ pub(crate) fn write_grade_staff_workbooks(
     Ok(files)
 }
 
+pub(crate) async fn validate_export_revisions<C: sea_orm::ConnectionTrait>(
+    db: &C,
+    source: &(Option<String>, Option<String>),
+    plan: &str,
+    staff: &str,
+) -> Result<(), AppError> {
+    if crate::db::repos::export_bundle::source_revision(db).await? != *source
+        || crate::db::repos::export_bundle::plan_revision(db).await? != plan
+        || crate::db::repos::export_bundle::staff_revision(db).await? != staff
+    {
+        return Err(AppError::new("导出期间数据已变化，请重新导出"));
+    }
+    Ok(())
+}
+
 fn export_schedule_internal(
     app: &AppHandle,
 ) -> Result<ExportLatestInvigilationScheduleResult, AppError> {
+    let root = export_root_dir(app)?;
+    let _operation = crate::export_batch::BatchOperationGuard::acquire(&root)?;
     let db = tauri::async_runtime::block_on(crate::db::connect(app))?;
     use sea_orm::TransactionTrait;
-    let (rows, counts, inputs, title, revision, plan_revision) =
+    let (rows, counts, inputs, title, revision, plan_revision, staff_revision) =
         tauri::async_runtime::block_on(async {
             let tx = db.begin().await?;
             let rows = crate::db::repos::export_invigilation::task_export_rows(&tx).await?;
@@ -1669,14 +1687,22 @@ fn export_schedule_internal(
             let title = crate::db::repos::export_invigilation::exam_title(&tx).await?;
             let revision = crate::db::repos::export_bundle::source_revision(&tx).await?;
             let plan_revision = crate::db::repos::export_bundle::plan_revision(&tx).await?;
+            let staff_revision = crate::db::repos::export_bundle::staff_revision(&tx).await?;
             tx.commit().await?;
-            Ok::<_, AppError>((rows, counts, inputs, title, revision, plan_revision))
+            Ok::<_, AppError>((
+                rows,
+                counts,
+                inputs,
+                title,
+                revision,
+                plan_revision,
+                staff_revision,
+            ))
         })?;
     let _ = rows;
-    let root = export_root_dir(app)?;
     let final_dir = crate::export_bundle::export_batch_dir(&root, &title);
     crate::export_batch::verify_batch_identity(&final_dir, &plan_revision, &revision.0)?;
-    crate::export_batch::verify_staff_source(&final_dir, &revision)?;
+    crate::export_batch::verify_staff_source(&final_dir, &revision, &staff_revision)?;
     let batch = crate::export_batch::prepare_export_batch(
         &root,
         final_dir.file_name().unwrap().to_str().unwrap(),
@@ -1684,20 +1710,20 @@ fn export_schedule_internal(
     crate::export_batch::copy_student_artifacts(&final_dir, &batch.staging_dir)?;
     let files = write_grade_staff_workbooks(&batch.staging_dir, &title, inputs, &counts)?;
     let tx = tauri::async_runtime::block_on(db.begin())?;
-    if tauri::async_runtime::block_on(crate::db::repos::export_bundle::source_revision(&tx))?
-        != revision
-        || tauri::async_runtime::block_on(crate::db::repos::export_bundle::plan_revision(&tx))?
-            != plan_revision
-    {
-        return Err(AppError::new("导出期间数据已变化，请重新导出"));
-    }
-    let mut published = crate::export_batch::publish_prepared_batch(&batch)?;
-    if let Err(error) = tauri::async_runtime::block_on(tx.commit()) {
-        published.rollback()?;
-        return Err(error.into());
-    }
-    published.finish()?;
-    Ok(export_result_for_batch(&batch, files))
+    tauri::async_runtime::block_on(validate_export_revisions(
+        &tx,
+        &revision,
+        &plan_revision,
+        &staff_revision,
+    ))?;
+    let published = crate::export_batch::publish_prepared_batch(&batch)?;
+    let warnings = tauri::async_runtime::block_on(crate::export_batch::complete_published_batch(
+        published,
+        tx.commit(),
+    ))?;
+    let mut result = export_result_for_batch(&batch, files);
+    result.publication_warnings = warnings;
+    Ok(result)
 }
 
 pub(crate) fn export_result_for_batch(
@@ -1714,6 +1740,7 @@ pub(crate) fn export_result_for_batch(
             .to_string();
     }
     ExportLatestInvigilationScheduleResult {
+        publication_warnings: Vec::new(),
         folder_path: batch.final_dir.to_string_lossy().to_string(),
         files,
         exported_at: Utc::now().to_rfc3339(),

@@ -253,6 +253,54 @@ async fn snapshot(db: &DatabaseConnection) -> String {
 }
 
 #[test]
+fn test_export_rejects_replaced_staff_snapshot_with_same_sources() {
+    tauri::async_runtime::block_on(async {
+        let (db, root, draft) = setup().await;
+        complete_exam_batch(&db, &root, &draft).await;
+        crate::exam_staff::generate_staff_plan_for_test(&db, &root)
+            .await
+            .unwrap();
+        let revision = crate::db::repos::export_bundle::source_revision(&db)
+            .await
+            .unwrap();
+        let previous = latest_exam_staff_plan_meta::Entity::find_by_id(1)
+            .one(&db)
+            .await
+            .unwrap()
+            .unwrap();
+        let previous_version = previous.generated_at.clone();
+        assert!(crate::export_invigilation::validate_export_revisions(
+            &db,
+            &revision,
+            "plan-v1",
+            &previous_version
+        )
+        .await
+        .is_ok());
+        let folder = root.join("测试考场安排");
+        assert!(
+            crate::export_batch::verify_staff_source(&folder, &revision, &previous_version).is_ok()
+        );
+        assert!(
+            crate::export_batch::verify_staff_source(&folder, &revision, "new-staff-version")
+                .is_err()
+        );
+        let mut current = previous.into_active_model();
+        current.generated_at = Set("new-staff-version".into());
+        current.update(&db).await.unwrap();
+        assert!(crate::export_invigilation::validate_export_revisions(
+            &db,
+            &revision,
+            "plan-v1",
+            &previous_version
+        )
+        .await
+        .is_err());
+        fs::remove_dir_all(root).unwrap();
+    });
+}
+
+#[test]
 fn test_multigrade_import_to_export_pipeline() {
     tauri::async_runtime::block_on(async {
         let (db, root, draft) = setup().await;
