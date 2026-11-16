@@ -20,7 +20,7 @@ const CP_SAT_MAX_SOLVE_LABEL: &str = "30 分钟";
 const CP_SAT_FAST_STAGE_BUDGET_MS: i64 = 30 * 1000;
 const CP_SAT_BALANCE_STAGE_BUDGET_MS: i64 = 90 * 1000;
 const STAFF_ASSIGNMENT_PROGRESS_EVENT: &str = "invigilation_staff_assignment_progress";
-const STAFF_ASSIGNMENT_TOTAL_STEPS: usize = 13;
+const STAFF_ASSIGNMENT_TOTAL_STEPS: usize = 15;
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -1575,7 +1575,7 @@ fn build_teacher_symmetry_groups(
         }
     }
 
-    let mut grouped = HashMap::<Vec<(usize, Option<AssignmentTier>)>, Vec<i64>>::new();
+    let mut grouped = HashMap::<(Vec<(usize, Option<AssignmentTier>)>, Vec<i32>), Vec<i64>>::new();
     for teacher in teachers {
         let mut signature = signatures.remove(&teacher.id).unwrap_or_default();
         signature.sort_unstable_by(|left, right| {
@@ -1586,7 +1586,17 @@ fn build_teacher_symmetry_groups(
                     .cmp(&right.1.as_ref().map(|tier| tier.as_key())),
             )
         });
-        grouped.entry(signature).or_default().push(teacher.id);
+        // 同候选集合但不同学科的教师不再对称，否则负载对称约束会妨碍同科覆盖。
+        let mut subjects: Vec<_> = teacher
+            .subjects
+            .iter()
+            .map(|subject| subject_order(*subject))
+            .collect();
+        subjects.sort_unstable();
+        grouped
+            .entry((signature, subjects))
+            .or_default()
+            .push(teacher.id);
     }
 
     let mut groups: Vec<Vec<i64>> = grouped
@@ -2337,9 +2347,12 @@ fn cp_sat_time_limit_params(remaining_ms: i64) -> SatParameters {
 
 fn cp_sat_stage_time_budget_ms(stage_name: &str, remaining_ms: i64) -> i64 {
     let preferred_budget_ms = match stage_name {
-        "unassigned_count" | "fallback_pool_assignments" | "homeroom_assignments" => {
-            CP_SAT_FAST_STAGE_BUDGET_MS
-        }
+        "unassigned_count"
+        | "unassigned_penalty"
+        | "same_subject_coverage"
+        | "same_subject_positions"
+        | "fallback_pool_assignments"
+        | "homeroom_assignments" => CP_SAT_FAST_STAGE_BUDGET_MS,
         "total_minutes_gap" | "invigilation_minutes_gap" | "self_study_minutes_gap" => {
             CP_SAT_BALANCE_STAGE_BUDGET_MS
         }
@@ -2506,6 +2519,12 @@ fn add_teacher_symmetry_breaking_constraints(
     }
 }
 
+#[cfg(test)]
+thread_local! {
+    // 仅测试使用：允许若干阶段成功后模拟后续阶段耗尽预算，不依赖机器速度。
+    static FAIL_STAGE_AFTER: std::cell::Cell<Option<usize>> = const { std::cell::Cell::new(None) };
+}
+
 fn solve_cp_sat_stage(
     base_proto: &cp_sat::proto::CpModelProto,
     fixed_objectives: &[(LinearExpr, i64)],
@@ -2516,6 +2535,12 @@ fn solve_cp_sat_stage(
     hint_int_vars: &[IntVar],
     manual_bool_hints: &[(BoolVar, i64)],
 ) -> CpSolverResponse {
+    #[cfg(test)]
+    if FAIL_STAGE_AFTER.with(|remaining| match remaining.get() {
+        Some(0) => true,
+        Some(value) => { remaining.set(Some(value - 1)); false },
+        None => false,
+    }) { return CpSolverResponse::default(); }
     let mut builder = CpModelBuilder::from_proto(base_proto.clone());
     for (expr, value) in fixed_objectives {
         builder.add_eq(expr.clone(), *value);
@@ -2760,6 +2785,34 @@ fn solve_with_cp_sat(
 
     add_teacher_timepoint_non_overlap_constraints(&mut model, tasks, &teacher_assignment_vars);
 
+    // 先奖励“每场至少一名同科”，再奖励同科总岗位；两个目标不能合成一个权重。
+    let mut room_same_subject_vars = HashMap::<(Option<i64>, Option<i64>), Vec<BoolVar>>::new();
+    let mut same_subject_positions = LinearExpr::default();
+    for (index, task) in tasks.iter().enumerate() {
+        if task.role != StaffRole::ExamRoomInvigilator {
+            continue;
+        }
+        for (var, candidate) in &candidate_bindings[index] {
+            if teachers.iter().any(|teacher| {
+                teacher.id == candidate.teacher_id && teacher.subjects.contains(&task.subject)
+            }) {
+                room_same_subject_vars
+                    .entry((task.session_id, task.space_id))
+                    .or_default()
+                    .push(*var);
+                same_subject_positions += (-1, *var);
+            }
+        }
+    }
+    let mut same_subject_coverage = LinearExpr::default();
+    for (index, vars) in room_same_subject_vars.values().enumerate() {
+        let covered = model.new_bool_var_with_name(format!("same_subject_room_{index}"));
+        let count: LinearExpr = vars.iter().copied().collect();
+        model.add_ge(count.clone(), covered);
+        model.add_le(count, (vars.len() as i64, covered));
+        same_subject_coverage += (-1, covered);
+    }
+
     let mut total_load_vars = Vec::<IntVar>::new();
     let mut invigilation_load_vars = Vec::<IntVar>::new();
     let mut self_study_load_vars = Vec::<IntVar>::new();
@@ -2941,6 +2994,16 @@ fn solve_with_cp_sat(
             LinearExpr::from(unassigned_penalty_var),
         ),
         (
+            "same_subject_coverage",
+            "优先各考场覆盖同科教师",
+            same_subject_coverage,
+        ),
+        (
+            "same_subject_positions",
+            "优先同科监考岗位",
+            same_subject_positions,
+        ),
+        (
             "fallback_pool_assignments",
             "减少其他老师兜底",
             LinearExpr::from(fallback_count_var),
@@ -2968,6 +3031,7 @@ fn solve_with_cp_sat(
     ];
 
     let mut last_successful: Option<(CpSolverResponse, OptimalityStatus)> = None;
+    let mut all_stages_optimal = true;
     for (stage_index, (stage_name, stage_label, objective)) in stage_objectives.iter().enumerate() {
         if let Some(progress) = progress {
             let step = 6 + stage_index;
@@ -3016,7 +3080,7 @@ fn solve_with_cp_sat(
                     detail
                 )
             });
-            if let Some((best_response, best_status)) = last_successful {
+            if let Some((best_response, _)) = last_successful {
                 let plan = build_cp_sat_plan_from_response(
                     tasks,
                     teachers,
@@ -3024,7 +3088,7 @@ fn solve_with_cp_sat(
                     &candidate_bindings,
                     &unassigned_vars,
                     &best_response,
-                    best_status,
+                    OptimalityStatus::Feasible,
                     stage_elapsed_ms,
                 );
                 return CpSatAttempt {
@@ -3042,6 +3106,7 @@ fn solve_with_cp_sat(
             };
         };
         let objective_value = response.objective_value.round() as i64;
+        all_stages_optimal &= optimality_status == OptimalityStatus::Optimal;
         fixed_objectives.push((objective.clone(), objective_value));
         last_successful = Some((response, optimality_status));
     }
@@ -3218,7 +3283,7 @@ fn solve_with_cp_sat(
         &candidate_bindings,
         &unassigned_vars,
         &cross_response,
-        final_status,
+        if all_stages_optimal { final_status } else { OptimalityStatus::Feasible },
         final_elapsed_ms,
     );
     CpSatAttempt {
@@ -3491,8 +3556,9 @@ fn solve_by_grade(
         if plan.optimality_status != OptimalityStatus::Optimal {
             merged.optimality_status = OptimalityStatus::Feasible;
         }
-        if plan.fallback_reason.is_some() {
-            merged.fallback_reason = plan.fallback_reason;
+        if attempt.fallback_reason.is_some() {
+            merged.fallback_reason = attempt.fallback_reason;
+            merged.optimality_status = OptimalityStatus::Feasible;
         }
         merged.records.extend(plan.records);
         merged.runtime.extend(plan.runtime);
@@ -3615,11 +3681,11 @@ async fn generate_latest_exam_staff_plan_internal(
 
     if let Some(progress) = progress {
         progress.emit_running(
-            13,
+            15,
             "persist_result",
             "写入分配结果",
             format!(
-                "正在执行第 13/{} 步：保存分配结果。",
+                "正在执行第 15/{} 步：保存分配结果。",
                 STAFF_ASSIGNMENT_TOTAL_STEPS
             ),
         );
@@ -4614,13 +4680,33 @@ mod tests {
         let mut task = sample_exam_task(Subject::Math);
         task.grade_name = "高二".into();
         let rule = GenerateExamStaffPlanCustomRule {
-            action_type: RULE_ACTION_REQUIRE.into(), teacher_id: 1, teacher_name: None,
-            time_scope_type: RULE_TIME_SCOPE_EXAM_SESSION.into(), time_scope_ids: vec![1], time_scope_labels: vec![],
-            task_scope_type: RULE_TASK_SCOPE_EXAM_ROOM.into(), target_scope_type: RULE_TARGET_SCOPE_ALL.into(), target_ids: vec![], target_labels: vec![],
+            action_type: RULE_ACTION_REQUIRE.into(),
+            teacher_id: 1,
+            teacher_name: None,
+            time_scope_type: RULE_TIME_SCOPE_EXAM_SESSION.into(),
+            time_scope_ids: vec![1],
+            time_scope_labels: vec![],
+            task_scope_type: RULE_TASK_SCOPE_EXAM_ROOM.into(),
+            target_scope_type: RULE_TARGET_SCOPE_ALL.into(),
+            target_ids: vec![],
+            target_labels: vec![],
         };
-        for role in [StaffRole::ExamRoomInvigilator, StaffRole::SelfStudySupervisor, StaffRole::FloorRover] {
+        for role in [
+            StaffRole::ExamRoomInvigilator,
+            StaffRole::SelfStudySupervisor,
+            StaffRole::FloorRover,
+        ] {
             task.role = role;
-            assert!(build_task_candidate_summary(&task, &teachers, std::slice::from_ref(&rule), &test_runtime_config(), &HashSet::new(), &HashMap::new()).candidates.is_empty());
+            assert!(build_task_candidate_summary(
+                &task,
+                &teachers,
+                std::slice::from_ref(&rule),
+                &test_runtime_config(),
+                &HashSet::new(),
+                &HashMap::new()
+            )
+            .candidates
+            .is_empty());
         }
         task.role = StaffRole::ExamRoomInvigilator;
         let summary = build_task_candidate_summary(
@@ -4672,6 +4758,147 @@ mod tests {
         assert!(coverages
             .iter()
             .all(|coverage| coverage.session_ids.len() == 1));
+    }
+
+    #[test]
+    fn test_same_subject_teachers_cover_rooms_before_second_seats() {
+        for (seats, same_count) in [(2, 10), (2, 6), (2, 20), (2, 0), (1, 6), (3, 10)] {
+            let total = seats * 10;
+            let teachers: Vec<_> = (0..total)
+                .map(|index| TeacherInfo {
+                    invigilation_grade_name: Some("高一".into()),
+                    id: index + 1,
+                    name: format!("教师{}", index + 1),
+                    subjects: HashSet::from([if index < same_count {
+                        Subject::Math
+                    } else {
+                        Subject::Chinese
+                    }]),
+                    class_names: HashSet::new(),
+                    homeroom_classes: HashSet::new(),
+                    is_middle_manager: false,
+                })
+                .collect();
+            let tasks: Vec<_> = (0..10)
+                .flat_map(|room| {
+                    (0..seats).map(move |_| {
+                        let mut task = sample_exam_task(Subject::Math);
+                        task.space_id = Some(room + 1);
+                        task.space_name = format!("高一{}场", room + 1);
+                        task
+                    })
+                })
+                .collect();
+            let plan = solve_with_cp_sat(
+                &tasks,
+                &teachers,
+                &[],
+                &test_runtime_config(),
+                &HashMap::new(),
+                None,
+            )
+            .plan
+            .unwrap();
+            assert_eq!(plan.metrics.unassigned_count, 0);
+            let mut per_room = HashMap::<i64, usize>::new();
+            for record in &plan.records {
+                if record.teacher_id.is_some_and(|id| id <= same_count) {
+                    *per_room.entry(record.task.space_id.unwrap()).or_default() += 1;
+                }
+            }
+            assert_eq!(
+                per_room.len(),
+                same_count.min(10) as usize,
+                "先覆盖不同考场：{seats}/{same_count}"
+            );
+            assert_eq!(per_room.values().sum::<usize>(), same_count as usize);
+            if same_count == 10 {
+                assert!(per_room.values().all(|count| *count == 1));
+            }
+        }
+    }
+
+    #[test]
+    fn test_same_subject_preference_respects_constraints_and_languages() {
+        let teachers: Vec<_> = (1..=5)
+            .map(|id| TeacherInfo {
+                id,
+                name: format!("教师{id}"),
+                invigilation_grade_name: Some("高一".into()),
+                subjects: HashSet::from([match id {
+                    1 | 2 | 3 => Subject::English,
+                    4 => Subject::Russian,
+                    _ => Subject::Chinese,
+                }]),
+                class_names: HashSet::new(),
+                homeroom_classes: HashSet::new(),
+                is_middle_manager: id == 2,
+            })
+            .collect();
+        let rules = vec![GenerateExamStaffPlanCustomRule {
+            action_type: RULE_ACTION_EXCLUDE.into(),
+            teacher_id: 1,
+            teacher_name: None,
+            time_scope_type: RULE_TIME_SCOPE_EXAM_SESSION.into(),
+            time_scope_ids: vec![1],
+            time_scope_labels: vec![],
+            task_scope_type: RULE_TASK_SCOPE_EXAM_ROOM.into(),
+            target_scope_type: RULE_TARGET_SCOPE_ALL.into(),
+            target_ids: vec![],
+            target_labels: vec![],
+        }];
+        let mut task = sample_exam_task(Subject::English);
+        task.space_id = Some(1);
+        let mut second = task.clone();
+        second.space_id = Some(2);
+        let plan = solve_with_cp_sat(
+            &[task, second],
+            &teachers,
+            &rules,
+            &test_runtime_config(),
+            &HashMap::new(),
+            None,
+        )
+        .plan
+        .unwrap();
+        let assigned: HashSet<_> = plan
+            .records
+            .iter()
+            .filter_map(|record| record.teacher_id)
+            .collect();
+        assert!(!assigned.contains(&1));
+        assert!(!assigned.contains(&2));
+        assert!(assigned.contains(&3));
+        assert_eq!(assigned.len(), 2);
+        assert_eq!(
+            plan.records
+                .iter()
+                .filter(|record| record.teacher_id == Some(3))
+                .count(),
+            1,
+            "同一教师不能同时监考两个场"
+        );
+        assert_eq!(
+            teachers[3].subjects.contains(&Subject::English),
+            false,
+            "俄语不视作英语同科"
+        );
+    }
+
+    #[test]
+    fn test_same_subject_later_stage_timeout_retains_legal_plan() {
+        let teachers = vec![TeacherInfo {
+            id: 1, name: "教师".into(), invigilation_grade_name: Some("高一".into()),
+            subjects: HashSet::from([Subject::Math]), class_names: HashSet::new(),
+            homeroom_classes: HashSet::new(), is_middle_manager: false,
+        }];
+        FAIL_STAGE_AFTER.with(|remaining| remaining.set(Some(1)));
+        let attempt = solve_with_cp_sat(&[sample_exam_task(Subject::Math)], &teachers, &[], &test_runtime_config(), &HashMap::new(), None);
+        FAIL_STAGE_AFTER.with(|remaining| remaining.set(None));
+        assert!(attempt.fallback_reason.is_some());
+        let plan = attempt.plan.unwrap();
+        assert_eq!(plan.records[0].teacher_id, Some(1));
+        assert_eq!(plan.optimality_status, OptimalityStatus::Feasible);
     }
 
     #[test]
