@@ -8,6 +8,7 @@ mod exam_allocation;
 mod exam_plan;
 mod exam_staff;
 mod export_bundle;
+mod export_batch;
 mod export_invigilation;
 mod invigilation;
 mod score;

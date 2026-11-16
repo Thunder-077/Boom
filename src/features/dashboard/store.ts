@@ -152,6 +152,7 @@ export function createExamAllocationStore(service: ExamAllocationService = examA
     teachers: [] as TeacherRow[],
     lastExportFolderPath: "",
     lastInvigilationExportPath: "",
+    lastInvigilationExportFiles: [] as Array<{ gradeName: string; filePath: string }>,
     generationProgress: { ...emptyGenerationProgress } as ExamGenerationProgress,
     assignmentProgress: null as ExamStaffAssignmentProgress | null,
   }));
@@ -541,7 +542,8 @@ export function createExamAllocationStore(service: ExamAllocationService = examA
     state.errorMessage = "";
     try {
       const result = await service.exportLatestInvigilationSchedule();
-      state.lastInvigilationExportPath = result.filePath;
+      state.lastInvigilationExportPath = result.folderPath;
+      state.lastInvigilationExportFiles = result.files;
       return result;
     } catch (error) {
       state.errorMessage = error instanceof Error ? error.message : String(error);

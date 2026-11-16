@@ -161,7 +161,8 @@ export interface GenerateLatestExamStaffPlanResult {
 }
 
 export interface ExportLatestInvigilationScheduleResult {
-  filePath: string;
+  folderPath: string;
+  files: Array<{ gradeName: string; filePath: string }>;
   exportedAt: string;
 }
 

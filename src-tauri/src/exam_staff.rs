@@ -2538,9 +2538,14 @@ fn solve_cp_sat_stage(
     #[cfg(test)]
     if FAIL_STAGE_AFTER.with(|remaining| match remaining.get() {
         Some(0) => true,
-        Some(value) => { remaining.set(Some(value - 1)); false },
+        Some(value) => {
+            remaining.set(Some(value - 1));
+            false
+        }
         None => false,
-    }) { return CpSolverResponse::default(); }
+    }) {
+        return CpSolverResponse::default();
+    }
     let mut builder = CpModelBuilder::from_proto(base_proto.clone());
     for (expr, value) in fixed_objectives {
         builder.add_eq(expr.clone(), *value);
@@ -3283,7 +3288,11 @@ fn solve_with_cp_sat(
         &candidate_bindings,
         &unassigned_vars,
         &cross_response,
-        if all_stages_optimal { final_status } else { OptimalityStatus::Feasible },
+        if all_stages_optimal {
+            final_status
+        } else {
+            OptimalityStatus::Feasible
+        },
         final_elapsed_ms,
     );
     CpSatAttempt {
@@ -3294,8 +3303,8 @@ fn solve_with_cp_sat(
     }
 }
 
-async fn persist_solved_plan(
-    db: &sea_orm::DatabaseConnection,
+async fn persist_solved_plan<C: sea_orm::ConnectionTrait>(
+    db: &C,
     session_count: i64,
     teachers: &[TeacherInfo],
     plan: &SolvedPlan,
@@ -3527,6 +3536,17 @@ fn solve_by_grade(
         solve_duration_ms: 0,
         fallback_reason: None,
     };
+    if tasks
+        .iter()
+        .any(|task| !matches!(task.grade_name.as_str(), "高一" | "高二" | "高三"))
+    {
+        return CpSatAttempt {
+            plan: None,
+            fallback_reason: Some(FallbackReason::Error),
+            diagnostic_message: Some("监考任务包含无效年级".into()),
+            solve_duration_ms: 0,
+        };
+    }
     for grade in ["高一", "高二", "高三"] {
         let grade_tasks: Vec<_> = tasks
             .iter()
@@ -3572,13 +3592,114 @@ fn solve_by_grade(
     }
 }
 
+async fn prepare_staff_export_from_plan(
+    db: &sea_orm::DatabaseConnection,
+    root: &Path,
+    teachers: &[TeacherInfo],
+    plan: &SolvedPlan,
+    plan_revision: &str,
+    revision: &(Option<String>, Option<String>),
+) -> Result<crate::export_batch::PreparedExportBatch, AppError> {
+    use crate::export_invigilation::{AccountingTeacherRow, GradeStaffExportInput, TaskExportRow};
+    let title = crate::db::repos::export_invigilation::exam_title(db).await?;
+    let final_dir = crate::export_bundle::export_batch_dir(root, &title);
+    crate::export_batch::verify_batch_identity(&final_dir, plan_revision, &revision.0)?;
+    let batch = crate::export_batch::prepare_export_batch(
+        root,
+        final_dir.file_name().unwrap().to_str().unwrap(),
+    )?;
+    crate::export_batch::copy_student_artifacts(&final_dir, &batch.staging_dir)?;
+    let counts = crate::db::repos::export_invigilation::exam_counts(db).await?;
+    let mut inputs = Vec::new();
+    for grade in ["高一", "高二", "高三"] {
+        let rows: Vec<_> = plan
+            .records
+            .iter()
+            .filter(|record| record.task.grade_name == grade)
+            .map(|record| {
+                let task = &record.task;
+                TaskExportRow {
+                    session_id: task.session_id,
+                    space_id: task.space_id,
+                    task_source: task.task_source.as_key().into(),
+                    role: task.role.as_key().into(),
+                    grade_name: task.grade_name.clone(),
+                    subject: task.subject,
+                    space_name: task.space_name.clone(),
+                    floor: task.floor.clone(),
+                    start_at: task.start_at.clone(),
+                    end_at: task.end_at.clone(),
+                    start_ts: task.start_ts,
+                    duration_minutes: task.duration_minutes,
+                    recommended_self_study_topic_label: task
+                        .recommended_self_study_topic
+                        .as_ref()
+                        .map(|topic| topic.label.clone()),
+                    teacher_name: record.teacher_id.and_then(|id| {
+                        teachers
+                            .iter()
+                            .find(|teacher| teacher.id == id)
+                            .map(|teacher| teacher.name.clone())
+                    }),
+                }
+            })
+            .collect();
+        if rows.is_empty() {
+            continue;
+        }
+        let accounting_teachers = teachers
+            .iter()
+            .filter(|teacher| teacher.invigilation_grade_name.as_deref() == Some(grade))
+            .map(|teacher| {
+                let mut subjects: Vec<_> = teacher.subjects.iter().copied().collect();
+                subjects.sort_by_key(|subject| subject_order(*subject));
+                AccountingTeacherRow {
+                    teacher_id: teacher.id,
+                    teacher_name: teacher.name.clone(),
+                    group_subject: if subjects.is_empty() {
+                        "艺体".into()
+                    } else {
+                        subjects
+                            .into_iter()
+                            .map(subject_label)
+                            .collect::<Vec<_>>()
+                            .join("、")
+                    },
+                    is_middle_manager: teacher.is_middle_manager,
+                }
+            })
+            .collect();
+        inputs.push(GradeStaffExportInput {
+            grade: grade.into(),
+            rows,
+            teachers: accounting_teachers,
+            config: crate::db::repos::export_invigilation::accounting_config(db, grade).await?,
+        });
+    }
+    crate::export_invigilation::write_grade_staff_workbooks(
+        &batch.staging_dir,
+        &title,
+        inputs,
+        &counts,
+    )?;
+    crate::export_batch::write_staff_source(&batch.staging_dir, revision)?;
+    Ok(batch)
+}
+
 async fn generate_latest_exam_staff_plan_internal(
     db: &sea_orm::DatabaseConnection,
     invigilation_config: RuntimeInvigilationConfig,
     custom_rules: Vec<GenerateExamStaffPlanCustomRule>,
     log_path: Option<&Path>,
     progress: Option<&StaffAssignmentProgressReporter>,
+    output_root: Option<&Path>,
 ) -> Result<GenerateLatestExamStaffPlanResult, AppError> {
+    let source_revision = crate::db::repos::export_bundle::source_revision(db).await?;
+    let plan_revision = if output_root.is_some() {
+        Some(crate::db::repos::export_bundle::plan_revision(db).await?)
+    } else {
+        None
+    };
     if let Some(progress) = progress {
         progress.emit_running(
             1,
@@ -3690,8 +3811,46 @@ async fn generate_latest_exam_staff_plan_internal(
             ),
         );
     }
+    let prepared = if let Some(root) = output_root {
+        Some(
+            prepare_staff_export_from_plan(
+                db,
+                root,
+                &teachers,
+                &final_plan,
+                plan_revision.as_deref().unwrap(),
+                &source_revision,
+            )
+            .await?,
+        )
+    } else {
+        None
+    };
+    use sea_orm::TransactionTrait;
+    let tx = db.begin().await?;
+    if crate::db::repos::export_bundle::source_revision(&tx).await? != source_revision
+        || (plan_revision.is_some()
+            && Some(crate::db::repos::export_bundle::plan_revision(&tx).await?) != plan_revision)
+    {
+        return Err(AppError::new(
+            "分配期间导入数据或考场快照已变化，请重新分配",
+        ));
+    }
     let result =
-        persist_solved_plan(db, session_times.len() as i64, &teachers, &final_plan).await?;
+        persist_solved_plan(&tx, session_times.len() as i64, &teachers, &final_plan).await?;
+    let mut published = prepared
+        .as_ref()
+        .map(crate::export_batch::publish_prepared_batch)
+        .transpose()?;
+    if let Err(error) = tx.commit().await {
+        if let Some(published) = &mut published {
+            published.rollback()?;
+        }
+        return Err(error.into());
+    }
+    if let Some(published) = published {
+        published.finish()?;
+    }
     if let Some(progress) = progress {
         progress.emit_completed(format!(
             "监考分配完成：已分配 {} 项，未分配 {} 项。",
@@ -3811,12 +3970,14 @@ pub async fn generate_latest_exam_staff_plan(
         hydrate_runtime_middle_manager_config(&db, &mut config).await?;
         config.self_study_class_subjects = load_self_study_class_subjects(&db).await?;
         let custom_rules = payload.custom_rules;
+        let output_root = crate::export_bundle::export_root_dir(&app)?;
         generate_latest_exam_staff_plan_internal(
             &db,
             config,
             custom_rules,
             log_path.as_deref(),
             Some(&progress),
+            Some(&output_root),
         )
         .await
     }
@@ -4888,12 +5049,23 @@ mod tests {
     #[test]
     fn test_same_subject_later_stage_timeout_retains_legal_plan() {
         let teachers = vec![TeacherInfo {
-            id: 1, name: "教师".into(), invigilation_grade_name: Some("高一".into()),
-            subjects: HashSet::from([Subject::Math]), class_names: HashSet::new(),
-            homeroom_classes: HashSet::new(), is_middle_manager: false,
+            id: 1,
+            name: "教师".into(),
+            invigilation_grade_name: Some("高一".into()),
+            subjects: HashSet::from([Subject::Math]),
+            class_names: HashSet::new(),
+            homeroom_classes: HashSet::new(),
+            is_middle_manager: false,
         }];
         FAIL_STAGE_AFTER.with(|remaining| remaining.set(Some(1)));
-        let attempt = solve_with_cp_sat(&[sample_exam_task(Subject::Math)], &teachers, &[], &test_runtime_config(), &HashMap::new(), None);
+        let attempt = solve_with_cp_sat(
+            &[sample_exam_task(Subject::Math)],
+            &teachers,
+            &[],
+            &test_runtime_config(),
+            &HashMap::new(),
+            None,
+        );
         FAIL_STAGE_AFTER.with(|remaining| remaining.set(None));
         assert!(attempt.fallback_reason.is_some());
         let plan = attempt.plan.unwrap();
@@ -4940,6 +5112,7 @@ mod tests {
                 &db,
                 test_runtime_config(),
                 vec![],
+                None,
                 None,
                 None,
             )
@@ -6763,6 +6936,7 @@ mod tests {
             config,
             custom_rules,
             Some(log_path.as_path()),
+            None,
             None,
         ))
         .expect("generate staff plan on real db");

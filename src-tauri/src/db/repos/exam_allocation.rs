@@ -477,7 +477,24 @@ pub async fn replace_plan_snapshot(
     let mut sessions = std::collections::HashMap::new();
     let mut spaces = std::collections::HashMap::new();
     for (i, row) in draft.sessions.iter().enumerate() {
-        sessions.insert(i as i64 + 1, insert_session(tx, row.clone()).await?);
+        let id = insert_session(tx, row.clone()).await?;
+        sessions.insert(i as i64 + 1, id);
+        if let Some((start, end)) = draft.windows.get(&(i as i64 + 1)) {
+            let format_time = |ts| {
+                chrono::DateTime::from_timestamp_millis(ts)
+                    .map(|value| value.format("%Y-%m-%dT%H:%M").to_string())
+                    .ok_or_else(|| AppError::new("考试时间无效"))
+            };
+            crate::entity::exam_session_times::ActiveModel {
+                session_id: Set(id),
+                subject: Set(row.subject.clone()),
+                start_at: Set(format_time(*start)?),
+                end_at: Set(format_time(*end)?),
+                updated_at: Set(chrono::Utc::now().to_rfc3339()),
+            }
+            .insert(tx)
+            .await?;
+        }
     }
     for (i, row) in draft.spaces.iter().enumerate() {
         let mut row = row.clone();

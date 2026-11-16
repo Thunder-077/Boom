@@ -345,7 +345,7 @@ fn build_tickets_html(
     html.replace("{{EXAM_TITLE}}", &escape_html(exam_title))
 }
 
-fn export_root_dir(app: &AppHandle) -> Result<PathBuf, AppError> {
+pub(crate) fn export_root_dir(app: &AppHandle) -> Result<PathBuf, AppError> {
     let mut dir = app
         .path()
         .app_data_dir()
@@ -355,7 +355,7 @@ fn export_root_dir(app: &AppHandle) -> Result<PathBuf, AppError> {
     Ok(dir)
 }
 
-fn export_batch_dir(root: &Path, exam_title: &str) -> PathBuf {
+pub(crate) fn export_batch_dir(root: &Path, exam_title: &str) -> PathBuf {
     let sanitized_title = sanitize_file_name_segment(exam_title);
     if sanitized_title.is_empty() {
         root.join("考场安排")
@@ -364,34 +364,109 @@ fn export_batch_dir(root: &Path, exam_title: &str) -> PathBuf {
     }
 }
 
-pub fn generate_export_files<F>(app: &AppHandle, mut on_grade_done: F) -> Result<PathBuf, AppError>
+pub(crate) struct GradeBundleInput {
+    pub grade: String,
+    pub sessions: HashMap<Subject, SessionInfo>,
+    pub rows: Vec<ExamRow>,
+    pub students: Vec<StudentBase>,
+}
+
+pub(crate) async fn bundle_data_from_draft<C: sea_orm::ConnectionTrait>(
+    db: &C,
+    draft: &crate::exam_plan_snapshot::ExamPlanDraft,
+) -> Result<Vec<GradeBundleInput>, AppError> {
+    crate::exam_plan_snapshot::validate_exam_plan_draft(draft)?;
+    let mut inputs = Vec::new();
+    for grade in ["高一", "高二", "高三"] {
+        let mut sessions = HashMap::new();
+        let mut rows = Vec::new();
+        for (index, session) in draft
+            .sessions
+            .iter()
+            .enumerate()
+            .filter(|(_, session)| session.grade_name == grade)
+        {
+            let id = index as i64 + 1;
+            let subject =
+                Subject::from_key(&session.subject).ok_or_else(|| AppError::new("草稿科目无效"))?;
+            let label = SUBJECT_EXPORT_ORDER
+                .iter()
+                .find(|(item, _)| *item == subject)
+                .unwrap()
+                .1;
+            let (start, end) = draft
+                .windows
+                .get(&id)
+                .ok_or_else(|| AppError::new("草稿缺少考试时间"))?;
+            let format_time = |ts| {
+                chrono::DateTime::from_timestamp_millis(ts)
+                    .map(|time| time.format("%Y-%m-%dT%H:%M").to_string())
+                    .ok_or_else(|| AppError::new("草稿考试时间无效"))
+            };
+            sessions.insert(
+                subject,
+                SessionInfo {
+                    subject_label: label,
+                    start_at: Some(format_time(*start)?),
+                    end_at: Some(format_time(*end)?),
+                    start_ts: Some(*start),
+                },
+            );
+            for allocation in draft.allocations.iter().filter(|allocation| {
+                allocation.session_id == id && allocation.allocation_type == "exam"
+            }) {
+                let space = allocation
+                    .space_id
+                    .and_then(|id| draft.spaces.get(id.checked_sub(1)? as usize))
+                    .ok_or_else(|| AppError::new("草稿考场不存在"))?;
+                rows.push(ExamRow {
+                    admission_no: allocation.admission_no.clone(),
+                    student_name: allocation.student_name.clone(),
+                    class_name: allocation.class_name.clone(),
+                    subject,
+                    subject_label: label,
+                    space_name: space.space_name.clone(),
+                    seat_no: allocation.seat_no.unwrap_or_default(),
+                });
+            }
+        }
+        if !sessions.is_empty() {
+            inputs.push(GradeBundleInput {
+                grade: grade.into(),
+                sessions,
+                rows,
+                students: crate::db::repos::export_bundle::students_for_grade(db, grade).await?,
+            });
+        }
+    }
+    Ok(inputs)
+}
+
+pub(crate) fn write_exam_bundle_data<F>(
+    batch_dir: &Path,
+    exam_title: &str,
+    exam_notices: &[String],
+    grades: &[GradeBundleInput],
+    mut on_grade_done: F,
+) -> Result<(), AppError>
 where
     F: FnMut(&str, usize, usize),
 {
-    let db = tauri::async_runtime::block_on(crate::db::connect(app))?;
-    let settings = tauri::async_runtime::block_on(crate::db::repos::export_bundle::settings(&db))?;
-    let exam_title = settings.exam_title;
-    let exam_notices = settings.exam_notices;
     if exam_title.trim().is_empty() {
         return Err(AppError::new("未配置考试标题，无法导出"));
     }
 
-    let grades = tauri::async_runtime::block_on(crate::db::repos::export_bundle::grades(&db))?;
     if grades.is_empty() {
         return Err(AppError::new("暂无考场分配快照数据，请先执行考场分配"));
     }
 
-    let root = export_root_dir(app)?;
-    let batch_dir = export_batch_dir(&root, &exam_title);
-    if batch_dir.exists() {
-        fs::remove_dir_all(&batch_dir)
-            .map_err(|e| AppError::new(format!("清理旧导出目录失败: {e}")))?;
-    }
     fs::create_dir_all(&batch_dir)
         .map_err(|e| AppError::new(format!("创建导出批次目录失败: {e}")))?;
 
     let total_grades = grades.len();
-    for (grade_index, grade) in grades.iter().enumerate() {
+    for (grade_index, input) in grades.iter().enumerate() {
+        let grade = &input.grade;
+        crate::excel_import::normalize_sheet_grade(grade)?;
         let grade_dir = batch_dir.join(grade);
         let class_dir = grade_dir.join("班级名册");
         let room_dir = grade_dir.join("考场名册");
@@ -403,19 +478,13 @@ where
         fs::create_dir_all(&ticket_dir)
             .map_err(|e| AppError::new(format!("创建准考证目录失败: {e}")))?;
 
-        let sessions = tauri::async_runtime::block_on(
-            crate::db::repos::export_bundle::sessions_for_grade(&db, grade),
-        )?;
-        let rows = tauri::async_runtime::block_on(
-            crate::db::repos::export_bundle::exam_rows_for_grade(&db, grade),
-        )?;
-        let students = tauri::async_runtime::block_on(
-            crate::db::repos::export_bundle::students_for_grade(&db, grade),
-        )?;
+        let sessions = &input.sessions;
+        let rows = &input.rows;
+        let students = &input.students;
 
         let mut class_group: HashMap<String, Vec<&ExamRow>> = HashMap::new();
         let mut room_group: HashMap<String, Vec<&ExamRow>> = HashMap::new();
-        for row in &rows {
+        for row in rows {
             class_group
                 .entry(row.class_name.clone())
                 .or_default()
@@ -552,6 +621,11 @@ where
             display_width("班级名次"),
         ];
         summary_widths.resize(4 + subject_order.len() * 2, display_width("座位号"));
+        let group_col = summary_widths.len() as u16;
+        summary_widths.push(display_width("普通班"));
+        summary_sheet
+            .write_string_with_format(0, group_col, "组别", &summary_cell_fmt)
+            .map_err(|e| AppError::new(format!("写组别表头失败: {e}")))?;
 
         for (idx, (subject, label)) in subject_order.iter().enumerate() {
             let col = 4_u16 + (idx as u16 * 2);
@@ -587,7 +661,7 @@ where
         }
 
         let mut alloc_map: HashMap<(String, Subject), (String, i64)> = HashMap::new();
-        for row in &rows {
+        for row in rows {
             alloc_map.insert(
                 (row.admission_no.clone(), row.subject),
                 (row.space_name.clone(), row.seat_no),
@@ -604,6 +678,18 @@ where
 
         for (idx, stu) in exported_students.iter().enumerate() {
             let r = 2 + idx as u32;
+            summary_sheet
+                .write_string_with_format(
+                    r,
+                    group_col,
+                    if stu.exam_group == "comprehensive" {
+                        "综评班"
+                    } else {
+                        "普通班"
+                    },
+                    &summary_cell_fmt,
+                )
+                .map_err(|e| AppError::new(format!("写组别失败: {e}")))?;
             summary_sheet
                 .write_string_with_format(r, 0, &stu.student_name, &summary_cell_fmt)
                 .map_err(|e| AppError::new(format!("写总览数据失败: {e}")))?;
@@ -711,7 +797,7 @@ where
         on_grade_done(grade, grade_index + 1, total_grades);
     }
 
-    Ok(batch_dir)
+    Ok(())
 }
 
 pub fn zip_existing_export_bundle(
@@ -720,12 +806,21 @@ pub fn zip_existing_export_bundle(
     let exported_at = Utc::now().to_rfc3339();
     let root = export_root_dir(app)?;
     let db = tauri::async_runtime::block_on(crate::db::connect(app))?;
-    let settings = tauri::async_runtime::block_on(crate::db::repos::export_bundle::settings(&db))?;
+    use sea_orm::TransactionTrait;
+    let (settings, revision, plan_revision) = tauri::async_runtime::block_on(async {
+        let tx = db.begin().await?;
+        let settings = crate::db::repos::export_bundle::settings(&tx).await?;
+        let revision = crate::db::repos::export_bundle::source_revision(&tx).await?;
+        let plan_revision = crate::db::repos::export_bundle::plan_revision(&tx).await?;
+        tx.commit().await?;
+        Ok::<_, AppError>((settings, revision, plan_revision))
+    })?;
     let exam_title = settings.exam_title;
     let batch_dir = export_batch_dir(&root, &exam_title);
     if !batch_dir.exists() {
         return Err(AppError::new("尚未生成导出文件，请先执行考场分配"));
     }
+    crate::export_batch::verify_batch_identity(&batch_dir, &plan_revision, &revision.0)?;
     let grade_count = fs::read_dir(&batch_dir)
         .map_err(|e| AppError::new(format!("读取导出目录失败: {e}")))?
         .filter_map(Result::ok)

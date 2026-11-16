@@ -226,13 +226,27 @@ const fakeService: ExamAllocationService = {
   },
   async exportLatestInvigilationSchedule() {
     return {
-      filePath: "D:/exports/监考表-20260324-100000.xlsx",
+      folderPath: "D:/exports/测试考试考场安排",
+      files: [{ gradeName: "高一", filePath: "D:/exports/测试考试考场安排/高一/监考表.xlsx" }],
       exportedAt: "2026-03-24T10:00:00Z",
     };
   },
 };
 
 describe("exam allocation store", () => {
+  it("keeps grade files and opens the export folder, preserving the previous path after failure", async () => {
+    const result = { folderPath: "D:/exports/考试考场安排", files: [
+      { gradeName: "高一", filePath: "D:/exports/考试考场安排/高一/监考表.xlsx" },
+      { gradeName: "高三", filePath: "D:/exports/考试考场安排/高三/监考表.xlsx" },
+    ], exportedAt: "2026-11-16T10:00:00Z" };
+    const exporter = vi.fn().mockResolvedValueOnce(result).mockRejectedValueOnce(new Error("写入失败"));
+    const store = createExamAllocationStore({ ...fakeService, exportLatestInvigilationSchedule: exporter });
+    expect(await store.exportLatestInvigilationSchedule()).toEqual(result);
+    expect(store.viewState.lastInvigilationExportPath).toBe(result.folderPath);
+    expect(store.viewState.lastInvigilationExportFiles).toEqual(result.files);
+    await expect(store.exportLatestInvigilationSchedule()).rejects.toThrow("写入失败");
+    expect(store.viewState.lastInvigilationExportPath).toBe(result.folderPath);
+  });
   it("saves grade overrides and clears them when restoring defaults", async () => {
     const updateSettings = vi.fn(fakeService.updateSettings);
     const store = createExamAllocationStore({ ...fakeService, updateSettings });

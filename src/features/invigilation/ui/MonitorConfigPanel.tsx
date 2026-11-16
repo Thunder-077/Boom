@@ -1290,9 +1290,9 @@ export default function MonitorConfigPanel() {
   async function handleExportInvigilationSchedule() {
     try {
       const result = await exportLatestInvigilationSchedule();
-      await showAssignmentNoticeMessage("success", "监考表已导出，点击下方链接打开文件所在位置。", {
-        linkPath: result.filePath,
-        linkLabel: exportFileName(result.filePath),
+      await showAssignmentNoticeMessage("success", `已导出 ${result.files.length} 个年级的监考表，点击打开目录。`, {
+        linkPath: result.folderPath,
+        linkLabel: exportFileName(result.folderPath),
       });
     } catch (error) {
       const message = state.errorMessage || (error instanceof Error ? error.message : String(error)) || "导出失败，请稍后重试。";

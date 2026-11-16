@@ -23,8 +23,16 @@ const ALERT_RED: u32 = 0xC00000;
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ExportLatestInvigilationScheduleResult {
-    file_path: String,
+    pub(crate) folder_path: String,
+    pub(crate) files: Vec<GradeExportFile>,
     exported_at: String,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct GradeExportFile {
+    pub grade_name: String,
+    pub file_path: String,
 }
 
 #[derive(Debug, Clone)]
@@ -515,9 +523,7 @@ fn collect_floor_cells(
             .saturating_add(row.duration_minutes.saturating_mul(60_000));
         let floor_label = pretty_floor(&row.floor);
         for slot in slots.iter().filter(|slot| {
-            slot.key.bucket == bucket
-                && row.start_ts < slot.end_ts
-                && slot.start_ts < rover_end_ts
+            slot.key.bucket == bucket && row.start_ts < slot.end_ts && slot.start_ts < rover_end_ts
         }) {
             floors.insert(floor_label.clone());
             let entry = cells
@@ -1459,6 +1465,7 @@ fn build_workbook_from_data(
     accounting_teacher_rows: Vec<AccountingTeacherRow>,
     accounting_config: AccountingConfig,
 ) -> Result<Workbook, AppError> {
+    validate_room_cells(&rows)?;
     let mut slots = build_slots(&rows)?;
     let (room_names, room_cells) = collect_room_cells(&rows, &slots, &exam_counts);
     let (floors, floor_cells) = collect_floor_cells(&rows, &slots);
@@ -1559,8 +1566,7 @@ fn save_workbook_to_dir(
     mut workbook: Workbook,
     output_dir: &Path,
     exam_title: &str,
-) -> Result<ExportLatestInvigilationScheduleResult, AppError> {
-    let exported_at = Utc::now().to_rfc3339();
+) -> Result<PathBuf, AppError> {
     fs::create_dir_all(output_dir).map_err(|e| AppError::new(format!("创建导出目录失败: {e}")))?;
     let sanitized_title = sanitize_file_name_segment(exam_title);
     let file_name = if sanitized_title.is_empty() {
@@ -1569,44 +1575,149 @@ fn save_workbook_to_dir(
         format!("{sanitized_title}监考表.xlsx")
     };
     let path = output_dir.join(file_name);
-    if path.exists() {
-        fs::remove_file(&path).map_err(|e| AppError::new(format!("覆盖旧监考表失败: {e}")))?;
-    }
     workbook
         .save(&path)
         .map_err(|e| AppError::new(format!("保存监考表失败: {e}")))?;
 
-    Ok(ExportLatestInvigilationScheduleResult {
-        file_path: path.to_string_lossy().to_string(),
-        exported_at,
-    })
+    Ok(path)
+}
+
+pub(crate) fn validate_room_cells(rows: &[TaskExportRow]) -> Result<(), AppError> {
+    let mut spaces = HashMap::new();
+    for row in rows.iter().filter(|row| row.role != "floor_rover") {
+        let key = (
+            &row.grade_name,
+            &row.start_at,
+            &row.end_at,
+            normalize_room_name(&row.space_name),
+        );
+        let identity = (row.session_id, row.space_id, &row.role);
+        if spaces
+            .insert(key, identity)
+            .is_some_and(|previous| previous != identity)
+        {
+            return Err(AppError::new(format!(
+                "{} {} 同名考场冲突，已停止导出",
+                row.grade_name, row.space_name
+            )));
+        }
+    }
+    Ok(())
+}
+
+pub(crate) struct GradeStaffExportInput {
+    pub grade: String,
+    pub rows: Vec<TaskExportRow>,
+    pub teachers: Vec<AccountingTeacherRow>,
+    pub config: AccountingConfig,
+}
+
+pub(crate) fn write_grade_staff_workbooks(
+    output_dir: &Path,
+    exam_title: &str,
+    inputs: Vec<GradeStaffExportInput>,
+    counts: &HashMap<(i64, i64), i64>,
+) -> Result<Vec<GradeExportFile>, AppError> {
+    let mut files = Vec::new();
+    for input in inputs {
+        let grade = crate::excel_import::normalize_sheet_grade(&input.grade)?;
+        if input.rows.iter().any(|row| row.grade_name != grade) {
+            return Err(AppError::new("监考导出含有其他年级的数据"));
+        }
+        let workbook =
+            build_workbook_from_data(input.rows, counts.clone(), input.teachers, input.config)?;
+        let path = save_workbook_to_dir(workbook, &output_dir.join(&grade), exam_title)?;
+        files.push(GradeExportFile {
+            grade_name: grade,
+            file_path: path.to_string_lossy().to_string(),
+        });
+    }
+    Ok(files)
 }
 
 fn export_schedule_internal(
     app: &AppHandle,
 ) -> Result<ExportLatestInvigilationScheduleResult, AppError> {
     let db = tauri::async_runtime::block_on(crate::db::connect(app))?;
-    let rows = tauri::async_runtime::block_on(
-        crate::db::repos::export_invigilation::task_export_rows(&db),
+    use sea_orm::TransactionTrait;
+    let (rows, counts, inputs, title, revision, plan_revision) =
+        tauri::async_runtime::block_on(async {
+            let tx = db.begin().await?;
+            let rows = crate::db::repos::export_invigilation::task_export_rows(&tx).await?;
+            let counts = crate::db::repos::export_invigilation::exam_counts(&tx).await?;
+            let mut inputs = Vec::new();
+            for grade in ["高一", "高二", "高三"] {
+                let grade_rows: Vec<_> = rows
+                    .iter()
+                    .filter(|row| row.grade_name == grade)
+                    .cloned()
+                    .collect();
+                if grade_rows.is_empty() {
+                    continue;
+                }
+                inputs.push(GradeStaffExportInput {
+                    grade: grade.into(),
+                    rows: grade_rows,
+                    teachers: crate::db::repos::export_invigilation::accounting_teacher_rows(
+                        &tx, grade,
+                    )
+                    .await?,
+                    config: crate::db::repos::export_invigilation::accounting_config(&tx, grade)
+                        .await?,
+                });
+            }
+            let title = crate::db::repos::export_invigilation::exam_title(&tx).await?;
+            let revision = crate::db::repos::export_bundle::source_revision(&tx).await?;
+            let plan_revision = crate::db::repos::export_bundle::plan_revision(&tx).await?;
+            tx.commit().await?;
+            Ok::<_, AppError>((rows, counts, inputs, title, revision, plan_revision))
+        })?;
+    let _ = rows;
+    let root = export_root_dir(app)?;
+    let final_dir = crate::export_bundle::export_batch_dir(&root, &title);
+    crate::export_batch::verify_batch_identity(&final_dir, &plan_revision, &revision.0)?;
+    crate::export_batch::verify_staff_source(&final_dir, &revision)?;
+    let batch = crate::export_batch::prepare_export_batch(
+        &root,
+        final_dir.file_name().unwrap().to_str().unwrap(),
     )?;
-    let exam_counts =
-        tauri::async_runtime::block_on(crate::db::repos::export_invigilation::exam_counts(&db))?;
-    let accounting_teacher_rows = tauri::async_runtime::block_on(
-        crate::db::repos::export_invigilation::accounting_teacher_rows(&db),
-    )?;
-    let accounting_config = tauri::async_runtime::block_on(
-        crate::db::repos::export_invigilation::accounting_config(&db),
-    )?;
-    let workbook = build_workbook_from_data(
-        rows,
-        exam_counts,
-        accounting_teacher_rows,
-        accounting_config,
-    )?;
-    let exam_title =
-        tauri::async_runtime::block_on(crate::db::repos::export_invigilation::exam_title(&db))?;
-    let output_dir = export_root_dir(app)?;
-    save_workbook_to_dir(workbook, &output_dir, &exam_title)
+    crate::export_batch::copy_student_artifacts(&final_dir, &batch.staging_dir)?;
+    let files = write_grade_staff_workbooks(&batch.staging_dir, &title, inputs, &counts)?;
+    let tx = tauri::async_runtime::block_on(db.begin())?;
+    if tauri::async_runtime::block_on(crate::db::repos::export_bundle::source_revision(&tx))?
+        != revision
+        || tauri::async_runtime::block_on(crate::db::repos::export_bundle::plan_revision(&tx))?
+            != plan_revision
+    {
+        return Err(AppError::new("导出期间数据已变化，请重新导出"));
+    }
+    let mut published = crate::export_batch::publish_prepared_batch(&batch)?;
+    if let Err(error) = tauri::async_runtime::block_on(tx.commit()) {
+        published.rollback()?;
+        return Err(error.into());
+    }
+    published.finish()?;
+    Ok(export_result_for_batch(&batch, files))
+}
+
+pub(crate) fn export_result_for_batch(
+    batch: &crate::export_batch::PreparedExportBatch,
+    mut files: Vec<GradeExportFile>,
+) -> ExportLatestInvigilationScheduleResult {
+    for file in &mut files {
+        let name = Path::new(&file.file_path).file_name().unwrap();
+        file.file_path = batch
+            .final_dir
+            .join(&file.grade_name)
+            .join(name)
+            .to_string_lossy()
+            .to_string();
+    }
+    ExportLatestInvigilationScheduleResult {
+        folder_path: batch.final_dir.to_string_lossy().to_string(),
+        files,
+        exported_at: Utc::now().to_rfc3339(),
+    }
 }
 
 pub fn export_latest_invigilation_schedule(
@@ -1947,10 +2058,7 @@ mod tests {
                 .unwrap_or_default();
             let label = slot.time_label.clone();
             if label.starts_with("08:00") {
-                assert!(
-                    cell.is_empty(),
-                    "楼层流动与上午场不重叠，不应出现在上午列"
-                );
+                assert!(cell.is_empty(), "楼层流动与上午场不重叠，不应出现在上午列");
             } else {
                 assert_eq!(
                     cell,

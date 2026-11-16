@@ -1,0 +1,512 @@
+use crate::score::AppError;
+use std::{
+    fs,
+    path::{Path, PathBuf},
+    sync::atomic::{AtomicU64, Ordering},
+};
+
+static NEXT_BATCH: AtomicU64 = AtomicU64::new(1);
+
+pub(crate) struct PreparedExportBatch {
+    pub staging_dir: PathBuf,
+    pub final_dir: PathBuf,
+    backup_dir: PathBuf,
+}
+
+pub(crate) struct PublishedExportBatch {
+    final_dir: PathBuf,
+    backup_dir: PathBuf,
+    staging_dir: PathBuf,
+    had_previous: bool,
+}
+
+pub(crate) fn prepare_export_batch(
+    root: &Path,
+    final_name: &str,
+) -> Result<PreparedExportBatch, AppError> {
+    if final_name.is_empty()
+        || !matches!(
+            Path::new(final_name).components().next(),
+            Some(std::path::Component::Normal(_))
+        )
+        || Path::new(final_name).components().count() != 1
+        || final_name == "."
+        || final_name == ".."
+    {
+        return Err(AppError::new("导出批次目录名无效"));
+    }
+    fs::create_dir_all(root).map_err(|e| AppError::new(format!("创建导出根目录失败: {e}")))?;
+    let nonce = format!(
+        "{}-{}-{}",
+        std::process::id(),
+        chrono::Utc::now().timestamp_nanos_opt().unwrap_or_default(),
+        NEXT_BATCH.fetch_add(1, Ordering::Relaxed)
+    );
+    let staging_dir = root.join(format!(".staging-{nonce}"));
+    fs::create_dir(&staging_dir)
+        .map_err(|e| AppError::new(format!("创建临时导出目录失败: {e}")))?;
+    Ok(PreparedExportBatch {
+        staging_dir,
+        final_dir: root.join(final_name),
+        backup_dir: root.join(format!(".backup-{nonce}")),
+    })
+}
+
+pub(crate) fn publish_prepared_batch(
+    batch: &PreparedExportBatch,
+) -> Result<PublishedExportBatch, AppError> {
+    let had_previous = batch.final_dir.exists();
+    if had_previous {
+        if fs::symlink_metadata(&batch.final_dir)
+            .map_err(|e| AppError::new(e.to_string()))?
+            .file_type()
+            .is_symlink()
+        {
+            return Err(AppError::new("导出目标不能是符号链接"));
+        }
+        if !batch.final_dir.is_dir() {
+            return Err(AppError::new("导出目标被文件占用，原结果未更改"));
+        }
+        fs::rename(&batch.final_dir, &batch.backup_dir)
+            .map_err(|e| AppError::new(format!("备份旧导出目录失败，原结果未更改: {e}")))?;
+    }
+    if let Err(error) = fs::rename(&batch.staging_dir, &batch.final_dir) {
+        if had_previous {
+            fs::rename(&batch.backup_dir, &batch.final_dir).map_err(|rollback| {
+                AppError::new(format!(
+                    "发布失败: {error}；恢复失败: {rollback}；备份保留在 {}",
+                    batch.backup_dir.display()
+                ))
+            })?;
+        }
+        return Err(AppError::new(format!("发布导出目录失败: {error}")));
+    }
+    Ok(PublishedExportBatch {
+        final_dir: batch.final_dir.clone(),
+        backup_dir: batch.backup_dir.clone(),
+        staging_dir: batch.staging_dir.clone(),
+        had_previous,
+    })
+}
+
+impl PublishedExportBatch {
+    pub fn rollback(&mut self) -> Result<(), AppError> {
+        // 失败的新批次改回临时目录，绝不递归删除最终目录或吞掉恢复错误。
+        fs::rename(&self.final_dir, &self.staging_dir).map_err(|e| {
+            AppError::new(format!(
+                "撤回新导出失败: {e}；旧备份: {}",
+                self.backup_dir.display()
+            ))
+        })?;
+        if self.had_previous {
+            fs::rename(&self.backup_dir, &self.final_dir).map_err(|e| {
+                AppError::new(format!(
+                    "恢复旧导出失败: {e}；备份保留在 {}",
+                    self.backup_dir.display()
+                ))
+            })?;
+        }
+        Ok(())
+    }
+
+    pub fn finish(self) -> Result<(), AppError> {
+        if self.had_previous {
+            fs::remove_dir_all(&self.backup_dir).map_err(|e| {
+                AppError::new(format!(
+                    "新批次已发布，旧备份清理失败: {e}；备份: {}",
+                    self.backup_dir.display()
+                ))
+            })?;
+        }
+        Ok(())
+    }
+}
+
+pub(crate) fn copy_student_artifacts(source: &Path, target: &Path) -> Result<(), AppError> {
+    if !source.is_dir() {
+        return Err(AppError::new(
+            "本次考场资料目录不存在，请先重新生成考场安排",
+        ));
+    }
+    for entry in fs::read_dir(source).map_err(|e| AppError::new(e.to_string()))? {
+        let entry = entry.map_err(|e| AppError::new(e.to_string()))?;
+        let kind = entry
+            .file_type()
+            .map_err(|e| AppError::new(e.to_string()))?;
+        if kind.is_symlink() {
+            return Err(AppError::new("导出目录不能包含符号链接"));
+        }
+        let dest = target.join(entry.file_name());
+        if kind.is_dir() {
+            fs::create_dir(&dest).map_err(|e| AppError::new(e.to_string()))?;
+            copy_student_artifacts(&entry.path(), &dest)?;
+        } else {
+            fs::copy(entry.path(), &dest)
+                .map_err(|e| AppError::new(format!("保留考场资料失败: {e}")))?;
+        }
+    }
+    Ok(())
+}
+
+pub(crate) fn write_batch_identity(
+    dir: &Path,
+    generated_at: &str,
+    revision: &(Option<String>, Option<String>),
+) -> Result<(), AppError> {
+    let bytes =
+        serde_json::to_vec(&(generated_at, revision)).map_err(|e| AppError::new(e.to_string()))?;
+    fs::write(dir.join(".boom-batch.json"), bytes)
+        .map_err(|e| AppError::new(format!("写入批次标识失败: {e}")))
+}
+
+pub(crate) fn verify_batch_identity(
+    dir: &Path,
+    generated_at: &str,
+    score_revision: &Option<String>,
+) -> Result<(), AppError> {
+    let bytes = fs::read(dir.join(".boom-batch.json"))
+        .map_err(|_| AppError::new("考场资料与当前快照不匹配，请重新生成考场安排"))?;
+    let identity: (String, (Option<String>, Option<String>)) = serde_json::from_slice(&bytes)
+        .map_err(|_| AppError::new("考场资料批次标识无效，请重新生成"))?;
+    if identity.0 != generated_at || identity.1 .0 != *score_revision {
+        return Err(AppError::new("考场资料已过期，请重新生成考场安排"));
+    }
+    Ok(())
+}
+
+pub(crate) fn write_staff_source(
+    dir: &Path,
+    revision: &(Option<String>, Option<String>),
+) -> Result<(), AppError> {
+    fs::write(
+        dir.join(".boom-staff-source.json"),
+        serde_json::to_vec(revision).map_err(|e| AppError::new(e.to_string()))?,
+    )
+    .map_err(|e| AppError::new(format!("写入监考源版本失败: {e}")))
+}
+
+pub(crate) fn verify_staff_source(
+    dir: &Path,
+    revision: &(Option<String>, Option<String>),
+) -> Result<(), AppError> {
+    let bytes = fs::read(dir.join(".boom-staff-source.json"))
+        .map_err(|_| AppError::new("监考资料缺少源版本，请重新分配监考教师"))?;
+    let saved: (Option<String>, Option<String>) =
+        serde_json::from_slice(&bytes).map_err(|_| AppError::new("监考源版本无效，请重新分配"))?;
+    if saved != *revision {
+        return Err(AppError::new("导入数据已变化，请重新分配监考教师"));
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{
+        db::repos::export_bundle::{ExamRow, SessionInfo, StudentBase},
+        export_bundle::GradeBundleInput,
+        export_invigilation::{
+            AccountingConfig, AccountingTeacherRow, GradeStaffExportInput, TaskExportRow,
+        },
+        score::Subject,
+    };
+    use std::collections::{HashMap, HashSet};
+
+    #[test]
+    fn test_export_rejects_duplicate_room_cells() {
+        let row = TaskExportRow {
+            session_id: Some(1),
+            space_id: Some(1),
+            task_source: "exam".into(),
+            role: "exam_room_invigilator".into(),
+            grade_name: "高三".into(),
+            subject: Subject::Math,
+            space_name: "高三11场".into(),
+            floor: "一楼".into(),
+            start_at: "2026-11-18T08:00".into(),
+            end_at: "2026-11-18T10:00".into(),
+            start_ts: 0,
+            duration_minutes: 120,
+            recommended_self_study_topic_label: None,
+            teacher_name: None,
+        };
+        assert!(
+            crate::export_invigilation::validate_room_cells(&[row.clone(), row.clone()]).is_ok()
+        );
+        let duplicate = TaskExportRow {
+            space_id: Some(2),
+            space_name: "高三11班".into(),
+            ..row.clone()
+        };
+        assert!(crate::export_invigilation::validate_room_cells(&[row, duplicate]).is_err());
+    }
+
+    #[test]
+    fn test_export_database_failure_rolls_back_published_batch() {
+        use sea_orm::{
+            ActiveModelTrait, ActiveValue::Set, Database, EntityTrait, TransactionTrait,
+        };
+        use sea_orm_migration::MigratorTrait;
+        tauri::async_runtime::block_on(async {
+            let db = Database::connect("sqlite::memory:").await.unwrap();
+            crate::db::migration::Migrator::up(&db, None).await.unwrap();
+            crate::entity::latest_teachers_v2::ActiveModel {
+                teacher_name: Set("原数据".into()),
+                is_middle_manager: Set(0),
+                ..Default::default()
+            }
+            .insert(&db)
+            .await
+            .unwrap();
+            let root = std::env::temp_dir().join(format!(
+                "boom-export-{}",
+                chrono::Utc::now().timestamp_nanos_opt().unwrap()
+            ));
+            fs::create_dir_all(root.join("batch")).unwrap();
+            fs::write(root.join("batch/old"), b"old").unwrap();
+            let batch = prepare_export_batch(&root, "batch").unwrap();
+            fs::write(batch.staging_dir.join("new"), b"new").unwrap();
+            let tx = db.begin().await.unwrap();
+            crate::entity::latest_teachers_v2::Entity::delete_many()
+                .exec(&tx)
+                .await
+                .unwrap();
+            let mut published = publish_prepared_batch(&batch).unwrap();
+            // 模拟写入后提交失败：应用服务走相同的显式双回退路径。
+            tx.rollback().await.unwrap();
+            published.rollback().unwrap();
+            assert_eq!(
+                crate::entity::latest_teachers_v2::Entity::find()
+                    .all(&db)
+                    .await
+                    .unwrap()[0]
+                    .teacher_name,
+                "原数据"
+            );
+            assert_eq!(fs::read(root.join("batch/old")).unwrap(), b"old");
+            fs::remove_dir_all(root).unwrap();
+        });
+    }
+
+    #[test]
+    fn test_export_separates_grade_workbooks_and_group_labels() {
+        use calamine::{Reader, Xlsx};
+        let root = std::env::temp_dir().join(format!(
+            "boom-export-{}",
+            chrono::Utc::now().timestamp_nanos_opt().unwrap()
+        ));
+        let batch = prepare_export_batch(&root, "batch").unwrap();
+        let mut bundles = Vec::new();
+        let mut staff = Vec::new();
+        let mut counts = HashMap::new();
+        for (index, grade) in ["高一", "高三"].into_iter().enumerate() {
+            let id = index as i64 + 1;
+            let name = format!("{grade}学生");
+            let teacher_name = format!("{grade}教师");
+            bundles.push(GradeBundleInput {
+                grade: grade.into(),
+                sessions: HashMap::from([(
+                    Subject::Math,
+                    SessionInfo {
+                        subject_label: "数学",
+                        start_at: Some("2026-11-18T08:00".into()),
+                        end_at: Some("2026-11-18T10:00".into()),
+                        start_ts: Some(1794988800000),
+                    },
+                )]),
+                rows: vec![ExamRow {
+                    admission_no: id.to_string(),
+                    student_name: name.clone(),
+                    class_name: format!("{grade}1班"),
+                    subject: Subject::Math,
+                    subject_label: "数学",
+                    space_name: format!("{grade}1场"),
+                    seat_no: 1,
+                }],
+                students: vec![StudentBase {
+                    admission_no: id.to_string(),
+                    student_name: name,
+                    class_name: format!("{grade}1班"),
+                    class_rank: 1,
+                    exam_group: if grade == "高三" {
+                        "comprehensive".into()
+                    } else {
+                        "regular".into()
+                    },
+                }],
+            });
+            staff.push(GradeStaffExportInput {
+                grade: grade.into(),
+                rows: vec![TaskExportRow {
+                    session_id: Some(id),
+                    space_id: Some(id),
+                    task_source: "exam".into(),
+                    role: "exam_room_invigilator".into(),
+                    grade_name: grade.into(),
+                    subject: Subject::Math,
+                    space_name: format!("{grade}1场"),
+                    floor: "一楼".into(),
+                    start_at: "2026-11-18T08:00".into(),
+                    end_at: "2026-11-18T10:00".into(),
+                    start_ts: 1794988800000,
+                    duration_minutes: 120,
+                    recommended_self_study_topic_label: None,
+                    teacher_name: Some(teacher_name.clone()),
+                }],
+                teachers: vec![AccountingTeacherRow {
+                    teacher_id: id,
+                    teacher_name,
+                    group_subject: "数学".into(),
+                    is_middle_manager: false,
+                }],
+                config: AccountingConfig {
+                    indoor_allowance_per_minute: 0.5,
+                    outdoor_allowance_per_minute: 0.3,
+                    middle_manager_default_enabled: false,
+                    middle_manager_exception_teacher_ids: HashSet::new(),
+                    total_exam_and_self_study_minutes: 120,
+                },
+            });
+            counts.insert((id, id), 1);
+        }
+        let high3 = bundles.last_mut().unwrap();
+        high3.students.push(StudentBase {
+            admission_no: "3".into(),
+            student_name: "高三普通学生".into(),
+            class_name: "高三2班".into(),
+            class_rank: 1,
+            exam_group: "regular".into(),
+        });
+        high3.rows.push(ExamRow {
+            admission_no: "3".into(),
+            student_name: "高三普通学生".into(),
+            class_name: "高三2班".into(),
+            subject: Subject::Math,
+            subject_label: "数学",
+            space_name: "高三2场".into(),
+            seat_no: 1,
+        });
+        crate::export_bundle::write_exam_bundle_data(
+            &batch.staging_dir,
+            "测试考试",
+            &[],
+            &bundles,
+            |_, _, _| {},
+        )
+        .unwrap();
+        let student_file = batch.staging_dir.join("高三/考场分配结果汇总.xlsx");
+        let original = fs::read(&student_file).unwrap();
+        let mut published = publish_prepared_batch(&batch).unwrap();
+        published.rollback().unwrap();
+        let staff_batch = prepare_export_batch(&root, "next").unwrap();
+        copy_student_artifacts(&batch.staging_dir, &staff_batch.staging_dir).unwrap();
+        let files = crate::export_invigilation::write_grade_staff_workbooks(
+            &staff_batch.staging_dir,
+            "测试考试",
+            staff,
+            &counts,
+        )
+        .unwrap();
+        assert_eq!(files.len(), 2);
+        assert_eq!(
+            fs::read(staff_batch.staging_dir.join("高三/考场分配结果汇总.xlsx")).unwrap(),
+            original
+        );
+        assert!(!staff_batch.staging_dir.join("测试考试监考表.xlsx").exists());
+        for file in files {
+            let mut book: Xlsx<_> = calamine::open_workbook(&file.file_path).unwrap();
+            let text = book
+                .worksheets()
+                .into_iter()
+                .flat_map(|(_, sheet)| {
+                    sheet
+                        .cells()
+                        .map(|(_, _, cell)| cell.to_string())
+                        .collect::<Vec<_>>()
+                })
+                .collect::<Vec<_>>()
+                .join("|");
+            assert!(text.contains(&format!("{}教师", file.grade_name)));
+            let other = if file.grade_name == "高一" {
+                "高三"
+            } else {
+                "高一"
+            };
+            assert!(!text.contains(&format!("{other}教师")));
+        }
+        let mut summary: Xlsx<_> = calamine::open_workbook(&student_file).unwrap();
+        assert!(summary.worksheets().into_iter().any(|(_, sheet)| sheet
+            .cells()
+            .any(|(_, _, cell)| cell.to_string() == "综评班")));
+        assert!(summary.worksheets().into_iter().any(|(_, sheet)| sheet
+            .cells()
+            .any(|(_, _, cell)| cell.to_string() == "普通班")));
+        fs::remove_dir_all(root).unwrap();
+    }
+    #[test]
+    fn test_export_publish_rollback_preserves_previous_and_siblings() {
+        let root = std::env::temp_dir().join(format!(
+            "boom-export-{}",
+            chrono::Utc::now().timestamp_nanos_opt().unwrap()
+        ));
+        fs::create_dir_all(root.join("batch")).unwrap();
+        fs::write(root.join("batch/old"), b"old").unwrap();
+        fs::write(root.join("sibling"), b"keep").unwrap();
+        let batch = prepare_export_batch(&root, "batch").unwrap();
+        fs::write(batch.staging_dir.join("new"), b"new").unwrap();
+        let mut published = publish_prepared_batch(&batch).unwrap();
+        published.rollback().unwrap();
+        assert_eq!(fs::read(root.join("batch/old")).unwrap(), b"old");
+        assert_eq!(fs::read(root.join("sibling")).unwrap(), b"keep");
+        fs::remove_dir_all(root).unwrap();
+    }
+    #[test]
+    fn test_export_occupied_target_and_invalid_names_preserve_files() {
+        let root = std::env::temp_dir().join(format!(
+            "boom-export-{}",
+            chrono::Utc::now().timestamp_nanos_opt().unwrap()
+        ));
+        let batch = prepare_export_batch(&root, "batch").unwrap();
+        fs::write(&batch.final_dir, b"occupied").unwrap();
+        assert!(publish_prepared_batch(&batch).is_err());
+        assert_eq!(fs::read(&batch.final_dir).unwrap(), b"occupied");
+        assert!(prepare_export_batch(&root, "../escape").is_err());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn test_export_later_grade_write_failure_preserves_completed_batch() {
+        let root = std::env::temp_dir().join(format!(
+            "boom-export-{}",
+            chrono::Utc::now().timestamp_nanos_opt().unwrap()
+        ));
+        fs::create_dir_all(root.join("batch")).unwrap();
+        fs::write(root.join("batch/old"), b"old").unwrap();
+        let batch = prepare_export_batch(&root, "batch").unwrap();
+        // 第二个年级目录被文件占用，前一个年级的临时文件不能成为部分发布结果。
+        fs::write(batch.staging_dir.join("高三"), b"occupied").unwrap();
+        let inputs: Vec<_> = ["高一", "高三"]
+            .into_iter()
+            .map(|grade| GradeBundleInput {
+                grade: grade.into(),
+                rows: vec![],
+                students: vec![],
+                sessions: HashMap::new(),
+            })
+            .collect();
+        assert!(crate::export_bundle::write_exam_bundle_data(
+            &batch.staging_dir,
+            "测试",
+            &[],
+            &inputs,
+            |_, _, _| {}
+        )
+        .is_err());
+        assert!(batch
+            .staging_dir
+            .join("高一/考场分配结果汇总.xlsx")
+            .exists());
+        assert_eq!(fs::read(root.join("batch/old")).unwrap(), b"old");
+        fs::remove_dir_all(root).unwrap();
+    }
+}

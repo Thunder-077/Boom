@@ -1642,6 +1642,8 @@ fn generate_latest_exam_plan_internal(
 ) -> Result<GenerateLatestExamPlanResult, AppError> {
     let db = open_exam_allocation_db(app)?;
     ensure_exam_allocation_defaults(&db)?;
+    let source_revision =
+        tauri::async_runtime::block_on(crate::db::repos::export_bundle::source_revision(&db))?;
     update_exam_generation_progress(
         &db,
         "running",
@@ -1904,7 +1906,47 @@ fn generate_latest_exam_plan_internal(
 
     {
         crate::exam_plan_snapshot::validate_exam_plan_draft(&draft)?;
+        let bundle_settings =
+            tauri::async_runtime::block_on(crate::db::repos::export_bundle::settings(&db))?;
+        let inputs =
+            tauri::async_runtime::block_on(export_bundle::bundle_data_from_draft(&db, &draft))?;
+        let root = export_bundle::export_root_dir(app)?;
+        let final_dir = export_bundle::export_batch_dir(&root, &bundle_settings.exam_title);
+        let batch = crate::export_batch::prepare_export_batch(
+            &root,
+            final_dir.file_name().unwrap().to_str().unwrap(),
+        )?;
+        export_bundle::write_exam_bundle_data(
+            &batch.staging_dir,
+            &bundle_settings.exam_title,
+            &bundle_settings.exam_notices,
+            &inputs,
+            |grade_name, done, total| {
+                let _ = update_exam_generation_progress(
+                    &db,
+                    "running",
+                    "exporting_files",
+                    "生成文件",
+                    82 + done as i64 * 16 / (total as i64).max(1),
+                    &format!("已生成 {grade_name} 的导出文件"),
+                    Some(grade_name),
+                    total as i64,
+                    done as i64,
+                );
+            },
+        )?;
+        crate::export_batch::write_batch_identity(
+            &batch.staging_dir,
+            &generated_at,
+            &source_revision,
+        )?;
         let meta_tx = tauri::async_runtime::block_on(db.begin())?;
+        if tauri::async_runtime::block_on(crate::db::repos::export_bundle::source_revision(
+            &meta_tx,
+        ))? != source_revision
+        {
+            return Err(AppError::new("生成期间导入数据已变化，请重新生成"));
+        }
         tauri::async_runtime::block_on(exam_allocation_repo::replace_plan_snapshot(
             &meta_tx, &draft,
         ))?;
@@ -1919,51 +1961,13 @@ fn generate_latest_exam_plan_internal(
                 warning_count,
             },
         ))?;
-        tauri::async_runtime::block_on(meta_tx.commit())?;
+        let mut published = crate::export_batch::publish_prepared_batch(&batch)?;
+        if let Err(error) = tauri::async_runtime::block_on(meta_tx.commit()) {
+            published.rollback()?;
+            return Err(error.into());
+        }
+        published.finish()?;
     }
-    update_exam_generation_progress(
-        &db,
-        "running",
-        "finalizing_results",
-        "整理结果",
-        76,
-        "正在整理场次时间与分配结果路径",
-        None,
-        total_grades,
-        total_grades,
-    )?;
-    pause_after_generation_stage();
-    tauri::async_runtime::block_on(async {
-        crate::db::repos::exam_staff::seed_default_session_times(&db, &Utc::now().to_rfc3339())
-            .await
-    })?;
-    update_exam_generation_progress(
-        &db,
-        "running",
-        "exporting_files",
-        "生成文件",
-        82,
-        "考场分配已完成，正在生成各年级导出文件",
-        None,
-        total_grades,
-        0,
-    )?;
-    pause_after_generation_stage();
-    export_bundle::generate_export_files(&app, |grade_name, done, total| {
-        let percent = 82 + (((done as i64) * 16) / (total as i64).max(1));
-        let _ = update_exam_generation_progress(
-            &db,
-            "running",
-            "exporting_files",
-            "生成文件",
-            percent,
-            &format!("已生成 {grade_name} 的导出文件"),
-            Some(grade_name),
-            total as i64,
-            done as i64,
-        );
-        pause_after_generation_stage();
-    })?;
     update_exam_generation_progress(
         &db,
         "completed",

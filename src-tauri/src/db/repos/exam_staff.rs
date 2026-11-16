@@ -30,13 +30,6 @@ pub struct SessionTimeRow {
 }
 
 #[derive(Debug, Clone)]
-pub struct SessionSubjectRow {
-    pub session_id: i64,
-    pub grade_name: String,
-    pub subject: String,
-}
-
-#[derive(Debug, Clone)]
 pub struct TeacherRow {
     pub invigilation_grade_name: Option<String>,
     pub id: i64,
@@ -244,24 +237,6 @@ pub async fn list_session_time_rows(
         .collect())
 }
 
-pub async fn list_session_subjects(
-    db: &DatabaseConnection,
-) -> Result<Vec<SessionSubjectRow>, AppError> {
-    let rows = latest_exam_plan_sessions::Entity::find()
-        .filter(latest_exam_plan_sessions::Column::ParticipantCount.gt(0))
-        .order_by_asc(latest_exam_plan_sessions::Column::Id)
-        .all(db)
-        .await?;
-    Ok(rows
-        .into_iter()
-        .map(|row| SessionSubjectRow {
-            session_id: row.id,
-            grade_name: row.grade_name,
-            subject: row.subject,
-        })
-        .collect())
-}
-
 pub async fn upsert_session_times(
     db: &DatabaseConnection,
     items: &[UpsertSessionTimeRow],
@@ -337,57 +312,6 @@ pub async fn delete_session_time_template(
     ))
     .exec(db)
     .await?;
-    Ok(())
-}
-
-pub async fn seed_default_session_times(
-    db: &DatabaseConnection,
-    now: &str,
-) -> Result<(), AppError> {
-    let templates = list_grade_subject_templates(db).await?;
-    let sessions = list_session_subjects(db).await?;
-    let template_map = templates
-        .into_iter()
-        .map(|row| ((row.grade_name, row.subject), (row.start_at, row.end_at)))
-        .collect::<std::collections::HashMap<_, _>>();
-    let tx = db.begin().await?;
-    for session in sessions {
-        let Some((start_at, end_at)) = template_map
-            .get(&(session.grade_name.clone(), session.subject.clone()))
-            .or_else(|| {
-                // 俄语/日语是外语拆分场次；未单独配置时沿用同年级英语考试时间。
-                if matches!(session.subject.as_str(), "russian" | "japanese") {
-                    template_map.get(&(session.grade_name.clone(), "english".to_string()))
-                } else {
-                    None
-                }
-            })
-        else {
-            continue;
-        };
-        if let Some(row) = exam_session_times::Entity::find_by_id(session.session_id)
-            .one(&tx)
-            .await?
-        {
-            let mut active = row.into_active_model();
-            active.subject = Set(session.subject);
-            active.start_at = Set(start_at.clone());
-            active.end_at = Set(end_at.clone());
-            active.updated_at = Set(now.to_string());
-            active.update(&tx).await?;
-        } else {
-            exam_session_times::ActiveModel {
-                session_id: Set(session.session_id),
-                subject: Set(session.subject),
-                start_at: Set(start_at.clone()),
-                end_at: Set(end_at.clone()),
-                updated_at: Set(now.to_string()),
-            }
-            .insert(&tx)
-            .await?;
-        }
-    }
-    tx.commit().await?;
     Ok(())
 }
 
@@ -668,24 +592,24 @@ pub async fn clear_latest_staff_plan_snapshot_in_tx<C: sea_orm::ConnectionTrait>
     Ok(())
 }
 
-pub async fn persist_plan_snapshot(
-    db: &DatabaseConnection,
+pub async fn persist_plan_snapshot<C: sea_orm::ConnectionTrait>(
+    db: &C,
     meta: PersistedPlanMetaRow,
     tasks: Vec<PersistedTaskRow>,
     duty_stats: Vec<PersistedDutyStatRow>,
 ) -> Result<(), AppError> {
-    let tx = db.begin().await?;
+    let tx = db;
     latest_exam_staff_assignments::Entity::delete_many()
-        .exec(&tx)
+        .exec(tx)
         .await?;
     latest_exam_staff_tasks::Entity::delete_many()
-        .exec(&tx)
+        .exec(tx)
         .await?;
     latest_teacher_duty_stats::Entity::delete_many()
-        .exec(&tx)
+        .exec(tx)
         .await?;
     latest_exam_staff_plan_meta::Entity::delete_many()
-        .exec(&tx)
+        .exec(tx)
         .await?;
 
     for task in tasks {
@@ -715,7 +639,7 @@ pub async fn persist_plan_snapshot(
             allowance_amount: Set(task.allowance_amount),
             ..Default::default()
         }
-        .insert(&tx)
+        .insert(tx)
         .await?;
         if let (Some(teacher_id), Some(teacher_name)) = (teacher_id, teacher_name) {
             latest_exam_staff_assignments::ActiveModel {
@@ -725,7 +649,7 @@ pub async fn persist_plan_snapshot(
                 assigned_at: Set(meta.generated_at.clone()),
                 ..Default::default()
             }
-            .insert(&tx)
+            .insert(tx)
             .await?;
         }
     }
@@ -746,7 +670,7 @@ pub async fn persist_plan_snapshot(
             outdoor_allowance_total: Set(stat.outdoor_allowance_total),
             is_middle_manager: Set(if stat.is_middle_manager { 1 } else { 0 }),
         }
-        .insert(&tx)
+        .insert(tx)
         .await?;
     }
 
@@ -765,9 +689,8 @@ pub async fn persist_plan_snapshot(
         fallback_reason: Set(meta.fallback_reason),
         fallback_pool_assignments: Set(meta.fallback_pool_assignments),
     }
-    .insert(&tx)
+    .insert(tx)
     .await?;
-    tx.commit().await?;
     Ok(())
 }
 

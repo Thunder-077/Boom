@@ -1,7 +1,7 @@
 use std::collections::{HashMap, HashSet};
 
 use chrono::{DateTime, NaiveDateTime};
-use sea_orm::{ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter, QueryOrder};
+use sea_orm::{ColumnTrait, ConnectionTrait, EntityTrait, QueryFilter, QueryOrder};
 
 use crate::entity::{
     exam_allocation_settings, exam_session_times, invigilation_config_settings,
@@ -11,7 +11,7 @@ use crate::entity::{
 use crate::export_invigilation::{AccountingConfig, AccountingTeacherRow, TaskExportRow};
 use crate::score::{AppError, Subject};
 
-pub async fn exam_title(db: &DatabaseConnection) -> Result<String, AppError> {
+pub async fn exam_title<C: ConnectionTrait>(db: &C) -> Result<String, AppError> {
     Ok(exam_allocation_settings::Entity::find_by_id(1)
         .one(db)
         .await?
@@ -19,7 +19,7 @@ pub async fn exam_title(db: &DatabaseConnection) -> Result<String, AppError> {
         .unwrap_or_default())
 }
 
-pub async fn task_export_rows(db: &DatabaseConnection) -> Result<Vec<TaskExportRow>, AppError> {
+pub async fn task_export_rows<C: ConnectionTrait>(db: &C) -> Result<Vec<TaskExportRow>, AppError> {
     let tasks = latest_exam_staff_tasks::Entity::find()
         .order_by_asc(latest_exam_staff_tasks::Column::StartAt)
         .order_by_asc(latest_exam_staff_tasks::Column::Id)
@@ -61,7 +61,7 @@ pub async fn task_export_rows(db: &DatabaseConnection) -> Result<Vec<TaskExportR
     Ok(out)
 }
 
-pub async fn exam_counts(db: &DatabaseConnection) -> Result<HashMap<(i64, i64), i64>, AppError> {
+pub async fn exam_counts<C: ConnectionTrait>(db: &C) -> Result<HashMap<(i64, i64), i64>, AppError> {
     let rows = latest_exam_plan_student_allocations::Entity::find()
         .filter(latest_exam_plan_student_allocations::Column::AllocationType.eq("exam"))
         .all(db)
@@ -76,9 +76,18 @@ pub async fn exam_counts(db: &DatabaseConnection) -> Result<HashMap<(i64, i64), 
     Ok(out)
 }
 
-pub async fn accounting_teacher_rows(
-    db: &DatabaseConnection,
+pub async fn accounting_teacher_rows<C: ConnectionTrait>(
+    db: &C,
+    grade: &str,
 ) -> Result<Vec<AccountingTeacherRow>, AppError> {
+    let teachers = crate::entity::latest_teachers_v2::Entity::find()
+        .filter(crate::entity::latest_teachers_v2::Column::InvigilationGradeName.eq(grade))
+        .all(db)
+        .await?;
+    let ids: HashSet<_> = teachers
+        .into_iter()
+        .map(|teacher| i64::from(teacher.id))
+        .collect();
     let group_subjects = teacher_group_subjects(db).await?;
     let rows = latest_teacher_duty_stats::Entity::find()
         .order_by_asc(latest_teacher_duty_stats::Column::TeacherId)
@@ -86,6 +95,7 @@ pub async fn accounting_teacher_rows(
         .await?;
     Ok(rows
         .into_iter()
+        .filter(|row| ids.contains(&row.teacher_id))
         .map(|row| AccountingTeacherRow {
             teacher_id: row.teacher_id,
             teacher_name: row.teacher_name,
@@ -98,7 +108,10 @@ pub async fn accounting_teacher_rows(
         .collect())
 }
 
-pub async fn accounting_config(db: &DatabaseConnection) -> Result<AccountingConfig, AppError> {
+pub async fn accounting_config<C: ConnectionTrait>(
+    db: &C,
+    grade: &str,
+) -> Result<AccountingConfig, AppError> {
     let row = invigilation_config_settings::Entity::find_by_id(1)
         .one(db)
         .await?
@@ -108,7 +121,7 @@ pub async fn accounting_config(db: &DatabaseConnection) -> Result<AccountingConf
             .unwrap_or_default()
             .into_iter()
             .collect::<HashSet<_>>();
-    let total_exam_minutes = total_exam_minutes(db).await?;
+    let total_exam_minutes = total_exam_minutes(db, grade).await?;
     let total_self_study_minutes = if !row.self_study_date.trim().is_empty()
         && !row.self_study_start_time.trim().is_empty()
         && !row.self_study_end_time.trim().is_empty()
@@ -142,7 +155,9 @@ pub async fn accounting_config(db: &DatabaseConnection) -> Result<AccountingConf
     })
 }
 
-async fn teacher_group_subjects(db: &DatabaseConnection) -> Result<HashMap<i64, String>, AppError> {
+async fn teacher_group_subjects<C: ConnectionTrait>(
+    db: &C,
+) -> Result<HashMap<i64, String>, AppError> {
     let assignments = latest_teacher_assignments_v2::Entity::find()
         .order_by_asc(latest_teacher_assignments_v2::Column::TeacherId)
         .order_by_asc(latest_teacher_assignments_v2::Column::Id)
@@ -178,8 +193,11 @@ async fn teacher_group_subjects(db: &DatabaseConnection) -> Result<HashMap<i64, 
     Ok(out)
 }
 
-async fn total_exam_minutes(db: &DatabaseConnection) -> Result<i64, AppError> {
-    let sessions = latest_exam_plan_sessions::Entity::find().all(db).await?;
+async fn total_exam_minutes<C: ConnectionTrait>(db: &C, grade: &str) -> Result<i64, AppError> {
+    let sessions = latest_exam_plan_sessions::Entity::find()
+        .filter(latest_exam_plan_sessions::Column::GradeName.eq(grade))
+        .all(db)
+        .await?;
     let grade_by_session = sessions
         .into_iter()
         .map(|row| (row.id, row.grade_name))
