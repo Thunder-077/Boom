@@ -152,6 +152,8 @@ pub(crate) struct ParsedStudent {
     pub(crate) class_rank: i64,
     pub(crate) grade_rank: i64,
     pub(crate) subjects: Vec<ParsedSubjectScore>,
+    pub(crate) remark: Option<String>,
+    pub(crate) exam_group: crate::exam_group::ExamGroup,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -480,6 +482,8 @@ fn parse_excel_rows(file_path: &str) -> Result<Vec<ParsedStudent>, AppError> {
             class_rank: 0,
             grade_rank: 0,
             subjects,
+            remark: None,
+            exam_group: crate::exam_group::ExamGroup::Regular,
         });
     }
     if students.is_empty() {
@@ -615,8 +619,10 @@ pub async fn import_scores_from_excel(
         let mut students = parse_excel_rows(&file_path)?;
         apply_ranks(&mut students);
         let imported_at = Utc::now().to_rfc3339();
-        crate::db::repos::score::persist_latest_snapshot(&db, &file_path, &imported_at, &students)
+        let tx = sea_orm::TransactionTrait::begin(&db).await?;
+        crate::db::repos::score::persist_latest_snapshot(&tx, &file_path, &imported_at, &students)
             .await?;
+        tx.commit().await?;
         Ok(ImportResult {
             imported_at,
             row_count: students.len() as i64,

@@ -2429,6 +2429,8 @@ mod tests {
             let db = Database::connect("sqlite::memory:").await.unwrap();
             Migrator::up(&db, None).await.unwrap();
             latest_student_scores::ActiveModel {
+                remark: Set(None),
+                exam_group: Set("regular".to_string()),
                 admission_no: Set("s1".to_string()),
                 student_name: Set("张三".to_string()),
                 class_name: Set("高一1班".to_string()),
@@ -2481,6 +2483,8 @@ mod tests {
                 [("g1", "高一", "高一1班"), ("g3", "高三", "高三1班")]
             {
                 latest_student_scores::ActiveModel {
+                remark: Set(None),
+                exam_group: Set("regular".to_string()),
                     admission_no: Set(admission_no.to_string()),
                     student_name: Set(admission_no.to_string()),
                     class_name: Set(class_name.to_string()),
@@ -2534,6 +2538,8 @@ mod tests {
             ] {
                 latest_student_scores::ActiveModel {
                     admission_no: Set(admission_no.to_string()),
+                    remark: Set(None),
+                    exam_group: Set("regular".to_string()),
                     student_name: Set(admission_no.to_string()),
                     class_name: Set(class_name.to_string()),
                     grade_name: Set("高三".to_string()),

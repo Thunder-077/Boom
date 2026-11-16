@@ -8,6 +8,7 @@ pub struct Model {
     pub teacher_name: String,
     pub remark: Option<String>,
     pub is_middle_manager: i32,
+    pub invigilation_grade_name: Option<String>,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]

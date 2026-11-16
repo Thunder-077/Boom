@@ -534,6 +534,7 @@ pub async fn insert_session(
 
 pub async fn insert_space(tx: &DatabaseTransaction, row: SpaceInsertRow) -> Result<i64, AppError> {
     let model = latest_exam_plan_spaces::ActiveModel {
+        exam_group: Set(None),
         id: sea_orm::ActiveValue::NotSet,
         session_id: Set(row.session_id),
         space_type: Set(row.space_type),

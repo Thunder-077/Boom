@@ -1,8 +1,8 @@
 use std::collections::HashMap;
 
 use sea_orm::{
-    ActiveModelTrait, ActiveValue::Set, ColumnTrait, DatabaseConnection, EntityTrait,
-    PaginatorTrait, QueryFilter, QueryOrder, QuerySelect, TransactionTrait,
+    ActiveModelTrait, ActiveValue::Set, ColumnTrait, ConnectionTrait, DatabaseConnection,
+    EntityTrait, PaginatorTrait, QueryFilter, QueryOrder, QuerySelect, TransactionTrait,
 };
 
 use crate::entity::{latest_import_meta, latest_student_scores, latest_subject_scores};
@@ -11,20 +11,20 @@ use crate::score::{
     ScoreDetail, ScoreListParams, ScoreRow, ScoreSubjectItem, Subject,
 };
 
-pub async fn persist_latest_snapshot(
-    db: &DatabaseConnection,
+pub async fn persist_latest_snapshot<C: ConnectionTrait>(
+    db: &C,
     source_file: &str,
     imported_at: &str,
     students: &[ParsedStudent],
 ) -> Result<(), AppError> {
-    let tx = db.begin().await?;
+    let tx = db;
     latest_subject_scores::Entity::delete_many()
-        .exec(&tx)
+        .exec(tx)
         .await?;
     latest_student_scores::Entity::delete_many()
-        .exec(&tx)
+        .exec(tx)
         .await?;
-    latest_import_meta::Entity::delete_many().exec(&tx).await?;
+    latest_import_meta::Entity::delete_many().exec(tx).await?;
 
     latest_import_meta::ActiveModel {
         id: Set(1),
@@ -32,7 +32,7 @@ pub async fn persist_latest_snapshot(
         source_file: Set(source_file.to_string()),
         row_count: Set(students.len() as i64),
     }
-    .insert(&tx)
+    .insert(tx)
     .await?;
 
     for student in students {
@@ -47,8 +47,10 @@ pub async fn persist_latest_snapshot(
             class_rank: Set(student.class_rank),
             grade_rank: Set(student.grade_rank),
             selected_subject_count: Set(student.selected_subject_count),
+            remark: Set(student.remark.clone()),
+            exam_group: Set(student.exam_group.as_key().to_string()),
         }
-        .insert(&tx)
+        .insert(tx)
         .await?;
 
         for subject in &student.subjects {
@@ -73,12 +75,11 @@ pub async fn persist_latest_snapshot(
                 }),
                 ..Default::default()
             }
-            .insert(&tx)
+            .insert(tx)
             .await?;
         }
     }
 
-    tx.commit().await?;
     Ok(())
 }
 

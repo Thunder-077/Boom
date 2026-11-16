@@ -19,6 +19,7 @@ pub struct Model {
     pub floor: String,
     pub capacity: Option<i64>,
     pub sort_index: i64,
+    pub exam_group: Option<String>,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]

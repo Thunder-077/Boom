@@ -1,8 +1,8 @@
 use std::collections::{HashMap, HashSet};
 
 use sea_orm::{
-    ActiveModelTrait, ColumnTrait, DatabaseConnection, EntityTrait, PaginatorTrait, QueryFilter,
-    QueryOrder, Set, TransactionTrait,
+    ActiveModelTrait, ColumnTrait, ConnectionTrait, DatabaseConnection, EntityTrait,
+    PaginatorTrait, QueryFilter, QueryOrder, Set, TransactionTrait,
 };
 
 use crate::entity::{
@@ -16,6 +16,62 @@ use crate::teacher::{
 
 const INSERT_CHUNK_SIZE: usize = 500;
 
+#[cfg(test)]
+mod grade_tests {
+    use super::*;
+    use sea_orm::Database;
+    use sea_orm_migration::MigratorTrait;
+
+    #[test]
+    fn test_schedule_sync_preserves_invigilation_grade() {
+        tauri::async_runtime::block_on(async {
+            let db = Database::connect("sqlite::memory:").await.unwrap();
+            crate::db::migration::Migrator::up(&db, None).await.unwrap();
+            latest_teachers_v2::ActiveModel {
+                teacher_name: Set("匿名甲".into()),
+                invigilation_grade_name: Set(Some("高一".into())),
+                is_middle_manager: Set(0),
+                ..Default::default()
+            }
+            .insert(&db)
+            .await
+            .unwrap();
+            sync_from_course_schedule(
+                &db,
+                &[
+                    ScheduleTeacherAssignment {
+                        teacher_name: "匿名甲".into(),
+                        subject_key: "math".into(),
+                        class_name: "高二4班".into(),
+                    },
+                    ScheduleTeacherAssignment {
+                        teacher_name: "匿名乙".into(),
+                        subject_key: "math".into(),
+                        class_name: "高二1班".into(),
+                    },
+                ],
+            )
+            .await
+            .unwrap();
+            let rows = latest_teachers_v2::Entity::find()
+                .order_by_asc(latest_teachers_v2::Column::TeacherName)
+                .all(&db)
+                .await
+                .unwrap();
+            let first = rows
+                .iter()
+                .find(|row| row.teacher_name == "匿名甲")
+                .unwrap();
+            let second = rows
+                .iter()
+                .find(|row| row.teacher_name == "匿名乙")
+                .unwrap();
+            assert_eq!(first.invigilation_grade_name.as_deref(), Some("高一"));
+            assert_eq!(second.invigilation_grade_name, None);
+        });
+    }
+}
+
 pub struct ScheduleTeacherAssignment {
     pub teacher_name: String,
     pub subject_key: String,
@@ -24,27 +80,28 @@ pub struct ScheduleTeacherAssignment {
 
 #[derive(Clone)]
 struct PreservedTeacherDetails {
+    invigilation_grade_name: Option<String>,
     remark: Option<String>,
     is_middle_manager: i32,
     homeroom_classes: Vec<String>,
 }
 
-pub async fn replace_all(
-    db: &DatabaseConnection,
+pub async fn replace_all<C: ConnectionTrait>(
+    db: &C,
     imported_at: &str,
     source_file: &str,
     teachers: &[AggregatedTeacher],
 ) -> Result<(), AppError> {
-    let tx = db.begin().await?;
+    let tx = db;
     latest_teacher_assignments_v2::Entity::delete_many()
-        .exec(&tx)
+        .exec(tx)
         .await?;
     latest_teacher_homerooms_v2::Entity::delete_many()
-        .exec(&tx)
+        .exec(tx)
         .await?;
-    latest_teachers_v2::Entity::delete_many().exec(&tx).await?;
+    latest_teachers_v2::Entity::delete_many().exec(tx).await?;
     latest_teacher_import_meta::Entity::delete_many()
-        .exec(&tx)
+        .exec(tx)
         .await?;
 
     latest_teacher_import_meta::ActiveModel {
@@ -53,17 +110,18 @@ pub async fn replace_all(
         source_file: Set(source_file.to_string()),
         row_count: Set(teachers.len() as i32),
     }
-    .insert(&tx)
+    .insert(tx)
     .await?;
 
     for teacher in teachers {
         let row = latest_teachers_v2::ActiveModel {
             teacher_name: Set(teacher.teacher_name.clone()),
+            invigilation_grade_name: Set(Some(teacher.invigilation_grade_name.clone())),
             remark: Set(teacher.remark.clone()),
             is_middle_manager: Set(if teacher.is_middle_manager { 1 } else { 0 }),
             ..Default::default()
         }
-        .insert(&tx)
+        .insert(tx)
         .await?;
 
         for (subject, class_name) in &teacher.assignments {
@@ -73,7 +131,7 @@ pub async fn replace_all(
                 class_name: Set(class_name.clone()),
                 ..Default::default()
             }
-            .insert(&tx)
+            .insert(tx)
             .await?;
         }
 
@@ -83,12 +141,11 @@ pub async fn replace_all(
                 class_name: Set(class_name.clone()),
                 ..Default::default()
             }
-            .insert(&tx)
+            .insert(tx)
             .await?;
         }
     }
 
-    tx.commit().await?;
     Ok(())
 }
 
@@ -131,6 +188,9 @@ pub async fn sync_from_course_schedule(
             let row = latest_teachers_v2::ActiveModel {
                 teacher_name: Set(teacher_name.clone()),
                 remark: Set(preserved.and_then(|details| details.remark.clone())),
+                invigilation_grade_name: Set(
+                    preserved.and_then(|details| details.invigilation_grade_name.clone())
+                ),
                 is_middle_manager: Set(preserved.map_or(0, |details| details.is_middle_manager)),
                 ..Default::default()
             }
@@ -332,6 +392,7 @@ where
     let mut out = HashMap::new();
     for teacher in teachers {
         let details = PreservedTeacherDetails {
+            invigilation_grade_name: teacher.invigilation_grade_name.clone(),
             remark: teacher.remark,
             is_middle_manager: teacher.is_middle_manager,
             homeroom_classes: homerooms_by_teacher.remove(&teacher.id).unwrap_or_default(),

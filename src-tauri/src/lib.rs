@@ -11,6 +11,7 @@ mod export_bundle;
 mod export_invigilation;
 mod invigilation;
 mod score;
+mod exam_group;
 mod teacher;
 
 use std::path::PathBuf;

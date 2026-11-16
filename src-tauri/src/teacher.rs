@@ -119,6 +119,7 @@ struct ParsedTeacherRow {
 
 #[derive(Debug, Default)]
 pub(crate) struct AggregatedTeacher {
+    pub(crate) invigilation_grade_name: String,
     pub(crate) teacher_name: String,
     pub(crate) assignments: HashSet<(TeacherSubject, String)>,
     pub(crate) remark: Option<String>,
@@ -399,6 +400,7 @@ fn aggregate_rows(rows: Vec<ParsedTeacherRow>) -> Vec<AggregatedTeacher> {
         let entry = map
             .entry(row.teacher_name.clone())
             .or_insert_with(|| AggregatedTeacher {
+                invigilation_grade_name: String::new(),
                 teacher_name: row.teacher_name.clone(),
                 assignments: HashSet::new(),
                 remark: row.remark.clone(),
@@ -441,7 +443,9 @@ pub async fn import_teachers_from_excel(
         let rows = parse_teacher_excel(&file_path)?;
         let teachers = aggregate_rows(rows);
         let imported_at = Utc::now().to_rfc3339();
-        crate::db::repos::teacher::replace_all(&db, &imported_at, &file_path, &teachers).await?;
+        let tx = sea_orm::TransactionTrait::begin(&db).await?;
+        crate::db::repos::teacher::replace_all(&tx, &imported_at, &file_path, &teachers).await?;
+        tx.commit().await?;
         Ok(TeacherImportResult {
             imported_at,
             row_count: teachers.len() as i64,

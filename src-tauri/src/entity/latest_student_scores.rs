@@ -14,6 +14,8 @@ pub struct Model {
     pub class_rank: i64,
     pub grade_rank: i64,
     pub selected_subject_count: i64,
+    pub remark: Option<String>,
+    pub exam_group: String,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]

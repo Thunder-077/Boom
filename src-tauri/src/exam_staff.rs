@@ -4558,6 +4558,7 @@ mod tests {
     ) {
         tauri::async_runtime::block_on(async {
             latest_exam_plan_spaces::ActiveModel {
+                exam_group: Set(None),
                 id: Set(id),
                 session_id: Set(session_id),
                 space_type: Set("exam_room".to_string()),
