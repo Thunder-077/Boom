@@ -110,7 +110,9 @@ pub struct TeacherListParams {
 }
 
 #[derive(Debug)]
-struct ParsedTeacherRow {
+pub(crate) struct ParsedTeacherRow {
+    invigilation_grade_name: String,
+    location: crate::excel_import::ImportLocation,
     teacher_name: String,
     subject: TeacherSubject,
     class_names: Vec<String>,
@@ -325,13 +327,62 @@ fn detect_header_indexes(row: &[Data]) -> Result<TeacherHeaderIndexes, AppError>
     })
 }
 
-fn parse_teacher_excel(file_path: &str) -> Result<Vec<ParsedTeacherRow>, AppError> {
+pub(crate) fn parse_teacher_excel(file_path: &str) -> Result<Vec<ParsedTeacherRow>, AppError> {
     let mut workbook = open_workbook_auto(file_path)?;
-    let range = workbook
-        .worksheet_range_at(0)
-        .ok_or_else(|| AppError::new("Excel 文件未找到工作表"))?
-        .map_err(AppError::from)?;
+    let mut out = Vec::new();
+    let mut seen = HashMap::<String, Vec<crate::excel_import::ImportLocation>>::new();
+    for name in workbook.sheet_names().to_vec() {
+        let range = workbook.worksheet_range(&name)?;
+        if range
+            .rows()
+            .all(|row| row.iter().all(|cell| cell_to_string(Some(cell)).is_empty()))
+        {
+            continue;
+        }
+        let grade = crate::excel_import::normalize_sheet_grade(&name)?;
+        let parsed = parse_teacher_sheet(&range, &grade)
+            .map_err(|error| AppError::new(format!("Sheet《{name}》：{error}")))?;
+        for row in parsed {
+            seen.entry(row.teacher_name.clone())
+                .or_default()
+                .push(row.location.clone());
+            out.push(row);
+        }
+    }
+    let conflicts = seen
+        .values()
+        .filter(|locations| {
+            locations
+                .iter()
+                .map(|l| &l.sheet_name)
+                .collect::<HashSet<_>>()
+                .len()
+                > 1
+        })
+        .map(|locations| {
+            locations
+                .iter()
+                .map(ToString::to_string)
+                .collect::<Vec<_>>()
+                .join("、")
+        })
+        .collect::<Vec<_>>();
+    if !conflicts.is_empty() {
+        return Err(AppError::new(format!(
+            "教师姓名跨Sheet重复：{}。教师只能归属一个年级Sheet",
+            conflicts.join("；")
+        )));
+    }
+    if out.is_empty() {
+        return Err(AppError::new("Excel 没有可导入的教师数据"));
+    }
+    Ok(out)
+}
 
+fn parse_teacher_sheet(
+    range: &calamine::Range<Data>,
+    grade: &str,
+) -> Result<Vec<ParsedTeacherRow>, AppError> {
     let mut rows = range.rows();
     let first_row = rows
         .next()
@@ -349,7 +400,7 @@ fn parse_teacher_excel(file_path: &str) -> Result<Vec<ParsedTeacherRow>, AppErro
 
     let mut out = Vec::new();
     for (offset, row) in rows.enumerate() {
-        let row_no = offset + data_start_row_no;
+        let row_no = range.start().map_or(0, |(r, _)| r) as usize + offset + data_start_row_no;
         let teacher_name = cell_to_string(row.get(header_indexes.teacher_name));
         let subject_text = cell_to_string(row.get(header_indexes.subject));
         let class_text = cell_to_string(row.get(header_indexes.class_name));
@@ -372,6 +423,11 @@ fn parse_teacher_excel(file_path: &str) -> Result<Vec<ParsedTeacherRow>, AppErro
             return Err(AppError::new(format!("第 {} 行任教班级不能为空", row_no)));
         }
         out.push(ParsedTeacherRow {
+            invigilation_grade_name: grade.to_string(),
+            location: crate::excel_import::ImportLocation {
+                sheet_name: grade.to_string(),
+                row_number: row_no,
+            },
             teacher_name,
             subject,
             class_names,
@@ -388,7 +444,7 @@ fn parse_teacher_excel(file_path: &str) -> Result<Vec<ParsedTeacherRow>, AppErro
     Ok(out)
 }
 
-fn aggregate_rows(rows: Vec<ParsedTeacherRow>) -> Vec<AggregatedTeacher> {
+pub(crate) fn aggregate_rows(rows: Vec<ParsedTeacherRow>) -> Vec<AggregatedTeacher> {
     let mut map: HashMap<String, AggregatedTeacher> = HashMap::new();
     for row in rows {
         let row_is_middle_manager = is_middle_manager(row.remark.as_ref());
@@ -400,7 +456,7 @@ fn aggregate_rows(rows: Vec<ParsedTeacherRow>) -> Vec<AggregatedTeacher> {
         let entry = map
             .entry(row.teacher_name.clone())
             .or_insert_with(|| AggregatedTeacher {
-                invigilation_grade_name: String::new(),
+                invigilation_grade_name: row.invigilation_grade_name.clone(),
                 teacher_name: row.teacher_name.clone(),
                 assignments: HashSet::new(),
                 remark: row.remark.clone(),
@@ -432,6 +488,131 @@ fn aggregate_rows(rows: Vec<ParsedTeacherRow>) -> Vec<AggregatedTeacher> {
     items
 }
 
+#[cfg(test)]
+mod multi_sheet_tests {
+    use super::*;
+    fn fixture(duplicate: bool) -> std::path::PathBuf {
+        let path = std::env::temp_dir().join(format!(
+            "boom-teacher-{duplicate}-{}.xlsx",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let mut book = rust_xlsxwriter::Workbook::new();
+        for (i, grade) in ["高一", "高二", "高三"].iter().enumerate() {
+            let sheet = book.add_worksheet();
+            sheet.set_name(*grade).unwrap();
+            let header = if i == 1 {
+                0
+            } else {
+                sheet.write_string(0, 0, "任课表").unwrap();
+                1
+            };
+            for (c, text) in ["教师姓名", "任教学科", "任教班级", "备注"]
+                .iter()
+                .enumerate()
+            {
+                sheet.write_string(header, c as u16, *text).unwrap();
+            }
+            let name = if duplicate {
+                "匿名教师".into()
+            } else {
+                format!("匿名{i}")
+            };
+            for r in [header + 1, header + 2] {
+                for (c, text) in [name.as_str(), "数学", "101/204", ""].iter().enumerate() {
+                    sheet.write_string(r, c as u16, *text).unwrap();
+                }
+            }
+        }
+        book.add_worksheet().set_name("空白").unwrap();
+        book.save(&path).unwrap();
+        path
+    }
+    #[test]
+    fn test_teacher_import_reads_all_grade_sheets() {
+        let path = fixture(false);
+        let rows = parse_teacher_excel(path.to_str().unwrap()).unwrap();
+        std::fs::remove_file(path).unwrap();
+        let teachers = aggregate_rows(rows);
+        assert_eq!(teachers.len(), 3);
+        assert_eq!(
+            teachers
+                .iter()
+                .map(|t| t.invigilation_grade_name.as_str())
+                .collect::<Vec<_>>(),
+            ["高一", "高二", "高三"]
+        );
+    }
+    #[test]
+    fn test_teacher_import_rejects_cross_sheet_names() {
+        let path = fixture(true);
+        let result = parse_teacher_excel(path.to_str().unwrap());
+        std::fs::remove_file(path).unwrap();
+        let error = result.expect_err("跨Sheet同名必须拒绝").to_string();
+        assert!(
+            error.contains("高一") && error.contains("高二") && error.contains("行"),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn test_teacher_import_failure_preserves_snapshot() {
+        tauri::async_runtime::block_on(async {
+            use sea_orm::{Database, EntityTrait};
+            use sea_orm_migration::MigratorTrait;
+            let db = Database::connect("sqlite::memory:").await.unwrap();
+            crate::db::migration::Migrator::up(&db, None).await.unwrap();
+            let good = fixture(false);
+            assert_eq!(
+                import_teachers_into_db(&db, good.to_str().unwrap(), "old")
+                    .await
+                    .unwrap(),
+                3
+            );
+            std::fs::remove_file(good).unwrap();
+            let before = crate::entity::latest_teachers_v2::Entity::find()
+                .all(&db)
+                .await
+                .unwrap();
+            let bad = fixture(true);
+            assert!(import_teachers_into_db(&db, bad.to_str().unwrap(), "new")
+                .await
+                .is_err());
+            std::fs::remove_file(bad).unwrap();
+            assert_eq!(
+                crate::entity::latest_teachers_v2::Entity::find()
+                    .all(&db)
+                    .await
+                    .unwrap(),
+                before
+            );
+            assert_eq!(
+                crate::entity::latest_teacher_import_meta::Entity::find_by_id(1)
+                    .one(&db)
+                    .await
+                    .unwrap()
+                    .unwrap()
+                    .imported_at,
+                "old"
+            );
+        });
+    }
+}
+
+pub(crate) async fn import_teachers_into_db(
+    db: &sea_orm::DatabaseConnection,
+    file_path: &str,
+    imported_at: &str,
+) -> Result<usize, AppError> {
+    let teachers = aggregate_rows(parse_teacher_excel(file_path)?);
+    let tx = sea_orm::TransactionTrait::begin(db).await?;
+    crate::db::repos::teacher::replace_all(&tx, imported_at, file_path, &teachers).await?;
+    tx.commit().await?;
+    Ok(teachers.len())
+}
+
 #[tauri::command]
 pub async fn import_teachers_from_excel(
     app: AppHandle,
@@ -440,15 +621,11 @@ pub async fn import_teachers_from_excel(
     let start = Utc::now();
     let result: Result<TeacherImportResult, AppError> = async {
         let db = crate::db::connect(&app).await?;
-        let rows = parse_teacher_excel(&file_path)?;
-        let teachers = aggregate_rows(rows);
         let imported_at = Utc::now().to_rfc3339();
-        let tx = sea_orm::TransactionTrait::begin(&db).await?;
-        crate::db::repos::teacher::replace_all(&tx, &imported_at, &file_path, &teachers).await?;
-        tx.commit().await?;
+        let row_count = import_teachers_into_db(&db, &file_path, &imported_at).await?;
         Ok(TeacherImportResult {
             imported_at,
-            row_count: teachers.len() as i64,
+            row_count: row_count as i64,
             duration_ms: (Utc::now() - start).num_milliseconds(),
         })
     }

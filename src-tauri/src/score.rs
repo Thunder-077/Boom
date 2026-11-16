@@ -413,21 +413,71 @@ fn validate_header(header_row: &[Data]) -> Result<(), AppError> {
     Ok(())
 }
 
-fn parse_excel_rows(file_path: &str) -> Result<Vec<ParsedStudent>, AppError> {
+pub(crate) fn parse_excel_rows(file_path: &str) -> Result<Vec<ParsedStudent>, AppError> {
     let mut workbook = open_workbook_auto(file_path)?;
-    let range = workbook
-        .worksheet_range_at(0)
-        .ok_or_else(|| AppError::new("Excel 文件未找到工作表"))?
-        .map_err(AppError::from)?;
+    let mut students = Vec::new();
+    let mut seen = HashMap::<String, crate::excel_import::ImportLocation>::new();
+    let mut groups = HashMap::new();
+    // 先校验全部Sheet，任何错误均不得进入替换数据库的事务。
+    for name in workbook.sheet_names().to_vec() {
+        let range = workbook.worksheet_range(&name)?;
+        if range.rows().all(|row| {
+            row.iter()
+                .all(|cell| cell_to_trimmed_string(Some(cell)).is_empty())
+        }) {
+            continue;
+        }
+        let grade = crate::excel_import::normalize_sheet_grade(&name)?;
+        let first_row = range.start().map_or(0, |(r, _)| r) as usize;
+        let parsed = parse_score_sheet(&range, &grade).map_err(|error| {
+            AppError::new(format!("Sheet《{name}》第{}行起：{error}", first_row + 1))
+        })?;
+        for (student, row_number) in parsed {
+            let location = crate::excel_import::ImportLocation {
+                sheet_name: name.clone(),
+                row_number,
+            };
+            if let Some(previous) = seen.insert(student.admission_no.clone(), location.clone()) {
+                return Err(AppError::new(format!("{location}与{previous}准考证号重复")));
+            }
+            if grade == "高三" {
+                let key = student.class_name.clone();
+                if let Some((group, previous)) =
+                    groups.insert(key, (student.exam_group, location.clone()))
+                {
+                    if group != student.exam_group {
+                        return Err(AppError::new(format!(
+                            "{location}与{previous}同班综评标记不一致"
+                        )));
+                    }
+                }
+            }
+            students.push(student);
+        }
+    }
+    if students.is_empty() {
+        return Err(AppError::new("Excel 没有可导入的数据行"));
+    }
+    Ok(students)
+}
+
+fn parse_score_sheet(
+    range: &calamine::Range<Data>,
+    grade: &str,
+) -> Result<Vec<(ParsedStudent, usize)>, AppError> {
     let mut rows_iter = range.rows();
     let header_row = rows_iter
         .next()
         .ok_or_else(|| AppError::new("Excel 文件为空，缺少表头"))?;
     validate_header(header_row)?;
+    let remark_column = header_row
+        .iter()
+        .position(|cell| cell_to_trimmed_string(Some(cell)) == "备注");
+    let first_row = range.start().map_or(0, |(r, _)| r) as usize;
 
     let mut students = Vec::new();
     for (offset, row) in rows_iter.enumerate() {
-        let excel_row_index = offset + 1;
+        let excel_row_index = first_row + offset + 1;
         let admission_no = cell_to_trimmed_string(row.get(0));
         let class_name = cell_to_trimmed_string(row.get(1));
         let student_name = cell_to_trimmed_string(row.get(2));
@@ -437,6 +487,12 @@ fn parse_excel_rows(file_path: &str) -> Result<Vec<ParsedStudent>, AppError> {
         if admission_no.is_empty() || class_name.is_empty() || student_name.is_empty() {
             return Err(AppError::new(format!(
                 "第 {} 行缺少必填字段（准考证号/班级/姓名）",
+                excel_row_index + 1
+            )));
+        }
+        if extract_grade_name(&class_name) != grade {
+            return Err(AppError::new(format!(
+                "第{}行班级年级与Sheet年级不一致",
                 excel_row_index + 1
             )));
         }
@@ -470,26 +526,188 @@ fn parse_excel_rows(file_path: &str) -> Result<Vec<ParsedStudent>, AppError> {
             });
         }
 
-        students.push(ParsedStudent {
-            admission_no,
-            class_name: class_name.clone(),
-            grade_name: extract_grade_name(&class_name),
-            student_name,
-            subject_combination: combination_text,
-            language: language_text,
-            total_score,
-            selected_subject_count,
-            class_rank: 0,
-            grade_rank: 0,
-            subjects,
-            remark: None,
-            exam_group: crate::exam_group::ExamGroup::Regular,
-        });
+        let remark = remark_column
+            .map(|column| cell_to_trimmed_string(row.get(column)))
+            .filter(|text| !text.is_empty());
+        let exam_group = if grade == "高三" && remark.as_deref() == Some("综评班") {
+            crate::exam_group::ExamGroup::Comprehensive
+        } else {
+            crate::exam_group::ExamGroup::Regular
+        };
+        students.push((
+            ParsedStudent {
+                admission_no,
+                class_name: class_name.clone(),
+                grade_name: grade.to_string(),
+                student_name,
+                subject_combination: combination_text,
+                language: language_text,
+                total_score,
+                selected_subject_count,
+                class_rank: 0,
+                grade_rank: 0,
+                subjects,
+                remark,
+                exam_group,
+            },
+            excel_row_index + 1,
+        ));
     }
     if students.is_empty() {
         return Err(AppError::new("Excel 没有可导入的数据行"));
     }
     Ok(students)
+}
+
+#[cfg(test)]
+mod multi_sheet_tests {
+    use super::*;
+    use rust_xlsxwriter::Workbook;
+    use std::path::PathBuf;
+
+    fn fixture(kind: &str) -> PathBuf {
+        let path = std::env::temp_dir().join(format!(
+            "boom-score-{kind}-{}.xlsx",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let mut book = Workbook::new();
+        for (g, count) in [(1, 2), (2, 3), (3, 4)] {
+            let sheet = book.add_worksheet();
+            sheet
+                .set_name(format!("高{}", ["一", "二", "三"][g - 1]))
+                .unwrap();
+            for (col, header) in FIXED_HEADERS
+                .iter()
+                .chain(std::iter::once(&"备注"))
+                .enumerate()
+            {
+                sheet.write_string(0, col as u16, *header).unwrap();
+            }
+            for i in 0..count {
+                let mut values = vec![
+                    format!("g{g}-{i}"),
+                    format!(
+                        "高{}{}班",
+                        ["一", "二", "三"][g - 1],
+                        if g == 3 && i > 1 { 11 } else { 1 }
+                    ),
+                    "匿名学生".into(),
+                    "物化生".into(),
+                    "英语".into(),
+                ];
+                values.extend((0..11).map(|j| if j < 6 { "10" } else { "" }.to_string()));
+                values.push(if g == 3 && i > 1 {
+                    "综评班".into()
+                } else {
+                    String::new()
+                });
+                if kind == "duplicate" && g == 3 && i == 0 {
+                    values[0] = "g1-0".into();
+                }
+                if kind == "grade" && g == 3 && i == 0 {
+                    values[1] = "高一1班".into();
+                }
+                if kind == "mixed" && g == 3 && i == 2 {
+                    values[16] = String::new();
+                }
+                if kind == "required" && g == 3 && i == 0 {
+                    values[2] = String::new();
+                }
+                for (col, value) in values.iter().enumerate() {
+                    sheet
+                        .write_string((i + 1) as u32, col as u16, value)
+                        .unwrap();
+                }
+            }
+            if kind == "header" && g == 3 {
+                sheet.write_string(0, 0, "错误表头").unwrap();
+            }
+        }
+        book.add_worksheet().set_name("空白").unwrap();
+        book.save(&path).unwrap();
+        path
+    }
+
+    #[test]
+    fn test_score_import_reads_all_grade_sheets() {
+        let path = fixture("ok");
+        let mut students = parse_excel_rows(path.to_str().unwrap()).unwrap();
+        std::fs::remove_file(path).unwrap();
+        assert_eq!(students.len(), 9);
+        apply_ranks(&mut students);
+        assert_eq!(
+            students.iter().filter(|s| s.grade_name == "高三").count(),
+            4
+        );
+        assert_eq!(
+            students
+                .iter()
+                .filter(|s| s.exam_group == crate::exam_group::ExamGroup::Comprehensive)
+                .count(),
+            2
+        );
+        assert!(students.iter().all(|s| s.grade_rank == 1));
+    }
+
+    #[test]
+    fn test_score_import_reports_source_for_bad_later_sheets() {
+        for kind in ["duplicate", "grade", "mixed", "required", "header"] {
+            let path = fixture(kind);
+            let result = parse_excel_rows(path.to_str().unwrap());
+            std::fs::remove_file(path).unwrap();
+            let error = result.expect_err(kind).to_string();
+            assert!(error.contains("高三"), "{kind}: {error}");
+            assert!(error.contains("行"), "{kind}: {error}");
+        }
+    }
+
+    #[test]
+    fn test_score_import_failure_preserves_snapshot() {
+        tauri::async_runtime::block_on(async {
+            use sea_orm::{Database, EntityTrait};
+            use sea_orm_migration::MigratorTrait;
+            let db = Database::connect("sqlite::memory:").await.unwrap();
+            crate::db::migration::Migrator::up(&db, None).await.unwrap();
+            let good = fixture("ok");
+            assert_eq!(
+                import_scores_into_db(&db, good.to_str().unwrap(), "old")
+                    .await
+                    .unwrap(),
+                9
+            );
+            std::fs::remove_file(good).unwrap();
+            let before = crate::entity::latest_student_scores::Entity::find()
+                .all(&db)
+                .await
+                .unwrap();
+            for kind in ["duplicate", "grade", "mixed", "required", "header"] {
+                let bad = fixture(kind);
+                assert!(import_scores_into_db(&db, bad.to_str().unwrap(), "new")
+                    .await
+                    .is_err());
+                std::fs::remove_file(bad).unwrap();
+                assert_eq!(
+                    crate::entity::latest_student_scores::Entity::find()
+                        .all(&db)
+                        .await
+                        .unwrap(),
+                    before
+                );
+                assert_eq!(
+                    crate::entity::latest_import_meta::Entity::find_by_id(1)
+                        .one(&db)
+                        .await
+                        .unwrap()
+                        .unwrap()
+                        .imported_at,
+                    "old"
+                );
+            }
+        });
+    }
 }
 
 fn assign_competition_rank(
@@ -608,6 +826,21 @@ pub(crate) fn assign_rank_rows(rows: &mut [RankRow]) {
     }
 }
 
+/// 解析、校验全部年级后才替换快照；调用方无需启动桌面窗口即可验证原子导入。
+pub(crate) async fn import_scores_into_db(
+    db: &sea_orm::DatabaseConnection,
+    file_path: &str,
+    imported_at: &str,
+) -> Result<usize, AppError> {
+    let mut students = parse_excel_rows(file_path)?;
+    apply_ranks(&mut students);
+    let tx = sea_orm::TransactionTrait::begin(db).await?;
+    crate::db::repos::score::persist_latest_snapshot(&tx, file_path, imported_at, &students)
+        .await?;
+    tx.commit().await?;
+    Ok(students.len())
+}
+
 #[tauri::command]
 pub async fn import_scores_from_excel(
     app: AppHandle,
@@ -616,16 +849,11 @@ pub async fn import_scores_from_excel(
     let start = Utc::now();
     let result: Result<ImportResult, AppError> = async {
         let db = crate::db::connect(&app).await?;
-        let mut students = parse_excel_rows(&file_path)?;
-        apply_ranks(&mut students);
         let imported_at = Utc::now().to_rfc3339();
-        let tx = sea_orm::TransactionTrait::begin(&db).await?;
-        crate::db::repos::score::persist_latest_snapshot(&tx, &file_path, &imported_at, &students)
-            .await?;
-        tx.commit().await?;
+        let row_count = import_scores_into_db(&db, &file_path, &imported_at).await?;
         Ok(ImportResult {
             imported_at,
-            row_count: students.len() as i64,
+            row_count: row_count as i64,
             warning_count: 0,
             duration_ms: (Utc::now() - start).num_milliseconds(),
         })
