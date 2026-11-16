@@ -7,5 +7,6 @@ export default defineConfig({
     environment: "jsdom",
     include: ["src/**/*.spec.ts"],
     globals: false,
+    css: { include: [/react-shell\.css/] },
   },
 });

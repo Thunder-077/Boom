@@ -3655,9 +3655,9 @@
 }
 
 .time-input {
-  /* 保留完整时间和时钟按钮所需空间，避免过宽将两者拉成独立元素。 */
-  width: 7em;
-  min-width: 7em;
+  /* 使用原生控件按系统时制计算的宽度，兼容 AM/PM，且不拉大纯 24 小时格式的间距。 */
+  width: auto;
+  min-width: max-content;
   border: 1px solid transparent;
   background: transparent;
   border-radius: var(--radius-sm);
