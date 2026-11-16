@@ -13,6 +13,7 @@ mod invigilation;
 mod score;
 mod exam_group;
 mod excel_import;
+mod exam_plan_snapshot;
 mod teacher;
 
 use std::path::PathBuf;

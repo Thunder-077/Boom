@@ -4,7 +4,7 @@ use std::thread;
 use std::time::Duration;
 
 use chrono::{DateTime, NaiveDateTime, Utc};
-use sea_orm::{DatabaseConnection, DatabaseTransaction, TransactionTrait};
+use sea_orm::{DatabaseConnection, TransactionTrait};
 use serde::{Deserialize, Serialize};
 use tauri::AppHandle;
 
@@ -329,6 +329,7 @@ struct GradeContext {
     teaching_classes: Vec<Classroom>,
     class_subjects: HashMap<String, HashSet<Subject>>,
     exam_rooms: Vec<ExamRoomResource>,
+    class_groups: HashMap<String, crate::exam_group::ExamGroup>,
 }
 
 #[derive(Debug, Clone)]
@@ -967,6 +968,20 @@ fn load_grade_contexts(db: &DatabaseConnection) -> Result<HashMap<String, GradeC
         }
     }
 
+    for student in tauri::async_runtime::block_on(exam_allocation_repo::list_student_groups(db))? {
+        let group = crate::exam_group::ExamGroup::from_key(&student.exam_group)?;
+        let ctx = ctx_map.entry(student.grade_name).or_default();
+        if ctx
+            .class_groups
+            .insert(student.class_name.clone(), group)
+            .is_some_and(|old| old != group)
+        {
+            return Err(AppError::new(format!(
+                "{}存在混合综评分组，请重新导入成绩",
+                student.class_name
+            )));
+        }
+    }
     for ctx in ctx_map.values_mut() {
         ctx.teaching_classes
             .sort_by(|a, b| sort_class_names(&a.class_name, &b.class_name));
@@ -1127,11 +1142,6 @@ fn build_round_robin_order(participants: &[Participant]) -> Vec<Participant> {
     ordered
 }
 
-pub(crate) fn clear_latest_plan_snapshot(tx: &DatabaseTransaction) -> Result<(), AppError> {
-    tauri::async_runtime::block_on(exam_allocation_repo::clear_latest_plan_snapshot(tx))?;
-    Ok(())
-}
-
 fn fill_with_configured_exam_rooms(
     grade_name: &str,
     subject: Subject,
@@ -1144,7 +1154,11 @@ fn fill_with_configured_exam_rooms(
         if chosen_spaces.len() >= required_room_count {
             break;
         }
-        if !occupied_exam_rooms.insert(room.room_name.clone()) {
+        if chosen_spaces
+            .iter()
+            .any(|space| space.space_name == room.room_name)
+            || !occupied_exam_rooms.insert(room.room_name.clone())
+        {
             continue;
         }
         chosen_spaces.push(SpaceCandidate {
@@ -1172,9 +1186,102 @@ fn fill_with_configured_exam_rooms(
     Ok(())
 }
 
-fn build_session(
+#[allow(clippy::too_many_arguments)]
+fn select_group_exam_spaces(
+    grade: &str,
+    subject: Subject,
+    group: crate::exam_group::ExamGroup,
+    required: usize,
+    ctx: &GradeContext,
+    blocked: &HashSet<String>,
+    teaching: &mut HashSet<String>,
+    rooms: &mut HashSet<String>,
+) -> Result<Vec<SpaceCandidate>, AppError> {
+    let mut chosen = Vec::new();
+    if required == 0 {
+        return Ok(chosen);
+    }
+    let mut classes = ctx.teaching_classes.iter().collect::<Vec<_>>();
+    classes.sort_by(|a, b| sort_class_names(&a.class_name, &b.class_name));
+    for class in classes {
+        if chosen.len() == required {
+            break;
+        }
+        let name = class_to_exam_room_name(&class.class_name);
+        let subjects_match = ctx
+            .class_subjects
+            .get(&class.class_name)
+            .is_some_and(|subjects| {
+                if is_foreign_subject(subject) {
+                    subjects.iter().any(|s| is_foreign_subject(*s))
+                } else {
+                    subjects.contains(&subject)
+                }
+            });
+        if ctx.class_groups.get(&class.class_name) != Some(&group)
+            || !subjects_match
+            || blocked.contains(&class.class_name)
+            || teaching.contains(&class.class_name)
+            || rooms.contains(&name)
+        {
+            continue;
+        }
+        teaching.insert(class.class_name.clone());
+        rooms.insert(name.clone());
+        chosen.push(SpaceCandidate {
+            space_type: ExamPlanSpaceType::ExamRoom,
+            space_source: ExamPlanSpaceSource::TeachingClass,
+            space_name: name,
+            original_class_name: Some(class.class_name.clone()),
+            self_study_topic: None,
+            building: class.building.clone(),
+            floor: class.floor.clone(),
+            capacity: None,
+            sort_index: chosen.len() as i64 + 1,
+        });
+    }
+    let mut reserves = Vec::new();
+    for room in &ctx.exam_rooms {
+        if let Some(class) = ctx
+            .teaching_classes
+            .iter()
+            .find(|class| class_to_exam_room_name(&class.class_name) == room.room_name)
+        {
+            if (class.building.as_str(), class.floor.as_str())
+                != (room.building.as_str(), room.floor.as_str())
+            {
+                return Err(AppError::new(format!(
+                    "{grade}考场{}同名但物理位置不同，请修改配置",
+                    room.room_name
+                )));
+            }
+            // 同一教室的两个资源入口只能算一次，也不能借备用入口跨组占用。
+            continue;
+        }
+        reserves.push(room.clone());
+    }
+    reserves.sort_by(|a, b| {
+        class_number(&a.room_name, '场')
+            .cmp(&class_number(&b.room_name, '场'))
+            .then(a.room_name.cmp(&b.room_name))
+    });
+    fill_with_configured_exam_rooms(grade, subject, &mut chosen, required, &reserves, rooms)
+        .map_err(|error| {
+            AppError::new(format!(
+                "{}组：{error}",
+                if group == crate::exam_group::ExamGroup::Regular {
+                    "普通"
+                } else {
+                    "综评"
+                }
+            ))
+        })?;
+    Ok(chosen)
+}
+
+fn build_session_draft(
     db: &DatabaseConnection,
-    tx: &DatabaseTransaction,
+    draft: &mut crate::exam_plan_snapshot::ExamPlanDraft,
     grade_name: &str,
     subject: Subject,
     grade_ctx: &GradeContext,
@@ -1220,53 +1327,57 @@ fn build_session(
         }
     }
 
-    let mut participants = load_selected_participants(db, grade_name, subject)?;
+    let participants = load_selected_participants(db, grade_name, subject)?;
     for p in &participants {
         if !subject_classes.contains(&p.class_name) {
             warnings += 1;
         }
     }
-    let capacities = calculate_room_capacities(participants.len(), default_capacity, max_capacity);
-    let required_room_count = capacities.len();
-
-    let mut chosen_spaces: Vec<SpaceCandidate> = Vec::new();
-    let mut teaching_candidates: Vec<Classroom> = grade_ctx
-        .teaching_classes
-        .iter()
-        .filter(|c| {
-            subject_classes.contains(&c.class_name)
-                && !self_study_class_names.contains(&c.class_name)
-                && !occupied_teaching_classes.contains(&c.class_name)
-        })
-        .cloned()
-        .collect();
-    teaching_candidates.sort_by(|a, b| sort_class_names(&a.class_name, &b.class_name));
-
-    for classroom in teaching_candidates {
-        if chosen_spaces.len() >= required_room_count {
-            break;
-        }
-        occupied_teaching_classes.insert(classroom.class_name.clone());
-        chosen_spaces.push(SpaceCandidate {
-            space_type: ExamPlanSpaceType::ExamRoom,
-            space_source: ExamPlanSpaceSource::TeachingClass,
-            space_name: class_to_exam_room_name(&classroom.class_name),
-            original_class_name: Some(classroom.class_name),
-            self_study_topic: None,
-            building: classroom.building,
-            floor: classroom.floor,
-            capacity: None,
-            sort_index: chosen_spaces.len() as i64 + 1,
-        });
+    let mut chosen_spaces = Vec::new();
+    let mut capacities = Vec::new();
+    let mut space_groups = Vec::new();
+    let mut ordered = Vec::new();
+    // 两组分别计算尾场，普通组先占用备用资源，禁止跨组补齐空座。
+    for group in [
+        crate::exam_group::ExamGroup::Regular,
+        crate::exam_group::ExamGroup::Comprehensive,
+    ] {
+        let members = participants
+            .iter()
+            .filter(|p| grade_ctx.class_groups.get(&p.class_name) == Some(&group))
+            .cloned()
+            .collect::<Vec<_>>();
+        let sizes = calculate_room_capacities(members.len(), default_capacity, max_capacity);
+        let selected = select_group_exam_spaces(
+            grade_name,
+            subject,
+            group,
+            sizes.len(),
+            grade_ctx,
+            &self_study_class_names,
+            occupied_teaching_classes,
+            occupied_exam_rooms,
+        )?;
+        space_groups.extend(std::iter::repeat_n(
+            group.as_key().to_string(),
+            selected.len(),
+        ));
+        chosen_spaces.extend(selected);
+        capacities.extend(sizes);
+        ordered.extend(build_round_robin_order(&members));
     }
-    fill_with_configured_exam_rooms(
-        grade_name,
-        subject,
-        &mut chosen_spaces,
-        required_room_count,
-        &grade_ctx.exam_rooms,
-        occupied_exam_rooms,
-    )?;
+    if ordered.len() != participants.len() {
+        return Err(AppError::new("考生班级缺少有效分组，请重新导入成绩"));
+    }
+    draft.class_groups.extend(
+        grade_ctx
+            .class_groups
+            .iter()
+            .map(|(name, group)| (name.clone(), group.as_key().to_string())),
+    );
+    draft
+        .max_capacities
+        .insert(grade_name.to_string(), max_capacity);
 
     let mut self_study_spaces: Vec<SpaceCandidate> = Vec::new();
     for classroom in &grade_ctx.teaching_classes {
@@ -1296,98 +1407,87 @@ fn build_session(
         });
     }
 
-    let session_id = tauri::async_runtime::block_on(exam_allocation_repo::insert_session(
-        tx,
-        exam_allocation_repo::SessionInsertRow {
-            grade_name: grade_name.to_string(),
-            subject: subject.as_key().to_string(),
-            is_foreign_group: if is_foreign { 1 } else { 0 },
-            foreign_order: foreign_seq,
-            participant_count: participants.len() as i64,
-            exam_room_count: chosen_spaces.len() as i64,
-            self_study_room_count: self_study_spaces.len() as i64,
-        },
-    ))?;
+    let session_id = draft.add_session(exam_allocation_repo::SessionInsertRow {
+        grade_name: grade_name.to_string(),
+        subject: subject.as_key().to_string(),
+        is_foreign_group: if is_foreign { 1 } else { 0 },
+        foreign_order: foreign_seq,
+        participant_count: participants.len() as i64,
+        exam_room_count: chosen_spaces.len() as i64,
+        self_study_room_count: self_study_spaces.len() as i64,
+    });
 
     let mut exam_space_ids = Vec::new();
     for (index, space) in chosen_spaces.iter_mut().enumerate() {
+        space.sort_index = index as i64 + 1;
         space.capacity = capacities.get(index).copied();
-        let space_id = tauri::async_runtime::block_on(exam_allocation_repo::insert_space(
-            tx,
-            exam_allocation_repo::SpaceInsertRow {
-                session_id,
-                space_type: space.space_type.as_key().to_string(),
-                space_source: space.space_source.as_key().to_string(),
-                grade_name: grade_name.to_string(),
-                subject: subject.as_key().to_string(),
-                space_name: space.space_name.clone(),
-                original_class_name: space.original_class_name.clone(),
-                self_study_topic_kind: space
-                    .self_study_topic
-                    .as_ref()
-                    .map(|value| value.kind.as_key().to_string()),
-                self_study_topic_subjects_json: space
-                    .self_study_topic
-                    .as_ref()
-                    .map(|value| serde_json::to_string(&value.subjects))
-                    .transpose()
-                    .map_err(|e| AppError::new(format!("考试期间自习主题科目序列化失败: {e}")))?,
-                self_study_topic_label: space
-                    .self_study_topic
-                    .as_ref()
-                    .map(|value| value.label.clone()),
-                building: space.building.clone(),
-                floor: space.floor.clone(),
-                capacity: space.capacity,
-                sort_index: space.sort_index,
-            },
-        ))?;
+        let space_id = draft.add_space(exam_allocation_repo::SpaceInsertRow {
+            exam_group: Some(space_groups[index].clone()),
+            session_id,
+            space_type: space.space_type.as_key().to_string(),
+            space_source: space.space_source.as_key().to_string(),
+            grade_name: grade_name.to_string(),
+            subject: subject.as_key().to_string(),
+            space_name: space.space_name.clone(),
+            original_class_name: space.original_class_name.clone(),
+            self_study_topic_kind: space
+                .self_study_topic
+                .as_ref()
+                .map(|value| value.kind.as_key().to_string()),
+            self_study_topic_subjects_json: space
+                .self_study_topic
+                .as_ref()
+                .map(|value| serde_json::to_string(&value.subjects))
+                .transpose()
+                .map_err(|e| AppError::new(format!("考试期间自习主题科目序列化失败: {e}")))?,
+            self_study_topic_label: space
+                .self_study_topic
+                .as_ref()
+                .map(|value| value.label.clone()),
+            building: space.building.clone(),
+            floor: space.floor.clone(),
+            capacity: space.capacity,
+            sort_index: space.sort_index,
+        });
         exam_space_ids.push(space_id);
     }
 
     let mut self_study_space_by_class = HashMap::new();
     let mut self_study_ids = Vec::new();
     for space in &self_study_spaces {
-        let id = tauri::async_runtime::block_on(exam_allocation_repo::insert_space(
-            tx,
-            exam_allocation_repo::SpaceInsertRow {
-                session_id,
-                space_type: space.space_type.as_key().to_string(),
-                space_source: space.space_source.as_key().to_string(),
-                grade_name: grade_name.to_string(),
-                subject: subject.as_key().to_string(),
-                space_name: space.space_name.clone(),
-                original_class_name: space.original_class_name.clone(),
-                self_study_topic_kind: space
-                    .self_study_topic
-                    .as_ref()
-                    .map(|value| value.kind.as_key().to_string()),
-                self_study_topic_subjects_json: space
-                    .self_study_topic
-                    .as_ref()
-                    .map(|value| serde_json::to_string(&value.subjects))
-                    .transpose()
-                    .map_err(|e| AppError::new(format!("考试期间自习主题科目序列化失败: {e}")))?,
-                self_study_topic_label: space
-                    .self_study_topic
-                    .as_ref()
-                    .map(|value| value.label.clone()),
-                building: space.building.clone(),
-                floor: space.floor.clone(),
-                capacity: None,
-                sort_index: space.sort_index,
-            },
-        ))?;
+        let id = draft.add_space(exam_allocation_repo::SpaceInsertRow {
+            exam_group: None,
+            session_id,
+            space_type: space.space_type.as_key().to_string(),
+            space_source: space.space_source.as_key().to_string(),
+            grade_name: grade_name.to_string(),
+            subject: subject.as_key().to_string(),
+            space_name: space.space_name.clone(),
+            original_class_name: space.original_class_name.clone(),
+            self_study_topic_kind: space
+                .self_study_topic
+                .as_ref()
+                .map(|value| value.kind.as_key().to_string()),
+            self_study_topic_subjects_json: space
+                .self_study_topic
+                .as_ref()
+                .map(|value| serde_json::to_string(&value.subjects))
+                .transpose()
+                .map_err(|e| AppError::new(format!("考试期间自习主题科目序列化失败: {e}")))?,
+            self_study_topic_label: space
+                .self_study_topic
+                .as_ref()
+                .map(|value| value.label.clone()),
+            building: space.building.clone(),
+            floor: space.floor.clone(),
+            capacity: None,
+            sort_index: space.sort_index,
+        });
         self_study_ids.push(id);
         if let Some(class_name) = &space.original_class_name {
             self_study_space_by_class.insert(class_name.clone(), id);
         }
     }
-
-    participants.sort_by(|a, b| {
-        sort_class_names(&a.class_name, &b.class_name).then(a.admission_no.cmp(&b.admission_no))
-    });
-    let ordered = build_round_robin_order(&participants);
 
     let mut start = 0usize;
     for (space_index, cap) in capacities.iter().enumerate() {
@@ -1395,9 +1495,9 @@ fn build_session(
         let end = (start + cap_u).min(ordered.len());
         let room_students = &ordered[start..end];
         for (seat_idx, student) in room_students.iter().enumerate() {
-            tauri::async_runtime::block_on(exam_allocation_repo::insert_student_allocation(
-                tx,
-                exam_allocation_repo::StudentAllocationInsertRow {
+            draft
+                .allocations
+                .push(exam_allocation_repo::StudentAllocationInsertRow {
                     session_id,
                     admission_no: student.admission_no.clone(),
                     student_name: student.student_name.clone(),
@@ -1406,8 +1506,7 @@ fn build_session(
                     space_id: exam_space_ids.get(space_index).copied(),
                     seat_no: Some(seat_idx as i64 + 1),
                     subject_score: student.score,
-                },
-            ))?;
+                });
         }
         start = end;
         if start >= ordered.len() {
@@ -1424,9 +1523,9 @@ fn build_session(
                     student.class_name
                 ))
             })?;
-        tauri::async_runtime::block_on(exam_allocation_repo::insert_student_allocation(
-            tx,
-            exam_allocation_repo::StudentAllocationInsertRow {
+        draft
+            .allocations
+            .push(exam_allocation_repo::StudentAllocationInsertRow {
                 session_id,
                 admission_no: student.admission_no,
                 student_name: student.student_name,
@@ -1435,8 +1534,7 @@ fn build_session(
                 space_id: Some(mapped_id),
                 seat_no: None,
                 subject_score: None,
-            },
-        ))?;
+            });
     }
 
     Ok(SessionBuildResult {
@@ -1575,6 +1673,24 @@ fn generate_latest_exam_plan_internal(
     let grade_contexts = load_grade_contexts(&db)?;
     let active_grade_subjects = load_active_grade_subjects(&db)?;
     let grade_subject_schedule_order = load_grade_subject_schedule_order(&db)?;
+    let mut schedule_windows = HashMap::new();
+    for row in
+        tauri::async_runtime::block_on(exam_allocation_repo::list_grade_subject_templates(&db))?
+    {
+        if let (Some(subject), Some(start), Some(end)) = (
+            Subject::from_key(&row.subject),
+            parse_schedule_timestamp(&row.start_at),
+            parse_schedule_timestamp(&row.end_at),
+        ) {
+            if start >= end {
+                return Err(AppError::new(format!(
+                    "{} {}考试时间无效",
+                    row.grade_name, row.subject
+                )));
+            }
+            schedule_windows.insert((row.grade_name, subject), (start, end));
+        }
+    }
     let mut grades: Vec<String> = grade_contexts
         .keys()
         .filter(|grade_name| {
@@ -1605,9 +1721,9 @@ fn generate_latest_exam_plan_internal(
         &db,
         "running",
         "clearing_snapshot",
-        "清理旧结果",
+        "校验旧结果",
         12,
-        "正在清理上一轮考场分配结果",
+        "正在准备整批排考，保留上一轮完整结果直到计算成功",
         None,
         total_grades,
         0,
@@ -1615,11 +1731,7 @@ fn generate_latest_exam_plan_internal(
     pause_after_generation_stage();
 
     let generated_at = Utc::now().to_rfc3339();
-    {
-        let clear_tx = tauri::async_runtime::block_on(db.begin())?;
-        clear_latest_plan_snapshot(&clear_tx)?;
-        tauri::async_runtime::block_on(clear_tx.commit())?;
-    }
+    let mut draft = crate::exam_plan_snapshot::ExamPlanDraft::default();
     update_exam_generation_progress(
         &db,
         "running",
@@ -1718,15 +1830,55 @@ fn generate_latest_exam_plan_internal(
             })
             .collect::<Vec<_>>();
 
-        let grade_tx = tauri::async_runtime::block_on(db.begin())?;
         for subject in subjects {
+            let window = schedule_windows
+                .get(&(grade_name.clone(), subject))
+                .or_else(|| {
+                    if is_foreign_subject(subject) {
+                        schedule_windows.get(&(grade_name.clone(), Subject::English))
+                    } else {
+                        None
+                    }
+                })
+                .copied()
+                .ok_or_else(|| {
+                    AppError::new(format!(
+                        "{grade_name} {}未配置完整考试时间",
+                        subject_label(subject)
+                    ))
+                })?;
             let current_start_ts = current_grade_schedule_order
                 .get(&subject)
                 .copied()
                 .unwrap_or_else(|| subject_order(subject) as i64);
-            let built = build_session(
+            // 不同起点但重叠的考试同样不能重复占用物理教室。
+            for space in &draft.spaces {
+                if draft
+                    .windows
+                    .get(&space.session_id)
+                    .is_some_and(|old| old.0 < window.1 && window.0 < old.1)
+                {
+                    let normalized = if space.space_name.ends_with('班') {
+                        class_to_exam_room_name(&space.space_name)
+                    } else {
+                        space.space_name.clone()
+                    };
+                    occupied_exam_rooms
+                        .entry(current_start_ts)
+                        .or_default()
+                        .insert(normalized);
+                    if let Some(class) = &space.original_class_name {
+                        occupied_teaching_classes
+                            .entry(current_start_ts)
+                            .or_default()
+                            .insert(class.clone());
+                    }
+                }
+            }
+            let local_session_id = draft.sessions.len() as i64 + 1;
+            let built = build_session_draft(
                 &db,
-                &grade_tx,
+                &mut draft,
                 grade_name,
                 subject,
                 grade_ctx,
@@ -1739,10 +1891,10 @@ fn generate_latest_exam_plan_internal(
                     .or_default(),
                 occupied_exam_rooms.entry(current_start_ts).or_default(),
             )?;
+            draft.windows.insert(local_session_id, window);
             session_count += 1;
             warning_count += built.warning_count;
         }
-        tauri::async_runtime::block_on(grade_tx.commit())?;
     }
     if session_count == 0 {
         return Err(AppError::new(
@@ -1751,7 +1903,11 @@ fn generate_latest_exam_plan_internal(
     }
 
     {
+        crate::exam_plan_snapshot::validate_exam_plan_draft(&draft)?;
         let meta_tx = tauri::async_runtime::block_on(db.begin())?;
+        tauri::async_runtime::block_on(exam_allocation_repo::replace_plan_snapshot(
+            &meta_tx, &draft,
+        ))?;
         tauri::async_runtime::block_on(exam_allocation_repo::insert_plan_meta(
             &meta_tx,
             exam_allocation_repo::PlanMetaInsertRow {
@@ -2086,6 +2242,157 @@ mod tests {
     use crate::entity::{latest_student_scores, latest_subject_scores};
     use sea_orm::{ActiveModelTrait, ActiveValue::Set, Database};
     use sea_orm_migration::MigratorTrait;
+
+    fn grouped_context() -> GradeContext {
+        let mut ctx = GradeContext::default();
+        for i in 1..=12 {
+            let class = format!("高三{i}班");
+            ctx.teaching_classes.push(Classroom {
+                class_name: class.clone(),
+                building: "教学楼".into(),
+                floor: "一楼".into(),
+            });
+            ctx.class_subjects
+                .insert(class.clone(), HashSet::from([Subject::Math]));
+            ctx.class_groups.insert(
+                class,
+                if i <= 10 {
+                    crate::exam_group::ExamGroup::Regular
+                } else {
+                    crate::exam_group::ExamGroup::Comprehensive
+                },
+            );
+        }
+        for i in 13..=16 {
+            ctx.exam_rooms.push(ExamRoomResource {
+                room_name: format!("高三{i}场"),
+                building: "教学楼".into(),
+                floor: "一楼".into(),
+            });
+        }
+        ctx
+    }
+
+    #[test]
+    fn test_regular_group_claims_reserves_before_comprehensive() {
+        let ctx = grouped_context();
+        let mut teaching = HashSet::new();
+        let mut rooms = HashSet::new();
+        let normal = select_group_exam_spaces(
+            "高三",
+            Subject::Math,
+            crate::exam_group::ExamGroup::Regular,
+            12,
+            &ctx,
+            &HashSet::new(),
+            &mut teaching,
+            &mut rooms,
+        )
+        .unwrap();
+        let comprehensive = select_group_exam_spaces(
+            "高三",
+            Subject::Math,
+            crate::exam_group::ExamGroup::Comprehensive,
+            4,
+            &ctx,
+            &HashSet::new(),
+            &mut teaching,
+            &mut rooms,
+        )
+        .unwrap();
+        assert_eq!(
+            normal
+                .iter()
+                .map(|s| s.space_name.as_str())
+                .collect::<Vec<_>>(),
+            (1..=10)
+                .chain(13..=14)
+                .map(|i| format!("高三{i}场"))
+                .collect::<Vec<_>>()
+        );
+        assert_eq!(
+            comprehensive
+                .iter()
+                .map(|s| s.space_name.as_str())
+                .collect::<Vec<_>>(),
+            ["高三11场", "高三12场", "高三15场", "高三16场"]
+        );
+    }
+
+    #[test]
+    fn test_group_boundaries_survive_empty_groups_and_shortages() {
+        let mut ctx = grouped_context();
+        let mut teaching = HashSet::new();
+        let mut rooms = HashSet::new();
+        assert!(select_group_exam_spaces(
+            "高三",
+            Subject::Math,
+            crate::exam_group::ExamGroup::Comprehensive,
+            0,
+            &ctx,
+            &HashSet::new(),
+            &mut teaching,
+            &mut rooms
+        )
+        .unwrap()
+        .is_empty());
+        assert!(teaching.is_empty() && rooms.is_empty());
+        ctx.class_groups.remove("高三1班");
+        let normal = select_group_exam_spaces(
+            "高三",
+            Subject::Math,
+            crate::exam_group::ExamGroup::Regular,
+            13,
+            &ctx,
+            &HashSet::new(),
+            &mut teaching,
+            &mut rooms,
+        )
+        .unwrap();
+        assert!(!normal
+            .iter()
+            .any(|s| ["高三1场", "高三11场", "高三12场"].contains(&s.space_name.as_str())));
+        assert!(select_group_exam_spaces(
+            "高三",
+            Subject::Math,
+            crate::exam_group::ExamGroup::Comprehensive,
+            3,
+            &ctx,
+            &HashSet::new(),
+            &mut teaching,
+            &mut rooms
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn test_same_named_classroom_and_reserve_are_not_two_resources() {
+        let mut chosen = vec![SpaceCandidate {
+            space_type: ExamPlanSpaceType::ExamRoom,
+            space_source: ExamPlanSpaceSource::TeachingClass,
+            space_name: "高三11场".into(),
+            original_class_name: Some("高三11班".into()),
+            self_study_topic: None,
+            building: "教学楼".into(),
+            floor: "一楼".into(),
+            capacity: None,
+            sort_index: 1,
+        }];
+        let resources = [ExamRoomResource {
+            room_name: "高三11场".into(),
+            building: "教学楼".into(),
+            floor: "一楼".into(),
+        }];
+        assert!(fill_with_configured_exam_rooms(
+            "高三",
+            Subject::Chinese,
+            &mut chosen,
+            2,
+            &resources,
+            &mut HashSet::new()
+        )
+        .is_err());
+    }
 
     #[test]
     fn test_grade_capacity_isolation_and_tail_room_limit() {
@@ -2483,8 +2790,8 @@ mod tests {
                 [("g1", "高一", "高一1班"), ("g3", "高三", "高三1班")]
             {
                 latest_student_scores::ActiveModel {
-                remark: Set(None),
-                exam_group: Set("regular".to_string()),
+                    remark: Set(None),
+                    exam_group: Set("regular".to_string()),
                     admission_no: Set(admission_no.to_string()),
                     student_name: Set(admission_no.to_string()),
                     class_name: Set(class_name.to_string()),

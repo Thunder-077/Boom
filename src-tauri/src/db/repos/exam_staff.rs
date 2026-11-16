@@ -643,19 +643,26 @@ pub async fn replace_custom_rules(
 
 pub async fn clear_latest_staff_plan_snapshot(db: &DatabaseConnection) -> Result<(), AppError> {
     let tx = db.begin().await?;
+    clear_latest_staff_plan_snapshot_in_tx(&tx).await?;
+    tx.commit().await?;
+    Ok(())
+}
+
+pub async fn clear_latest_staff_plan_snapshot_in_tx<C: sea_orm::ConnectionTrait>(
+    db: &C,
+) -> Result<(), AppError> {
     latest_exam_staff_assignments::Entity::delete_many()
-        .exec(&tx)
+        .exec(db)
         .await?;
     latest_exam_staff_tasks::Entity::delete_many()
-        .exec(&tx)
+        .exec(db)
         .await?;
     latest_teacher_duty_stats::Entity::delete_many()
-        .exec(&tx)
+        .exec(db)
         .await?;
     latest_exam_staff_plan_meta::Entity::delete_many()
-        .exec(&tx)
+        .exec(db)
         .await?;
-    tx.commit().await?;
     Ok(())
 }
 

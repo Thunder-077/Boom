@@ -73,6 +73,7 @@ pub struct SessionInsertRow {
 
 #[derive(Debug, Clone)]
 pub struct SpaceInsertRow {
+    pub exam_group: Option<String>,
     pub session_id: i64,
     pub space_type: String,
     pub space_source: String,
@@ -411,6 +412,12 @@ pub async fn list_participants(
     Ok(out)
 }
 
+pub async fn list_student_groups(
+    db: &DatabaseConnection,
+) -> Result<Vec<latest_student_scores::Model>, AppError> {
+    Ok(latest_student_scores::Entity::find().all(db).await?)
+}
+
 pub async fn list_active_grade_subjects(
     db: &DatabaseConnection,
 ) -> Result<Vec<ActiveGradeSubjectRow>, AppError> {
@@ -457,6 +464,32 @@ pub async fn clear_latest_plan_snapshot(tx: &DatabaseTransaction) -> Result<(), 
     latest_exam_plan_meta::Entity::delete_many()
         .exec(tx)
         .await?;
+    Ok(())
+}
+
+pub async fn replace_plan_snapshot(
+    tx: &DatabaseTransaction,
+    draft: &crate::exam_plan_snapshot::ExamPlanDraft,
+) -> Result<(), AppError> {
+    crate::exam_plan_snapshot::validate_exam_plan_draft(draft)?;
+    clear_latest_plan_snapshot(tx).await?;
+    crate::db::repos::exam_staff::clear_latest_staff_plan_snapshot_in_tx(tx).await?;
+    let mut sessions = std::collections::HashMap::new();
+    let mut spaces = std::collections::HashMap::new();
+    for (i, row) in draft.sessions.iter().enumerate() {
+        sessions.insert(i as i64 + 1, insert_session(tx, row.clone()).await?);
+    }
+    for (i, row) in draft.spaces.iter().enumerate() {
+        let mut row = row.clone();
+        row.session_id = sessions[&row.session_id];
+        spaces.insert(i as i64 + 1, insert_space(tx, row).await?);
+    }
+    for row in &draft.allocations {
+        let mut row = row.clone();
+        row.session_id = sessions[&row.session_id];
+        row.space_id = row.space_id.map(|id| spaces[&id]);
+        insert_student_allocation(tx, row).await?;
+    }
     Ok(())
 }
 
@@ -534,7 +567,7 @@ pub async fn insert_session(
 
 pub async fn insert_space(tx: &DatabaseTransaction, row: SpaceInsertRow) -> Result<i64, AppError> {
     let model = latest_exam_plan_spaces::ActiveModel {
-        exam_group: Set(None),
+        exam_group: Set(row.exam_group),
         id: sea_orm::ActiveValue::NotSet,
         session_id: Set(row.session_id),
         space_type: Set(row.space_type),
