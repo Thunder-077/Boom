@@ -1,6 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
+import type { DragDropEvent } from "@tauri-apps/api/webviewWindow";
+import type { Event } from "@tauri-apps/api/event";
 import { hasDesktopRuntime } from "../../../shared/utils/desktopRuntime";
+import { registerScopedListener } from "../../../shared/utils/asyncListener";
 import { invigilationService } from "../../invigilation/service";
 import type {
   AnimationPhase,
@@ -492,14 +495,14 @@ export default function MonitorDrawPanel() {
   }
 
   useEffect(() => {
-    let unlistenDragDrop: (() => void) | null = null;
+    let unlistenDragDrop: (() => void) | undefined;
 
     async function bindWindowEvents() {
       if (!hasDesktopRuntime()) {
         return;
       }
       const appWindow = getCurrentWebviewWindow();
-      unlistenDragDrop = await appWindow.onDragDropEvent((event) => {
+      unlistenDragDrop = registerScopedListener<Event<DragDropEvent>>((handler) => appWindow.onDragDropEvent(handler), (event) => {
         if (step !== "import") return;
         if (event.payload.type === "enter" || event.payload.type === "over") {
           setIsDragging(true);

@@ -16,6 +16,11 @@ pub use crate::exam_staff::{
 pub use crate::export_invigilation::ExportLatestInvigilationScheduleResult;
 
 #[tauri::command]
+pub async fn list_populated_teaching_class_ids(app: AppHandle) -> Result<Vec<i64>, String> {
+    exam_staff::list_populated_teaching_class_ids(app).await
+}
+
+#[tauri::command]
 pub async fn list_exam_session_time_grade_options(app: AppHandle) -> Result<Vec<String>, String> {
     exam_staff::list_exam_session_time_grade_options(app).await
 }

@@ -1,7 +1,10 @@
 import { useEffect, useMemo, useState } from "react";
 import { Search } from "lucide-react";
 import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
+import type { DragDropEvent } from "@tauri-apps/api/webviewWindow";
+import type { Event } from "@tauri-apps/api/event";
 import { hasDesktopRuntime } from "../../../shared/utils/desktopRuntime";
+import { registerScopedListener } from "../../../shared/utils/asyncListener";
 import { TEACHER_SUBJECT_LABELS } from "../../../entities/teacher/model";
 import {
   FilterToolbar,
@@ -85,14 +88,14 @@ export default function TeacherListPanel() {
   }, [state.filters]);
 
   useEffect(() => {
-    let unlistenDragDrop: (() => void) | null = null;
+    let unlistenDragDrop: (() => void) | undefined;
 
     async function bindWindowEvents() {
       if (!hasDesktopRuntime()) {
         return;
       }
       const appWindow = getCurrentWebviewWindow();
-      unlistenDragDrop = await appWindow.onDragDropEvent((event) => {
+      unlistenDragDrop = registerScopedListener<Event<DragDropEvent>>((handler) => appWindow.onDragDropEvent(handler), (event) => {
         if (event.payload.type === "enter" || event.payload.type === "over") {
           setIsDragging(true);
           return;

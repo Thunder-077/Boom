@@ -16,7 +16,7 @@ import ConfigCard from "../../../widgets/common/ConfigCard";
 import FluentSelect from "../../../widgets/common/FluentSelect";
 import Pagination from "../../../widgets/common/composite/Pagination";
 import { classConfigService } from "../../classes/service";
-import { examAllocationService } from "../../dashboard/service";
+import { examAllocationService, listPopulatedTeachingClassIds } from "../../dashboard/service";
 import { useReactExamAllocationStore } from "../../dashboard/store";
 import {
   AlertCircle,
@@ -308,8 +308,9 @@ export default function MonitorConfigPanel() {
   const [middleManagerDrawerOpen, setMiddleManagerDrawerOpen] = useState(false);
   const [customRuleDrawerOpen, setCustomRuleDrawerOpen] = useState(false);
   const [customRuleDetailOpen, setCustomRuleDetailOpen] = useState(false);
-  const [selfStudyLoading, setSelfStudyLoading] = useState(false);
+  const [selfStudyLoading, setSelfStudyLoading] = useState(true);
   const [selfStudyLoadError, setSelfStudyLoadError] = useState("");
+  const [roverSaving, setRoverSaving] = useState(false);
   const [gradeFilter, setGradeFilter] = useState("all");
   const [availableGrades, setAvailableGrades] = useState<string[]>([]);
   const [currentPage, setCurrentPage] = useState(1);
@@ -423,12 +424,18 @@ export default function MonitorConfigPanel() {
     ? `适用范围：本次考试第 ${state.sessionTimes.length} 场结束后`
     : "适用范围：全员自习开始与结束时间默认在同一天。";
   const selfStudySummaryText = useMemo(() => {
+    if (selfStudyLoading || state.loading) {
+      return "正在加载全员自习配置…";
+    }
+    if (selfStudyLoadError) {
+      return `加载失败：${selfStudyLoadError}`;
+    }
     if (pendingClassCount === 0) {
       return "所有班级已完成科目配置。";
     }
     const pending = selfStudyClasses.filter((item) => !item.subject).map((item) => item.className);
     return `待补充：${pending.slice(0, 2).join("、")}${pending.length > 2 ? " 等" : ""}`;
-  }, [pendingClassCount, selfStudyClasses]);
+  }, [pendingClassCount, selfStudyClasses, selfStudyLoading, selfStudyLoadError, state.loading]);
   const staffSolverSummary = useMemo(() => {
     const overview = state.staffOverview;
     if (!overview.generatedAt) {
@@ -653,13 +660,14 @@ export default function MonitorConfigPanel() {
     let removeAssignmentProgressListener: UnlistenFn | null = null;
     void (async () => {
       if (!hasDesktopRuntime()) {
+        setSelfStudyLoading(false);
         return;
       }
       removeAssignmentProgressListener = await listen<ExamStaffAssignmentProgress>(staffAssignmentProgressEvent, (event) => {
         setAssignmentProgress(event.payload);
       });
-      await loadAll();
-      await loadSelfStudyClassData();
+      const subjects = await loadAll();
+      await loadSelfStudyClassData(subjects);
     })();
     return () => {
       removeAssignmentProgressListener?.();
@@ -703,18 +711,20 @@ export default function MonitorConfigPanel() {
     setDialogState(defaultDialogState);
   }
 
-  async function loadSelfStudyClassData() {
+  async function loadSelfStudyClassData(persistedSubjects: Array<{ classId: number; subject: Subject | null }>) {
     setSelfStudyLoading(true);
     setSelfStudyLoadError("");
     try {
-      const [classResult, sessionResult] = await Promise.all([
+      const [classResult, sessionResult, populatedIds] = await Promise.all([
         classConfigService.list({ configType: "teaching_class", gradeName: "", keyword: "" }),
         examAllocationService.listSessions({ page: 1, pageSize: 1000 }),
+        listPopulatedTeachingClassIds(),
       ]);
       const activeGrades = new Set(sessionResult.items.map((session) => session.gradeName));
-      const relevantClasses = classResult.items.filter((item) => activeGrades.has(item.gradeName));
+      const populated = new Set(populatedIds);
+      const relevantClasses = classResult.items.filter((item) => activeGrades.has(item.gradeName) && populated.has(item.id));
       const rows = relevantClasses
-        .map((row) => mapClassRowToSelfStudyRow(row, []))
+        .map((row) => mapClassRowToSelfStudyRow(row, persistedSubjects))
         .sort(compareTeachingClasses);
       const grades = Array.from(new Set(relevantClasses.map((item) => item.gradeName))).sort(
         (a, b) => (gradeRankMap[a] ?? 99) - (gradeRankMap[b] ?? 99) || a.localeCompare(b, "zh-CN", { numeric: true }),
@@ -770,6 +780,17 @@ export default function MonitorConfigPanel() {
       return;
     }
     await saveConfig({ middleManagerDefaultEnabled: nextValue });
+  }
+
+  async function setFloorRoverEnabled(enabled: boolean) {
+    setRoverSaving(true);
+    try {
+      await saveInvigilationConfig({ floorRoverEnabled: enabled });
+    } catch (error) {
+      await showAssignmentNoticeMessage("error", `流动监考设置保存失败：${error instanceof Error ? error.message : String(error)}`);
+    } finally {
+      setRoverSaving(false);
+    }
   }
 
   function increaseCount() {
@@ -1327,6 +1348,12 @@ export default function MonitorConfigPanel() {
               <Plus size={18} />
             </button>
           </div>
+          <label className="rover-switch">
+            <input type="checkbox" role="switch" checked={state.invigilationConfig.floorRoverEnabled}
+              disabled={state.loading || state.assigning || roverSaving}
+              onChange={(event) => void setFloorRoverEnabled(event.target.checked)} />
+            <span>启用流动监考</span>
+          </label>
         </ConfigCard>
 
         <ConfigCard className="top-card middle-manager-card" title="校中层监考配置">
@@ -1412,11 +1439,11 @@ export default function MonitorConfigPanel() {
             </div>
             <div className="study-data-item">
               <div className="study-data-label">已配置班级</div>
-              <div className="study-data-value">{configuredClassCount} <span className="study-data-unit">个</span></div>
+              <div className="study-data-value">{selfStudyLoading || state.loading ? "—" : configuredClassCount} <span className="study-data-unit">个</span></div>
             </div>
             <div className="study-data-item warning">
               <div className="study-data-label">待补充</div>
-              <div className="study-data-value">{pendingClassCount} <span className="study-data-unit">个班级</span></div>
+              <div className="study-data-value">{selfStudyLoading || state.loading ? "—" : pendingClassCount} <span className="study-data-unit">个班级</span></div>
             </div>
           </div>
           <div className="study-card-footer">

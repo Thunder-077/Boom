@@ -181,6 +181,7 @@ pub async fn ensure_defaults(
             default_exam_room_required_count: Set(1),
             indoor_allowance_per_minute: Set(0.5),
             outdoor_allowance_per_minute: Set(0.3),
+            floor_rover_enabled: Set(1),
             middle_manager_default_enabled: Set(0),
             middle_manager_exception_teacher_ids_json: Set("[]".to_string()),
             self_study_date: Set(String::new()),

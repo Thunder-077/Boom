@@ -26,6 +26,10 @@ import type {
 import type { TeacherRow } from "../../entities/teacher/model";
 import type { ListResult } from "../../shared/types/api";
 
+export function listPopulatedTeachingClassIds(): Promise<number[]> {
+  return invoke<number[]>("list_populated_teaching_class_ids");
+}
+
 export interface ExamAllocationService {
   getSettings(): Promise<ExamAllocationSettings>;
   updateSettings(payload: {

@@ -4275,6 +4275,20 @@
   gap: var(--space-md);
 }
 
+.rover-switch {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  cursor: pointer;
+}
+
+.rover-switch input {
+  width: 18px;
+  height: 18px;
+  accent-color: var(--color-primary, #2563eb);
+}
+
 .top-grid,
 .summary-grid-row {
   grid-template-columns: repeat(2, minmax(0, 1fr));

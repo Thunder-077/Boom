@@ -106,6 +106,7 @@ const fakeService: ExamAllocationService = {
     return {
       config: {
         defaultExamRoomRequiredCount: 1,
+        floorRoverEnabled: true,
         indoorAllowancePerMinute: 0.5,
         outdoorAllowancePerMinute: 0.3,
         middleManagerDefaultEnabled: false,
@@ -263,6 +264,17 @@ describe("exam allocation store", () => {
     expect(store.viewState.overview.gradeCount).toBe(1);
     expect(store.viewState.sessions.length).toBe(1);
     expect(store.viewState.detail?.session.subject).toBe(Subject.English);
+  });
+
+  it("persists the rover switch and rolls it back on failure", async () => {
+    const save = vi.fn(fakeService.savePersistedInvigilationConfig);
+    const store = createExamAllocationStore({ ...fakeService, savePersistedInvigilationConfig: save });
+    expect(store.viewState.invigilationConfig.floorRoverEnabled).toBe(true);
+    await store.saveInvigilationConfig({ floorRoverEnabled: false });
+    expect(save).toHaveBeenLastCalledWith(expect.objectContaining({ floorRoverEnabled: false }));
+    save.mockRejectedValueOnce(new Error("保存失败"));
+    await expect(store.saveInvigilationConfig({ floorRoverEnabled: true })).rejects.toThrow("保存失败");
+    expect(store.viewState.invigilationConfig.floorRoverEnabled).toBe(false);
   });
 
   it("passes custom rules through when assigning teachers", async () => {

@@ -2,7 +2,10 @@ import { useEffect, useMemo, useState } from "react";
 import type { LucideIcon } from "lucide-react";
 import { Building2, CalendarX, Save, Trash2, Users, UserCheck } from "lucide-react";
 import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
+import type { DragDropEvent } from "@tauri-apps/api/webviewWindow";
+import type { Event } from "@tauri-apps/api/event";
 import { hasDesktopRuntime } from "../../../shared/utils/desktopRuntime";
+import { registerScopedListener } from "../../../shared/utils/asyncListener";
 import type { CoursePeriodSlot, CourseScheduleEntry, CourseViewType } from "../../../entities/course-management/model";
 import { useAppDialog } from "../../../shared/ui/appDialog";
 import { FilterToolbar, FluentSelect, InfoHint, TableCard } from "../../../widgets/common/index.react";
@@ -154,14 +157,14 @@ export default function CourseManagementPanel() {
   }, [currentWeekEntries, currentWeekPeriods]);
 
   useEffect(() => {
-    let unlistenDragDrop: (() => void) | null = null;
+    let unlistenDragDrop: (() => void) | undefined;
 
     async function bindWindowEvents() {
       if (!hasDesktopRuntime()) {
         return;
       }
       const appWindow = getCurrentWebviewWindow();
-      unlistenDragDrop = await appWindow.onDragDropEvent((event) => {
+      unlistenDragDrop = registerScopedListener<Event<DragDropEvent>>((handler) => appWindow.onDragDropEvent(handler), (event) => {
         if (event.payload.type === "enter" || event.payload.type === "over") {
           setIsDragging(true);
           return;
