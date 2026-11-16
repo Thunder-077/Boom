@@ -4620,7 +4620,7 @@ mod tests {
         };
         for role in [StaffRole::ExamRoomInvigilator, StaffRole::SelfStudySupervisor, StaffRole::FloorRover] {
             task.role = role;
-            assert!(build_task_candidate_summary(&task, &teachers, &[rule.clone()], &test_runtime_config(), &HashSet::new(), &HashMap::new()).candidates.is_empty());
+            assert!(build_task_candidate_summary(&task, &teachers, std::slice::from_ref(&rule), &test_runtime_config(), &HashSet::new(), &HashMap::new()).candidates.is_empty());
         }
         task.role = StaffRole::ExamRoomInvigilator;
         let summary = build_task_candidate_summary(
