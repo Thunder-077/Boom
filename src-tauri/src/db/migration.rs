@@ -81,6 +81,7 @@ impl MigratorTrait for Migrator {
             Box::new(m20260517_000002_course_import_settings::Migration),
             Box::new(m20261009_000003_grade_capacity::Migration),
             Box::new(m20261116_000004_multi_grade::Migration),
+            Box::new(m20261117_000005_export_current::Migration),
         ]
     }
 }
@@ -321,6 +322,40 @@ mod m20260517_000002_course_import_settings {
 
         async fn down(&self, _manager: &SchemaManager) -> Result<(), DbErr> {
             Ok(())
+        }
+    }
+}
+
+mod m20261117_000005_export_current {
+    use sea_orm_migration::prelude::*;
+    pub struct Migration;
+    impl MigrationName for Migration {
+        fn name(&self) -> &str {
+            "m20261117_000005_export_current"
+        }
+    }
+    #[async_trait::async_trait]
+    impl MigrationTrait for Migration {
+        async fn up(&self, manager: &SchemaManager) -> Result<(), DbErr> {
+            manager
+                .create_table(
+                    Table::create()
+                        .table(Alias::new("export_current"))
+                        .col(
+                            ColumnDef::new(Alias::new("id"))
+                                .big_integer()
+                                .not_null()
+                                .primary_key(),
+                        )
+                        .col(ColumnDef::new(Alias::new("directory")).string().not_null())
+                        .to_owned(),
+                )
+                .await
+        }
+        async fn down(&self, manager: &SchemaManager) -> Result<(), DbErr> {
+            manager
+                .drop_table(Table::drop().table(Alias::new("export_current")).to_owned())
+                .await
         }
     }
 }

@@ -277,7 +277,7 @@ fn test_export_rejects_replaced_staff_snapshot_with_same_sources() {
         )
         .await
         .is_ok());
-        let folder = root.join("测试考场安排");
+        let folder = crate::export_batch::current_batch_dir(&db, &root, "测试").await.unwrap();
         assert!(
             crate::export_batch::verify_staff_source(&folder, &revision, &previous_version).is_ok()
         );
@@ -341,7 +341,9 @@ fn test_multigrade_import_to_export_pipeline() {
             assert!(space.capacity.unwrap() <= 2);
         }
         complete_exam_batch(&db, &root, &draft).await;
-        let original = fs::read(root.join("测试考场安排/高三/考场分配结果汇总.xlsx")).unwrap();
+        use calamine::Reader;
+        let mut original: calamine::Xlsx<_> = calamine::open_workbook(root.join("测试考场安排/高三/考场分配结果汇总.xlsx")).unwrap();
+        let original = original.worksheets();
         let result = crate::exam_staff::generate_staff_plan_for_test(&db, &root)
             .await
             .unwrap();
@@ -373,17 +375,41 @@ fn test_multigrade_import_to_export_pipeline() {
                 Some(tasks[&assignment.task_id].grade_name.as_str())
             );
         }
+        let folder = crate::export_batch::current_batch_dir(&db, &root, "测试").await.unwrap();
         for grade in ["高一", "高二", "高三"] {
-            assert!(root
-                .join("测试考场安排")
+            assert!(folder
                 .join(grade)
                 .join("测试监考表.xlsx")
                 .is_file());
         }
-        assert_eq!(
-            fs::read(root.join("测试考场安排/高三/考场分配结果汇总.xlsx")).unwrap(),
-            original
-        );
+        let mut regenerated: calamine::Xlsx<_> = calamine::open_workbook(folder.join("高三/考场分配结果汇总.xlsx")).unwrap();
+        assert_eq!(regenerated.worksheets(), original);
+        fs::remove_dir_all(root).unwrap();
+    });
+}
+
+#[cfg(windows)]
+#[test]
+fn test_regenerate_staff_with_exclusively_locked_old_workbooks() {
+    use std::os::windows::fs::OpenOptionsExt;
+    tauri::async_runtime::block_on(async {
+        let (db, root, draft) = setup().await;
+        complete_exam_batch(&db, &root, &draft).await;
+        let legacy = root.join("测试考场安排/高三/考场分配结果汇总.xlsx");
+        let locked = fs::OpenOptions::new().read(true).share_mode(0).open(&legacy).unwrap();
+        crate::exam_staff::generate_staff_plan_for_test(&db, &root).await.unwrap();
+        drop(locked);
+        let first = crate::export_batch::current_batch_dir(&db, &root, "测试").await.unwrap();
+        let locked_student = fs::OpenOptions::new().read(true).share_mode(0)
+            .open(first.join("高三/考场分配结果汇总.xlsx")).unwrap();
+        let locked_staff = fs::OpenOptions::new().read(true).share_mode(0)
+            .open(first.join("高三/测试监考表.xlsx")).unwrap();
+        crate::exam_staff::generate_staff_plan_for_test(&db, &root).await.unwrap();
+        let second = crate::export_batch::current_batch_dir(&db, &root, "测试").await.unwrap();
+        assert_ne!(first, second);
+        assert!(second.join("高三/考场分配结果汇总.xlsx").is_file());
+        assert!(second.join("高三/测试监考表.xlsx").is_file());
+        drop((locked_student, locked_staff));
         fs::remove_dir_all(root).unwrap();
     });
 }
@@ -397,7 +423,7 @@ fn test_multigrade_failure_preserves_completed_batch() {
             .await
             .unwrap();
         let before = snapshot(&db).await;
-        let path = root.join("测试考场安排/高三/测试监考表.xlsx");
+        let path = crate::export_batch::current_batch_dir(&db, &root, "测试").await.unwrap().join("高三/测试监考表.xlsx");
         let bytes = fs::read(&path).unwrap();
         let bad = crate::score::multi_sheet_tests::fixture("mixed");
         assert!(
@@ -458,7 +484,7 @@ fn test_multigrade_failure_preserves_completed_batch() {
         teacher.invigilation_grade_name = Set(Some("高一".into()));
         teacher.update(&db).await.unwrap();
         // 标识损坏代表输出不可用；不得先持久化新的监考数据再发现导出失败。
-        fs::write(root.join("测试考场安排/.boom-batch.json"), b"bad").unwrap();
+        fs::write(crate::export_batch::current_batch_dir(&db, &root, "测试").await.unwrap().join(".boom-batch.json"), b"bad").unwrap();
         assert!(crate::exam_staff::generate_staff_plan_for_test(&db, &root)
             .await
             .is_err());

@@ -1953,7 +1953,7 @@ fn generate_latest_exam_plan_internal(
             tauri::async_runtime::block_on(export_bundle::bundle_data_from_draft(&db, &draft))?;
         let root = export_bundle::export_root_dir(app)?;
         let final_dir = export_bundle::export_batch_dir(&root, &bundle_settings.exam_title);
-        let batch = crate::export_batch::prepare_export_batch(
+        let batch = crate::export_batch::prepare_versioned_batch(
             &root,
             final_dir.file_name().unwrap().to_str().unwrap(),
         )?;
@@ -2002,9 +2002,10 @@ fn generate_latest_exam_plan_internal(
                 warning_count,
             },
         ))?;
+        let previous = tauri::async_runtime::block_on(crate::export_batch::select_prepared_batch(&meta_tx, &batch))?;
         let published = crate::export_batch::publish_prepared_batch(&batch)?;
         publication_warnings = tauri::async_runtime::block_on(
-            crate::export_batch::complete_published_batch(published, meta_tx.commit()),
+            crate::export_batch::complete_versioned_batch(published, meta_tx.commit(), previous),
         )?;
     }
     let completed_message = if publication_warnings.is_empty() {

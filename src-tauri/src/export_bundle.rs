@@ -442,6 +442,92 @@ pub(crate) async fn bundle_data_from_draft<C: sea_orm::ConnectionTrait>(
     Ok(inputs)
 }
 
+/// 从数据库快照重建考场导出数据，避免读取可能被用户占用的旧表格。
+pub(crate) async fn bundle_data_from_snapshot<C: sea_orm::ConnectionTrait>(
+    db: &C,
+) -> Result<Vec<GradeBundleInput>, AppError> {
+    let (plan_sessions, times, spaces, allocations) =
+        crate::db::repos::export_bundle::plan_snapshot(db).await?;
+    let times: HashMap<_, _> = times.into_iter().map(|row| (row.session_id, row)).collect();
+    let spaces: HashMap<_, _> = spaces.into_iter().map(|row| (row.id, row)).collect();
+    let mut inputs = Vec::new();
+    for grade in ["高一", "高二", "高三"] {
+        let mut sessions = HashMap::new();
+        let mut rows = Vec::new();
+        for session in plan_sessions.iter().filter(|row| row.grade_name == grade) {
+            let subject = Subject::from_key(&session.subject)
+                .ok_or_else(|| AppError::new("考场快照科目无效"))?;
+            let label = SUBJECT_EXPORT_ORDER
+                .iter()
+                .find(|(item, _)| *item == subject)
+                .map(|(_, label)| *label)
+                .ok_or_else(|| AppError::new("考场快照科目无效"))?;
+            let time = times
+                .get(&session.id)
+                .ok_or_else(|| AppError::new("考场快照缺少考试时间"))?;
+            let start = parse_datetime(&time.start_at)
+                .ok_or_else(|| AppError::new("考场快照考试时间无效"))?;
+            sessions.insert(
+                subject,
+                SessionInfo {
+                    subject_label: label,
+                    start_at: Some(time.start_at.clone()),
+                    end_at: Some(time.end_at.clone()),
+                    start_ts: Some(start.and_utc().timestamp_millis()),
+                },
+            );
+            for allocation in allocations
+                .iter()
+                .filter(|row| row.session_id == session.id && row.allocation_type == "exam")
+            {
+                let space = allocation
+                    .space_id
+                    .and_then(|id| spaces.get(&id))
+                    .ok_or_else(|| AppError::new("考场快照缺少考场"))?;
+                if space.session_id != session.id {
+                    return Err(AppError::new("考场快照场次不匹配"));
+                }
+                rows.push(ExamRow {
+                    admission_no: allocation.admission_no.clone(),
+                    student_name: allocation.student_name.clone(),
+                    class_name: allocation.class_name.clone(),
+                    subject,
+                    subject_label: label,
+                    space_name: space.space_name.clone(),
+                    seat_no: allocation.seat_no.unwrap_or_default(),
+                });
+            }
+        }
+        if !sessions.is_empty() {
+            inputs.push(GradeBundleInput {
+                grade: grade.into(),
+                sessions,
+                rows,
+                students: crate::db::repos::export_bundle::students_for_grade(db, grade).await?,
+            });
+        }
+    }
+    Ok(inputs)
+}
+
+pub(crate) async fn regenerate_exam_bundle<C: sea_orm::ConnectionTrait>(
+    db: &C,
+    dir: &Path,
+    plan_revision: &str,
+    revision: &(Option<String>, Option<String>),
+) -> Result<(), AppError> {
+    let settings = crate::db::repos::export_bundle::settings(db).await?;
+    let inputs = bundle_data_from_snapshot(db).await?;
+    write_exam_bundle_data(
+        dir,
+        &settings.exam_title,
+        &settings.exam_notices,
+        &inputs,
+        |_, _, _| {},
+    )?;
+    crate::export_batch::write_batch_identity(dir, plan_revision, revision)
+}
+
 pub(crate) fn write_exam_bundle_data<F>(
     batch_dir: &Path,
     exam_title: &str,
@@ -805,6 +891,7 @@ pub fn zip_existing_export_bundle(
 ) -> Result<ExportLatestExamAllocationBundleResult, AppError> {
     let exported_at = Utc::now().to_rfc3339();
     let root = export_root_dir(app)?;
+    let _operation = crate::export_batch::BatchOperationGuard::acquire(&root)?;
     let db = tauri::async_runtime::block_on(crate::db::connect(app))?;
     use sea_orm::TransactionTrait;
     let (settings, revision, plan_revision) = tauri::async_runtime::block_on(async {
@@ -816,7 +903,11 @@ pub fn zip_existing_export_bundle(
         Ok::<_, AppError>((settings, revision, plan_revision))
     })?;
     let exam_title = settings.exam_title;
-    let batch_dir = export_batch_dir(&root, &exam_title);
+    let batch_dir = tauri::async_runtime::block_on(crate::export_batch::current_batch_dir(
+        &db,
+        &root,
+        &exam_title,
+    ))?;
     if !batch_dir.exists() {
         return Err(AppError::new("尚未生成导出文件，请先执行考场分配"));
     }

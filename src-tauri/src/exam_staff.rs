@@ -3628,13 +3628,14 @@ async fn prepare_staff_export_from_plan(
 ) -> Result<crate::export_batch::PreparedExportBatch, AppError> {
     use crate::export_invigilation::{AccountingTeacherRow, GradeStaffExportInput, TaskExportRow};
     let title = crate::db::repos::export_invigilation::exam_title(db).await?;
-    let final_dir = crate::export_bundle::export_batch_dir(root, &title);
+    let final_dir = crate::export_batch::current_batch_dir(db, root, &title).await?;
     crate::export_batch::verify_batch_identity(&final_dir, plan_revision, &revision.0)?;
-    let batch = crate::export_batch::prepare_export_batch(
+    let base_dir = crate::export_bundle::export_batch_dir(root, &title);
+    let batch = crate::export_batch::prepare_versioned_batch(
         root,
-        final_dir.file_name().unwrap().to_str().unwrap(),
+        base_dir.file_name().unwrap().to_str().unwrap(),
     )?;
-    crate::export_batch::copy_student_artifacts(&final_dir, &batch.staging_dir)?;
+    crate::export_bundle::regenerate_exam_bundle(db, &batch.staging_dir, plan_revision, revision).await?;
     let counts = crate::db::repos::export_invigilation::exam_counts(db).await?;
     let mut inputs = Vec::new();
     for grade in ["高一", "高二", "高三"] {
@@ -3875,13 +3876,18 @@ async fn generate_latest_exam_staff_plan_internal(
         generated_at,
     )
     .await?;
+    let previous = if let Some(batch) = prepared.as_ref() {
+        crate::export_batch::select_prepared_batch(&tx, batch).await?
+    } else {
+        None
+    };
     let published = prepared
         .as_ref()
         .map(crate::export_batch::publish_prepared_batch)
         .transpose()?;
     if let Some(published) = published {
         result.publication_warnings =
-            crate::export_batch::complete_published_batch(published, tx.commit()).await?;
+            crate::export_batch::complete_versioned_batch(published, tx.commit(), previous).await?;
     } else {
         tx.commit().await?;
     }

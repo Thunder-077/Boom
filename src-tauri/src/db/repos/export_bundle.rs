@@ -132,3 +132,62 @@ fn class_number(name: &str) -> Option<i64> {
 fn sort_class_like(a: &str, b: &str) -> std::cmp::Ordering {
     class_number(a).cmp(&class_number(b)).then(a.cmp(b))
 }
+
+// 当前目录与考场或监考快照在同一数据库事务中更新。
+pub async fn current_export_directory<C: ConnectionTrait>(
+    db: &C,
+) -> Result<Option<String>, AppError> {
+    Ok(crate::entity::export_current::Entity::find_by_id(1)
+        .one(db)
+        .await?
+        .map(|row| row.directory))
+}
+
+pub async fn set_current_export_directory<C: ConnectionTrait>(
+    db: &C,
+    directory: &str,
+) -> Result<(), AppError> {
+    use sea_orm::{ActiveModelTrait, ActiveValue::Set};
+    let model = crate::entity::export_current::ActiveModel {
+        id: Set(1),
+        directory: Set(directory.to_owned()),
+    };
+    if crate::entity::export_current::Entity::find_by_id(1)
+        .one(db)
+        .await?
+        .is_some()
+    {
+        model.update(db).await?;
+    } else {
+        model.insert(db).await?;
+    }
+    Ok(())
+}
+
+/// 读取已提交的考场快照，供重新生成导出文件使用。
+pub async fn plan_snapshot<C: ConnectionTrait>(
+    db: &C,
+) -> Result<
+    (
+        Vec<crate::entity::latest_exam_plan_sessions::Model>,
+        Vec<crate::entity::exam_session_times::Model>,
+        Vec<crate::entity::latest_exam_plan_spaces::Model>,
+        Vec<crate::entity::latest_exam_plan_student_allocations::Model>,
+    ),
+    AppError,
+> {
+    Ok((
+        crate::entity::latest_exam_plan_sessions::Entity::find()
+            .all(db)
+            .await?,
+        crate::entity::exam_session_times::Entity::find()
+            .all(db)
+            .await?,
+        crate::entity::latest_exam_plan_spaces::Entity::find()
+            .all(db)
+            .await?,
+        crate::entity::latest_exam_plan_student_allocations::Entity::find()
+            .all(db)
+            .await?,
+    ))
+}

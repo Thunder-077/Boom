@@ -6,6 +6,7 @@ use std::{
 };
 
 static NEXT_BATCH: AtomicU64 = AtomicU64::new(1);
+static NEXT_VERSION: AtomicU64 = AtomicU64::new(1);
 
 static ACTIVE_ROOTS: std::sync::LazyLock<std::sync::Mutex<std::collections::HashSet<PathBuf>>> =
     std::sync::LazyLock::new(|| std::sync::Mutex::new(std::collections::HashSet::new()));
@@ -39,6 +40,7 @@ pub(crate) struct PreparedExportBatch {
     pub staging_dir: PathBuf,
     pub final_dir: PathBuf,
     backup_dir: PathBuf,
+    replace_existing: bool,
 }
 
 pub(crate) struct PublishedExportBatch {
@@ -77,13 +79,101 @@ pub(crate) fn prepare_export_batch(
         staging_dir,
         final_dir: root.join(final_name),
         backup_dir: root.join(format!(".backup-{nonce}")),
+        replace_existing: true,
     })
+}
+
+// 每次发布使用独立目录，避免旧目录被资源管理器或其他程序占用。
+pub(crate) fn prepare_versioned_batch(
+    root: &Path,
+    final_name: &str,
+) -> Result<PreparedExportBatch, AppError> {
+    let timestamp = chrono::Local::now().format("%Y-%m-%d-%H-%M-%S");
+    loop {
+        let version = NEXT_VERSION.fetch_add(1, Ordering::Relaxed);
+        let name = format!("{final_name}-{timestamp}-V{version}");
+        // 已有路径必须保留；即使另一个进程同时发布，也不能覆盖旧结果。
+        match fs::symlink_metadata(root.join(&name)) {
+            Ok(_) => continue,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(AppError::new(format!("检查导出目录失败: {error}"))),
+        }
+        let mut batch = prepare_export_batch(root, &name)?;
+        batch.replace_existing = false;
+        return Ok(batch);
+    }
+}
+
+pub(crate) async fn current_batch_dir<C: sea_orm::ConnectionTrait>(
+    db: &C,
+    root: &Path,
+    title: &str,
+) -> Result<PathBuf, AppError> {
+    let Some(name) = crate::db::repos::export_bundle::current_export_directory(db).await? else {
+        return Ok(crate::export_bundle::export_batch_dir(root, title));
+    };
+    if !matches!(
+        Path::new(&name).components().next(),
+        Some(std::path::Component::Normal(_))
+    ) || Path::new(&name).components().count() != 1
+    {
+        return Err(AppError::new("导出目录记录无效"));
+    }
+    Ok(root.join(name))
+}
+
+pub(crate) async fn select_prepared_batch<C: sea_orm::ConnectionTrait>(
+    db: &C,
+    batch: &PreparedExportBatch,
+) -> Result<Option<PathBuf>, AppError> {
+    let root = batch
+        .final_dir
+        .parent()
+        .ok_or_else(|| AppError::new("导出目录无效"))?;
+    let previous = match crate::db::repos::export_bundle::current_export_directory(db).await? {
+        Some(name) => {
+            let path = Path::new(&name);
+            if !matches!(
+                path.components().next(),
+                Some(std::path::Component::Normal(_))
+            ) || path.components().count() != 1
+            {
+                return Err(AppError::new("导出目录记录无效"));
+            }
+            Some(root.join(path))
+        }
+        None => None,
+    };
+    let name = batch
+        .final_dir
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or_else(|| AppError::new("导出目录名无效"))?;
+    crate::db::repos::export_bundle::set_current_export_directory(db, name).await?;
+    Ok(previous)
+}
+
+// 清理旧版本只是尽力而为；Windows 占用旧文件时不能影响已经提交的新结果。
+pub(crate) async fn complete_versioned_batch(
+    published: PublishedExportBatch,
+    commit: impl std::future::Future<Output = Result<(), sea_orm::DbErr>>,
+    previous: Option<PathBuf>,
+) -> Result<Vec<String>, AppError> {
+    let current = published.final_dir.clone();
+    let warnings = complete_published_batch(published, commit).await?;
+    if let Some(old) = previous.filter(|path| path != &current) {
+        let _ = fs::remove_dir_all(old);
+    }
+    Ok(warnings)
 }
 
 pub(crate) fn publish_prepared_batch(
     batch: &PreparedExportBatch,
 ) -> Result<PublishedExportBatch, AppError> {
     let had_previous = batch.final_dir.exists();
+    if had_previous && !batch.replace_existing {
+        return Err(AppError::new("导出目录名称已被占用，请重试"));
+    }
     if had_previous {
         if fs::symlink_metadata(&batch.final_dir)
             .map_err(|e| AppError::new(e.to_string()))?
@@ -150,7 +240,8 @@ impl PublishedExportBatch {
     }
 }
 
-pub(crate) fn copy_student_artifacts(source: &Path, target: &Path) -> Result<(), AppError> {
+#[cfg(test)]
+fn copy_student_artifacts(source: &Path, target: &Path) -> Result<(), AppError> {
     if !source.is_dir() {
         return Err(AppError::new(
             "本次考场资料目录不存在，请先重新生成考场安排",
@@ -277,6 +368,133 @@ mod tests {
         fn drop(&mut self) {
             let _ = fs::remove_dir_all(&self.0);
         }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn versioned_publication_succeeds_with_old_directory_and_file_locked() {
+        use sea_orm::{Database, TransactionTrait};
+        use sea_orm_migration::MigratorTrait;
+        use std::os::windows::fs::OpenOptionsExt;
+        tauri::async_runtime::block_on(async {
+            let root = TestDirectory::new();
+            let db = Database::connect("sqlite::memory:").await.unwrap();
+            crate::db::migration::Migrator::up(&db, None).await.unwrap();
+            let legacy = crate::export_bundle::export_batch_dir(root.path(), "考试");
+            fs::create_dir(&legacy).unwrap();
+            fs::write(legacy.join("old.xlsx"), b"old").unwrap();
+            assert_eq!(
+                current_batch_dir(&db, root.path(), "考试").await.unwrap(),
+                legacy
+            );
+            let locked_dir = fs::OpenOptions::new()
+                .read(true)
+                .share_mode(3)
+                .custom_flags(0x02000000)
+                .open(&legacy)
+                .unwrap();
+            let locked_file = fs::OpenOptions::new()
+                .read(true)
+                .share_mode(3)
+                .open(legacy.join("old.xlsx"))
+                .unwrap();
+            let batch = prepare_versioned_batch(root.path(), "考试考场安排").unwrap();
+            fs::write(batch.staging_dir.join("new.xlsx"), b"new").unwrap();
+            let tx = db.begin().await.unwrap();
+            select_prepared_batch(&tx, &batch).await.unwrap();
+            let published = publish_prepared_batch(&batch).unwrap();
+            complete_published_batch(published, tx.commit())
+                .await
+                .unwrap();
+            assert_eq!(
+                current_batch_dir(&db, root.path(), "考试").await.unwrap(),
+                batch.final_dir
+            );
+            assert_eq!(fs::read(batch.final_dir.join("new.xlsx")).unwrap(), b"new");
+            drop(locked_file);
+            drop(locked_dir);
+        });
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn repeated_publication_ignores_locked_old_version_cleanup() {
+        use sea_orm::{Database, TransactionTrait};
+        use sea_orm_migration::MigratorTrait;
+        use std::os::windows::fs::OpenOptionsExt;
+        tauri::async_runtime::block_on(async {
+            let root = TestDirectory::new();
+            let db = Database::connect("sqlite::memory:").await.unwrap();
+            crate::db::migration::Migrator::up(&db, None).await.unwrap();
+            let first = prepare_versioned_batch(root.path(), "batch").unwrap();
+            fs::write(first.staging_dir.join("old.xlsx"), b"old").unwrap();
+            let tx = db.begin().await.unwrap();
+            let previous = select_prepared_batch(&tx, &first).await.unwrap();
+            let published = publish_prepared_batch(&first).unwrap();
+            complete_versioned_batch(published, tx.commit(), previous)
+                .await
+                .unwrap();
+            let locked = fs::OpenOptions::new()
+                .read(true)
+                .share_mode(3)
+                .open(first.final_dir.join("old.xlsx"))
+                .unwrap();
+            let second = prepare_versioned_batch(root.path(), "batch").unwrap();
+            fs::write(second.staging_dir.join("new.xlsx"), b"new").unwrap();
+            let tx = db.begin().await.unwrap();
+            let previous = select_prepared_batch(&tx, &second).await.unwrap();
+            let published = publish_prepared_batch(&second).unwrap();
+            complete_versioned_batch(published, tx.commit(), previous)
+                .await
+                .unwrap();
+            assert_eq!(
+                current_batch_dir(&db, root.path(), "考试").await.unwrap(),
+                second.final_dir
+            );
+            assert_eq!(fs::read(second.final_dir.join("new.xlsx")).unwrap(), b"new");
+            drop(locked);
+        });
+    }
+
+    #[test]
+    fn failed_transaction_keeps_current_directory() {
+        use sea_orm::{Database, TransactionTrait};
+        use sea_orm_migration::MigratorTrait;
+        tauri::async_runtime::block_on(async {
+            let root = TestDirectory::new();
+            let db = Database::connect("sqlite::memory:").await.unwrap();
+            crate::db::migration::Migrator::up(&db, None).await.unwrap();
+            let batch = prepare_versioned_batch(root.path(), "batch").unwrap();
+            let tx = db.begin().await.unwrap();
+            select_prepared_batch(&tx, &batch).await.unwrap();
+            let published = publish_prepared_batch(&batch).unwrap();
+            tx.rollback().await.unwrap();
+            let result = complete_published_batch(published, async {
+                Err(sea_orm::DbErr::Custom("injected commit failure".into()))
+            })
+            .await;
+            assert!(result.is_err());
+            assert_eq!(
+                current_batch_dir(&db, root.path(), "考试").await.unwrap(),
+                crate::export_bundle::export_batch_dir(root.path(), "考试")
+            );
+            assert!(!batch.final_dir.exists());
+        });
+    }
+
+    #[test]
+    fn versioned_directory_uses_local_datetime_and_does_not_replace_existing() {
+        let root = TestDirectory::new();
+        let batch = prepare_versioned_batch(root.path(), "期中考试考场安排").unwrap();
+        let name = batch.final_dir.file_name().unwrap().to_str().unwrap();
+        let suffix = name.strip_prefix("期中考试考场安排-").unwrap();
+        let (date, version) = suffix.rsplit_once("-V").unwrap();
+        chrono::NaiveDateTime::parse_from_str(date, "%Y-%m-%d-%H-%M-%S").unwrap();
+        assert!(version.parse::<u64>().unwrap() > 0);
+        fs::create_dir(&batch.final_dir).unwrap();
+        fs::write(batch.final_dir.join("old"), b"old").unwrap();
+        assert!(publish_prepared_batch(&batch).is_err());
+        assert_eq!(fs::read(batch.final_dir.join("old")).unwrap(), b"old");
     }
 
     #[test]
