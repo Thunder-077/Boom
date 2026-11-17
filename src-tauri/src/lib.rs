@@ -78,6 +78,7 @@ pub fn run() {
             exam_plan::get_latest_exam_plan_session_detail,
             export_bundle::export_latest_exam_allocation_bundle,
             invigilation::list_exam_session_time_grade_options,
+            invigilation::list_populated_teaching_class_ids,
             invigilation::list_exam_session_times,
             invigilation::list_invigilation_exclusion_session_options,
             invigilation::upsert_exam_session_times,

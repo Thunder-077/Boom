@@ -8,7 +8,7 @@ use crate::entity::{
     invigilation_config_settings, invigilation_custom_rules, latest_exam_plan_sessions,
     latest_exam_plan_spaces, latest_exam_staff_assignments, latest_exam_staff_plan_meta,
     latest_exam_staff_tasks, latest_teacher_assignments_v2, latest_teacher_duty_stats,
-    latest_teacher_homerooms_v2, latest_teachers_v2,
+    latest_teacher_homerooms_v2, latest_teachers_v2, latest_student_scores,
 };
 use crate::score::{AppError, ListResult};
 
@@ -433,6 +433,14 @@ pub async fn load_class_subject_rows(
 pub async fn load_teaching_class_rows(
     db: &DatabaseConnection,
 ) -> Result<Vec<TeachingClassRow>, AppError> {
+    let populated = latest_student_scores::Entity::find()
+        .select_only()
+        .column(latest_student_scores::Column::GradeName)
+        .column(latest_student_scores::Column::ClassName)
+        .distinct()
+        .into_tuple::<(String, String)>()
+        .all(db).await?
+        .into_iter().collect::<std::collections::HashSet<_>>();
     let rows = class_configs::Entity::find()
         .filter(class_configs::Column::ConfigType.eq("teaching_class"))
         .order_by_asc(class_configs::Column::GradeName)
@@ -442,6 +450,7 @@ pub async fn load_teaching_class_rows(
         .await?;
     Ok(rows
         .into_iter()
+        .filter(|row| populated.contains(&(row.grade_name.clone(), row.class_name.clone())))
         .map(|row| TeachingClassRow {
             id: row.id as i64,
             grade_name: row.grade_name,
@@ -496,6 +505,7 @@ pub async fn upsert_config(
         active.default_exam_room_required_count = row.default_exam_room_required_count;
         active.indoor_allowance_per_minute = row.indoor_allowance_per_minute;
         active.outdoor_allowance_per_minute = row.outdoor_allowance_per_minute;
+        active.floor_rover_enabled = row.floor_rover_enabled;
         active.middle_manager_default_enabled = row.middle_manager_default_enabled;
         active.middle_manager_exception_teacher_ids_json =
             row.middle_manager_exception_teacher_ids_json;
@@ -529,6 +539,7 @@ pub async fn update_self_study_class_subjects_json(
             default_exam_room_required_count: Set(1),
             indoor_allowance_per_minute: Set(0.5),
             outdoor_allowance_per_minute: Set(0.3),
+            floor_rover_enabled: Set(1),
             middle_manager_default_enabled: Set(0),
             middle_manager_exception_teacher_ids_json: Set("[]".to_string()),
             self_study_date: Set(String::new()),

@@ -8,6 +8,7 @@ pub struct Model {
     pub default_exam_room_required_count: i64,
     pub indoor_allowance_per_minute: f64,
     pub outdoor_allowance_per_minute: f64,
+    pub floor_rover_enabled: i64,
     pub middle_manager_default_enabled: i64,
     pub middle_manager_exception_teacher_ids_json: String,
     pub self_study_date: String,

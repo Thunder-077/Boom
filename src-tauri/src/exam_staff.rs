@@ -395,6 +395,7 @@ pub struct TeacherDutyStat {
 #[derive(Debug, Clone)]
 struct RuntimeInvigilationConfig {
     default_exam_room_required_count: i64,
+    floor_rover_enabled: bool,
     indoor_allowance_per_minute: f64,
     outdoor_allowance_per_minute: f64,
     middle_manager_default_enabled: bool,
@@ -433,6 +434,8 @@ pub struct GenerateExamStaffPlanCustomRule {
 #[serde(rename_all = "camelCase")]
 pub struct PersistedInvigilationConfig {
     default_exam_room_required_count: i64,
+    #[serde(default = "default_floor_rover_enabled")]
+    floor_rover_enabled: bool,
     indoor_allowance_per_minute: f64,
     outdoor_allowance_per_minute: f64,
     middle_manager_default_enabled: bool,
@@ -441,6 +444,8 @@ pub struct PersistedInvigilationConfig {
     self_study_start_time: String,
     self_study_end_time: String,
 }
+
+fn default_floor_rover_enabled() -> bool { true }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -947,6 +952,7 @@ pub struct InvigilationExclusionSessionOption {
 fn build_config_from_payload(payload: &GenerateExamStaffPlanPayload) -> RuntimeInvigilationConfig {
     RuntimeInvigilationConfig {
         default_exam_room_required_count: payload.default_exam_room_required_count.max(1),
+        floor_rover_enabled: true,
         indoor_allowance_per_minute: payload.indoor_allowance_per_minute.max(0.0),
         outdoor_allowance_per_minute: payload.outdoor_allowance_per_minute.max(0.0),
         middle_manager_default_enabled: false,
@@ -963,6 +969,7 @@ async fn hydrate_runtime_middle_manager_config(
     config: &mut RuntimeInvigilationConfig,
 ) -> Result<(), AppError> {
     if let Some(persisted) = exam_staff_repo::get_config(db).await? {
+        config.floor_rover_enabled = persisted.floor_rover_enabled != 0;
         config.middle_manager_default_enabled = persisted.middle_manager_default_enabled == 1;
         config.middle_manager_exception_teacher_ids =
             serde_json::from_str::<Vec<i64>>(&persisted.middle_manager_exception_teacher_ids_json)
@@ -982,6 +989,7 @@ async fn load_runtime_invigilation_config(
 ) -> Result<RuntimeInvigilationConfig, AppError> {
     let mut config = RuntimeInvigilationConfig {
         default_exam_room_required_count: 1,
+        floor_rover_enabled: true,
         indoor_allowance_per_minute: 0.5,
         outdoor_allowance_per_minute: 0.3,
         middle_manager_default_enabled: false,
@@ -1296,6 +1304,12 @@ async fn load_teaching_classes(
             floor: row.floor,
         })
         .collect())
+}
+
+pub async fn list_populated_teaching_class_ids(app: AppHandle) -> Result<Vec<i64>, String> {
+    let db = crate::db::connect(&app).await.map_err(|error| error.to_string())?;
+    let classes = load_teaching_classes(&db).await.map_err(|error| error.to_string())?;
+    Ok(classes.into_iter().map(|class| class.id).collect())
 }
 
 fn teaching_classes_for_sessions<'a>(
@@ -1876,7 +1890,7 @@ async fn build_staff_tasks(
         for (space_id, space_type, space_name, original_class_name, self_study_topic, floor) in
             &spaces
         {
-            if floor.trim().is_empty() {
+            if invigilation_config.floor_rover_enabled && floor.trim().is_empty() {
                 return Err(AppError::new(format!(
                     "场次 {} 存在空楼层，无法分配流动监考",
                     session.session_id
@@ -1968,7 +1982,9 @@ async fn build_staff_tasks(
         let mut sorted_floors: Vec<String> = floors.into_iter().collect();
         sorted_floors.sort();
         for floor in sorted_floors {
-            floor_rover_coverages.push(floor_rover_coverage(session, floor));
+            if invigilation_config.floor_rover_enabled {
+                floor_rover_coverages.push(floor_rover_coverage(session, floor));
+            }
         }
     }
 
@@ -3721,6 +3737,7 @@ async fn generate_latest_exam_staff_plan_internal(
     progress: Option<&StaffAssignmentProgressReporter>,
     output_root: Option<&Path>,
 ) -> Result<GenerateLatestExamStaffPlanResult, AppError> {
+    let custom_rules = custom_rules.into_iter().filter(|rule| invigilation_config.floor_rover_enabled || rule.task_scope_type != RULE_TASK_SCOPE_FLOOR_ROVER).collect::<Vec<_>>();
     let _operation = output_root
         .map(crate::export_batch::BatchOperationGuard::acquire)
         .transpose()?;
@@ -4148,6 +4165,7 @@ pub async fn list_invigilation_custom_rule_options(
 fn default_persisted_invigilation_config() -> PersistedInvigilationConfig {
     PersistedInvigilationConfig {
         default_exam_room_required_count: 1,
+        floor_rover_enabled: true,
         indoor_allowance_per_minute: 0.5,
         outdoor_allowance_per_minute: 0.3,
         middle_manager_default_enabled: false,
@@ -4513,6 +4531,7 @@ pub async fn get_persisted_invigilation_state(
                 .unwrap_or_default();
                 PersistedInvigilationConfig {
                     default_exam_room_required_count: row.default_exam_room_required_count.max(1),
+                    floor_rover_enabled: row.floor_rover_enabled != 0,
                     indoor_allowance_per_minute: row.indoor_allowance_per_minute.max(0.0),
                     outdoor_allowance_per_minute: row.outdoor_allowance_per_minute.max(0.0),
                     middle_manager_default_enabled: row.middle_manager_default_enabled == 1,
@@ -4580,6 +4599,7 @@ pub async fn save_persisted_invigilation_config(
                 default_exam_room_required_count: sea_orm::ActiveValue::Set(
                     payload.default_exam_room_required_count.max(1),
                 ),
+                floor_rover_enabled: sea_orm::ActiveValue::Set(if payload.floor_rover_enabled { 1 } else { 0 }),
                 indoor_allowance_per_minute: sea_orm::ActiveValue::Set(
                     payload.indoor_allowance_per_minute.max(0.0),
                 ),
@@ -4639,7 +4659,9 @@ pub async fn replace_persisted_invigilation_custom_rules(
     let result = async {
         let db = crate::db::connect(&app).await?;
         let session_times = load_session_times_runtime(&db).await?;
-        let config = load_runtime_invigilation_config(&db).await?;
+        let mut config = load_runtime_invigilation_config(&db).await?;
+        // Keep disabled rover rules editable and validate them against potential tasks.
+        config.floor_rover_enabled = true;
         let class_subject_map = load_class_subject_map(&db).await?;
         let teaching_classes = load_teaching_classes(&db).await?;
         let tasks = build_staff_tasks(
@@ -4866,6 +4888,7 @@ mod tests {
     fn test_runtime_config() -> RuntimeInvigilationConfig {
         RuntimeInvigilationConfig {
             default_exam_room_required_count: 1,
+            floor_rover_enabled: true,
             indoor_allowance_per_minute: 0.5,
             outdoor_allowance_per_minute: 0.3,
             middle_manager_default_enabled: false,
@@ -4875,6 +4898,24 @@ mod tests {
             self_study_end_time: "13:40".to_string(),
             self_study_class_subjects: HashMap::new(),
         }
+    }
+
+    #[test]
+    fn test_floor_rover_setting_defaults_enabled_and_survives_reload() {
+        tauri::async_runtime::block_on(async {
+            use sea_orm::{ActiveModelTrait, ActiveValue::Set, ConnectionTrait, IntoActiveModel};
+            let db = Database::connect("sqlite::memory:").await.unwrap();
+            Migrator::up(&db, Some(5)).await.unwrap();
+            db.execute_unprepared("INSERT INTO invigilation_config_settings (id, default_exam_room_required_count, indoor_allowance_per_minute, outdoor_allowance_per_minute, middle_manager_default_enabled, middle_manager_exception_teacher_ids_json, self_study_date, self_study_start_time, self_study_end_time, self_study_class_subjects_json, updated_at) VALUES (1, 2, 0.5, 0.3, 0, '[]', '', '12:10', '13:40', '[]', 'old')").await.unwrap();
+            Migrator::up(&db, None).await.unwrap();
+            let row = exam_staff_repo::get_config(&db).await.unwrap().unwrap();
+            assert_eq!(row.floor_rover_enabled, 1);
+            assert_eq!(row.default_exam_room_required_count, 2);
+            let mut active = row.into_active_model();
+            active.floor_rover_enabled = Set(0);
+            active.update(&db).await.unwrap();
+            assert!(!load_runtime_invigilation_config(&db).await.unwrap().floor_rover_enabled);
+        });
     }
 
     #[test]
@@ -5402,6 +5443,39 @@ mod tests {
     }
 
     #[test]
+    fn test_empty_class_is_excluded_from_full_self_study() {
+        let db = setup_build_staff_tasks_test_db();
+        insert_test_plan_session(&db, 101, Subject::Math);
+        insert_test_plan_space(&db, 1, 101, "高三1场", "1层", 1);
+        tauri::async_runtime::block_on(async {
+            for (id, name) in [(1, "高三1班"), (9, "高三9班")] {
+                crate::entity::class_configs::ActiveModel {
+                    id: Set(id), config_type: Set("teaching_class".into()), grade_name: Set("高三".into()),
+                    class_name: Set(name.into()), building: Set("教学楼".into()), floor: Set("1层".into()),
+                    room_label: Set(None), created_at: Set("now".into()), updated_at: Set("now".into()),
+                }.insert(&db).await.unwrap();
+            }
+            crate::entity::latest_student_scores::ActiveModel {
+                admission_no: Set("s1".into()), student_name: Set("学生".into()), class_name: Set("高三1班".into()),
+                grade_name: Set("高三".into()), subject_combination: Set(String::new()), language: Set(String::new()),
+                total_score: Set(0.0), class_rank: Set(1), grade_rank: Set(1), selected_subject_count: Set(1),
+                remark: Set(None), exam_group: Set("regular".into()),
+            }.insert(&db).await.unwrap();
+            let classes = load_teaching_classes(&db).await.unwrap();
+            assert_eq!(classes.len(), 1);
+            assert_eq!(classes[0].class_name, "高三1班");
+            let session = SessionTimeRuntime { session_id: 101, grade_name: "高三".into(), subject: Subject::Math,
+                start_at: "2026-03-24T08:00".into(), end_at: "2026-03-24T10:00".into(), start_ts: 1_000, end_ts: 2_000 };
+            let mut config = test_runtime_config();
+            config.self_study_class_subjects.insert(1, Subject::Math);
+            let tasks = build_staff_tasks(&db, &[session], &config, &HashMap::new(), &classes).await.unwrap();
+            let study = tasks.iter().filter(|t| t.task_source == StaffTaskSource::FullSelfStudy).collect::<Vec<_>>();
+            assert_eq!(study.len(), 1);
+            assert_eq!(study[0].space_name, "高三1班");
+        });
+    }
+
+    #[test]
     fn test_session_time_rows_ignore_legacy_zero_participant_sessions() {
         let db = setup_build_staff_tasks_test_db();
         insert_test_plan_session(&db, 101, Subject::Chemistry);
@@ -5465,6 +5539,13 @@ mod tests {
                 vec![Subject::English, Subject::Russian]
             );
         }
+        let mut disabled = test_runtime_config();
+        disabled.floor_rover_enabled = false;
+        let disabled_tasks = tauri::async_runtime::block_on(build_staff_tasks(
+            &db, &session_times, &disabled, &HashMap::new(), &[],
+        )).unwrap();
+        assert!(disabled_tasks.iter().all(|task| task.role != StaffRole::FloorRover));
+        assert!(disabled_tasks.iter().any(|task| task.role == StaffRole::ExamRoomInvigilator));
     }
 
     #[test]

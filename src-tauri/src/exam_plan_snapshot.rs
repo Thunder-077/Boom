@@ -40,10 +40,17 @@ pub(crate) fn validate_exam_plan_draft(draft: &ExamPlanDraft) -> Result<(), AppE
                 space.grade_name
             )));
         }
-        if space
-            .capacity
-            .is_some_and(|cap| cap > *draft.max_capacities.get(&space.grade_name).unwrap_or(&200))
-        {
+        let group_key = space
+            .exam_group
+            .as_ref()
+            .map(|group| format!("{}-{group}", space.grade_name));
+        let maximum = group_key
+            .as_ref()
+            .and_then(|key| draft.max_capacities.get(key))
+            .or_else(|| draft.max_capacities.get(&space.grade_name))
+            .copied()
+            .unwrap_or(200);
+        if space.capacity.is_some_and(|cap| cap > maximum) {
             return Err(AppError::new(format!("考场{name}人数超过年级上限")));
         }
     }

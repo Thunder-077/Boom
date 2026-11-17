@@ -243,6 +243,7 @@ export interface TeacherDutyStat {
 
 export interface InvigilationConfig {
   defaultExamRoomRequiredCount: number;
+  floorRoverEnabled: boolean;
   indoorAllowancePerMinute: number;
   outdoorAllowancePerMinute: number;
   middleManagerDefaultEnabled: boolean;

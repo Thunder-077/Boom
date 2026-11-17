@@ -81,8 +81,28 @@ impl MigratorTrait for Migrator {
             Box::new(m20260517_000002_course_import_settings::Migration),
             Box::new(m20261009_000003_grade_capacity::Migration),
             Box::new(m20261116_000004_multi_grade::Migration),
+            Box::new(m20261116_000005_floor_rover_switch::Migration),
             Box::new(m20261117_000005_export_current::Migration),
         ]
+    }
+}
+
+mod m20261116_000005_floor_rover_switch {
+    use sea_orm_migration::prelude::*;
+    pub struct Migration;
+    impl MigrationName for Migration {
+        fn name(&self) -> &str { "m20261116_000005_floor_rover_switch" }
+    }
+    #[async_trait::async_trait]
+    impl MigrationTrait for Migration {
+        async fn up(&self, manager: &SchemaManager) -> Result<(), DbErr> {
+            manager.alter_table(Table::alter().table(Alias::new("invigilation_config_settings"))
+                .add_column(ColumnDef::new(Alias::new("floor_rover_enabled")).integer().not_null().default(1)).to_owned()).await
+        }
+        async fn down(&self, manager: &SchemaManager) -> Result<(), DbErr> {
+            manager.alter_table(Table::alter().table(Alias::new("invigilation_config_settings"))
+                .drop_column(Alias::new("floor_rover_enabled")).to_owned()).await
+        }
     }
 }
 

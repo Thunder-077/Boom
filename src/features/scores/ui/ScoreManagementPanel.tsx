@@ -1,7 +1,10 @@
 import { useEffect, useState } from "react";
 import { Search, X } from "lucide-react";
 import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
+import type { DragDropEvent } from "@tauri-apps/api/webviewWindow";
+import type { Event } from "@tauri-apps/api/event";
 import { hasDesktopRuntime } from "../../../shared/utils/desktopRuntime";
+import { registerScopedListener } from "../../../shared/utils/asyncListener";
 import { SUBJECT_LABELS } from "../../../entities/class-config/model";
 import type { ScoreCellState, ScoreDetail, ScoreRow, ScoreUpdatePayload } from "../../../entities/score/model";
 import { FilterToolbar, FluentSelect, InfoHint, Pagination, TableCard } from "../../../widgets/common/index.react";
@@ -77,14 +80,14 @@ export default function ScoreManagementPanel() {
   });
 
   useEffect(() => {
-    let unlistenDragDrop: (() => void) | null = null;
+    let unlistenDragDrop: (() => void) | undefined;
 
     async function bindWindowEvents() {
       if (!hasDesktopRuntime()) {
         return;
       }
       const appWindow = getCurrentWebviewWindow();
-      unlistenDragDrop = await appWindow.onDragDropEvent((event) => {
+      unlistenDragDrop = registerScopedListener<Event<DragDropEvent>>((handler) => appWindow.onDragDropEvent(handler), (event) => {
         if (event.payload.type === "enter" || event.payload.type === "over") {
           setIsDragging(true);
           return;

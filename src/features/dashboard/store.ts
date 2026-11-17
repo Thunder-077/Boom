@@ -72,6 +72,7 @@ const emptyGenerationProgress: ExamGenerationProgress = {
 
 const defaultInvigilationConfig: InvigilationConfig = {
   defaultExamRoomRequiredCount: 1,
+  floorRoverEnabled: true,
   indoorAllowancePerMinute: 0.5,
   outdoorAllowancePerMinute: 0.3,
   middleManagerDefaultEnabled: false,
@@ -418,6 +419,7 @@ export function createExamAllocationStore(service: ExamAllocationService = examA
     } finally {
       state.loading = false;
     }
+    return snapshot().selfStudyClassSubjects;
   }
 
   async function saveSettings(defaultCapacity: number, maxCapacity: number, examTitle: string, examNotices: string[], gradeCapacities: GradeCapacitySettings[] = state.settings.gradeCapacities) {
@@ -686,8 +688,10 @@ export function createExamAllocationStore(service: ExamAllocationService = examA
   }
 
   async function saveInvigilationConfig(payload?: Partial<InvigilationConfig>) {
-    const next = { ...snapshot().invigilationConfig, ...payload };
+    const previous = snapshot().invigilationConfig;
+    const next = { ...previous, ...payload };
     state.invigilationConfig = {
+      floorRoverEnabled: next.floorRoverEnabled ?? true,
       defaultExamRoomRequiredCount: Math.max(
         1,
         Math.floor(next.defaultExamRoomRequiredCount || 1),
@@ -708,7 +712,12 @@ export function createExamAllocationStore(service: ExamAllocationService = examA
       selfStudyStartTime: (next.selfStudyStartTime || "12:10").trim(),
       selfStudyEndTime: (next.selfStudyEndTime || "13:40").trim(),
     };
-    await service.savePersistedInvigilationConfig(snapshot().invigilationConfig);
+    try {
+      await service.savePersistedInvigilationConfig(snapshot().invigilationConfig);
+    } catch (error) {
+      state.invigilationConfig = previous;
+      throw error;
+    }
   }
 
   async function saveCustomRules(rules: InvigilationCustomRule[]) {

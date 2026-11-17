@@ -797,6 +797,28 @@ fn effective_grade_capacity(
         .unwrap_or((default_capacity, max_capacity))
 }
 
+fn group_capacity_key(grade: &str, group: crate::exam_group::ExamGroup) -> String {
+    format!("{grade}-{}", group.as_key())
+}
+
+fn effective_group_capacity(
+    items: &[GradeCapacitySettings],
+    grade: &str,
+    group: crate::exam_group::ExamGroup,
+    fallback: (i64, i64),
+) -> (i64, i64) {
+    if grade == "高三" {
+        effective_grade_capacity(
+            items,
+            &group_capacity_key(grade, group),
+            fallback.0,
+            fallback.1,
+        )
+    } else {
+        fallback
+    }
+}
+
 fn validate_capacity(default_capacity: i64, max_capacity: i64) -> Result<(), AppError> {
     if default_capacity <= 0 {
         return Err(AppError::new("默认容量必须大于 0"));
@@ -1176,7 +1198,7 @@ fn fill_with_configured_exam_rooms(
 
     if chosen_spaces.len() < required_room_count {
         return Err(AppError::new(format!(
-            "{} {} 考场不足：需要 {} 个考场，现有教学教室和 exam_room 共 {} 个。请在 class_configs 中补充 exam_room 配置。",
+            "{} {} 考场不足：需要 {} 个考场，当前可用的教学班教室和考试教室共 {} 个。请在班级配置中补充考试教室。",
             grade_name,
             subject_label(subject),
             required_room_count,
@@ -1201,6 +1223,9 @@ fn select_group_exam_spaces(
     if required == 0 {
         return Ok(chosen);
     }
+    let restricted = grade == "高三" && group == crate::exam_group::ExamGroup::Comprehensive;
+    let permitted =
+        |name: &str| !restricted || ["高三14场", "高三15场", "高三16场"].contains(&name);
     let mut classes = ctx.teaching_classes.iter().collect::<Vec<_>>();
     classes.sort_by(|a, b| sort_class_names(&a.class_name, &b.class_name));
     for class in classes {
@@ -1218,8 +1243,13 @@ fn select_group_exam_spaces(
                     subjects.contains(&subject)
                 }
             });
-        if ctx.class_groups.get(&class.class_name) != Some(&group)
-            || !subjects_match
+        let class_group = ctx.class_groups.get(&class.class_name);
+        if !permitted(&name)
+            || (group == crate::exam_group::ExamGroup::Comprehensive
+                && class_group.is_some_and(|value| *value != group))
+            || (group == crate::exam_group::ExamGroup::Comprehensive
+                && class_group.is_some()
+                && !subjects_match)
             || blocked.contains(&class.class_name)
             || teaching.contains(&class.class_name)
             || rooms.contains(&name)
@@ -1242,6 +1272,9 @@ fn select_group_exam_spaces(
     }
     let mut reserves = Vec::new();
     for room in &ctx.exam_rooms {
+        if !permitted(&room.room_name) {
+            continue;
+        }
         if let Some(class) = ctx
             .teaching_classes
             .iter()
@@ -1267,6 +1300,9 @@ fn select_group_exam_spaces(
     });
     fill_with_configured_exam_rooms(grade, subject, &mut chosen, required, &reserves, rooms)
         .map_err(|error| {
+            if restricted {
+                return AppError::new(format!("综评组：{grade} {} 考场不足：需要 {required} 个考场，高三14、15、16场中当前可用 {} 个，请检查考场占用或调整每场人数。", subject_label(subject), chosen.len()));
+            }
             AppError::new(format!(
                 "{}组：{error}",
                 if group == crate::exam_group::ExamGroup::Regular {
@@ -1289,6 +1325,7 @@ fn build_session_draft(
     current_start_ts: i64,
     default_capacity: i64,
     max_capacity: i64,
+    grade_capacities: &[GradeCapacitySettings],
     occupied_teaching_classes: &mut HashSet<String>,
     occupied_exam_rooms: &mut HashSet<String>,
 ) -> Result<SessionBuildResult, AppError> {
@@ -1337,7 +1374,7 @@ fn build_session_draft(
     let mut capacities = Vec::new();
     let mut space_groups = Vec::new();
     let mut ordered = Vec::new();
-    // 两组分别计算尾场，普通组先占用备用资源，禁止跨组补齐空座。
+    // 普通组按教室顺序优先选用，综评组继续使用剩余教室及备用考场。
     for group in [
         crate::exam_group::ExamGroup::Regular,
         crate::exam_group::ExamGroup::Comprehensive,
@@ -1347,7 +1384,16 @@ fn build_session_draft(
             .filter(|p| grade_ctx.class_groups.get(&p.class_name) == Some(&group))
             .cloned()
             .collect::<Vec<_>>();
-        let sizes = calculate_room_capacities(members.len(), default_capacity, max_capacity);
+        let (group_default, group_max) = effective_group_capacity(
+            grade_capacities,
+            grade_name,
+            group,
+            (default_capacity, max_capacity),
+        );
+        let sizes = calculate_room_capacities(members.len(), group_default, group_max);
+        draft
+            .max_capacities
+            .insert(group_capacity_key(grade_name, group), group_max);
         let selected = select_group_exam_spaces(
             grade_name,
             subject,
@@ -1573,6 +1619,7 @@ pub(crate) fn build_subject_draft_for_test(
         start,
         capacity,
         capacity,
+        &[],
         &mut HashSet::new(),
         &mut HashSet::new(),
     )?;
@@ -1928,6 +1975,7 @@ fn generate_latest_exam_plan_internal(
                 current_start_ts,
                 default_capacity,
                 max_capacity,
+                &settings.grade_capacities,
                 occupied_teaching_classes
                     .entry(current_start_ts)
                     .or_default(),
@@ -2326,15 +2374,35 @@ mod tests {
     }
 
     #[test]
-    fn test_regular_group_claims_reserves_before_comprehensive() {
-        let ctx = grouped_context();
+    fn test_comprehensive_continues_after_regular_rooms() {
+        let mut ctx = grouped_context();
+        ctx.exam_rooms.clear();
+        for i in 13..=18 {
+            let class = format!("高三{i}班");
+            ctx.teaching_classes.push(Classroom {
+                class_name: class.clone(),
+                building: "教学楼".into(),
+                floor: "一楼".into(),
+            });
+            ctx.class_subjects
+                .insert(class.clone(), HashSet::from([Subject::Math]));
+            ctx.class_groups
+                .insert(class, crate::exam_group::ExamGroup::Comprehensive);
+        }
+        for i in 19..=21 {
+            ctx.exam_rooms.push(ExamRoomResource {
+                room_name: format!("高三{i}场"),
+                building: "教学楼".into(),
+                floor: "一楼".into(),
+            });
+        }
         let mut teaching = HashSet::new();
         let mut rooms = HashSet::new();
         let normal = select_group_exam_spaces(
             "高三",
             Subject::Math,
             crate::exam_group::ExamGroup::Regular,
-            12,
+            13,
             &ctx,
             &HashSet::new(),
             &mut teaching,
@@ -2345,7 +2413,7 @@ mod tests {
             "高三",
             Subject::Math,
             crate::exam_group::ExamGroup::Comprehensive,
-            4,
+            3,
             &ctx,
             &HashSet::new(),
             &mut teaching,
@@ -2357,17 +2425,14 @@ mod tests {
                 .iter()
                 .map(|s| s.space_name.as_str())
                 .collect::<Vec<_>>(),
-            (1..=10)
-                .chain(13..=14)
-                .map(|i| format!("高三{i}场"))
-                .collect::<Vec<_>>()
+            (1..=13).map(|i| format!("高三{i}场")).collect::<Vec<_>>()
         );
         assert_eq!(
             comprehensive
                 .iter()
                 .map(|s| s.space_name.as_str())
                 .collect::<Vec<_>>(),
-            ["高三11场", "高三12场", "高三15场", "高三16场"]
+            (14..=16).map(|i| format!("高三{i}场")).collect::<Vec<_>>()
         );
     }
 
@@ -2401,10 +2466,9 @@ mod tests {
             &mut rooms,
         )
         .unwrap();
-        assert!(!normal
-            .iter()
-            .any(|s| ["高三1场", "高三11场", "高三12场"].contains(&s.space_name.as_str())));
-        assert!(select_group_exam_spaces(
+        assert!(normal.iter().any(|s| s.space_name == "高三1场"));
+        assert!(normal.iter().any(|s| s.space_name == "高三11场"));
+        let comprehensive = select_group_exam_spaces(
             "高三",
             Subject::Math,
             crate::exam_group::ExamGroup::Comprehensive,
@@ -2412,9 +2476,71 @@ mod tests {
             &ctx,
             &HashSet::new(),
             &mut teaching,
-            &mut rooms
+            &mut rooms,
         )
-        .is_err());
+        .unwrap();
+        assert_eq!(comprehensive.len(), 3);
+    }
+
+    #[test]
+    fn test_unassigned_classroom_is_shared_but_never_reused_when_blocked() {
+        use crate::exam_group::ExamGroup::{Comprehensive, Regular};
+        let mut ctx = grouped_context();
+        ctx.class_groups.remove("高三9班");
+        let mut teaching = HashSet::new();
+        let mut rooms = HashSet::new();
+        let normal = select_group_exam_spaces(
+            "高三",
+            Subject::Math,
+            Regular,
+            9,
+            &ctx,
+            &HashSet::from(["高三9班".to_string()]),
+            &mut teaching,
+            &mut rooms,
+        )
+        .unwrap();
+        assert!(!normal.iter().any(|space| space.space_name == "高三9场"));
+        let comprehensive = select_group_exam_spaces(
+            "高三",
+            Subject::Math,
+            Comprehensive,
+            3,
+            &ctx,
+            &HashSet::new(),
+            &mut teaching,
+            &mut rooms,
+        )
+        .unwrap();
+        assert_eq!(
+            comprehensive
+                .iter()
+                .map(|space| space.space_name.as_str())
+                .collect::<Vec<_>>(),
+            ["高三14场", "高三15场", "高三16场"]
+        );
+        assert!(!rooms.contains("高三9场"));
+    }
+
+    #[test]
+    fn test_comprehensive_does_not_use_other_rooms_when_reserved_room_is_busy() {
+        let ctx = grouped_context();
+        let mut teaching = HashSet::new();
+        let mut rooms = HashSet::from(["高三14场".to_string()]);
+        let error = select_group_exam_spaces(
+            "高三",
+            Subject::Math,
+            crate::exam_group::ExamGroup::Comprehensive,
+            3,
+            &ctx,
+            &HashSet::new(),
+            &mut teaching,
+            &mut rooms,
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(error.contains("高三14、15、16场中当前可用 2 个"));
+        assert!(!rooms.contains("高三13场"));
     }
 
     #[test]
@@ -2447,6 +2573,35 @@ mod tests {
     }
 
     #[test]
+    fn test_high_three_group_capacities_fall_back_and_split() {
+        use crate::exam_group::ExamGroup::{Comprehensive, Regular};
+        let settings = vec![
+            GradeCapacitySettings {
+                grade_name: "高三".into(),
+                default_capacity: 31,
+                max_capacity: 31,
+            },
+            GradeCapacitySettings {
+                grade_name: "高三-comprehensive".into(),
+                default_capacity: 47,
+                max_capacity: 47,
+            },
+        ];
+        let base = effective_grade_capacity(&settings, "高三", 40, 41);
+        assert_eq!(
+            effective_group_capacity(&settings, "高三", Regular, base),
+            (31, 31)
+        );
+        let (normal, maximum) = effective_group_capacity(&settings, "高三", Comprehensive, base);
+        assert_eq!((normal, maximum), (47, 47));
+        assert_eq!(calculate_room_capacities(94, normal, maximum), vec![47, 47]);
+        assert_eq!(
+            effective_group_capacity(&settings, "高二", Comprehensive, (30, 31)),
+            (30, 31)
+        );
+    }
+
+    #[test]
     fn test_grade_capacity_isolation_and_tail_room_limit() {
         let items = vec![
             GradeCapacitySettings {
@@ -2476,9 +2631,11 @@ mod tests {
             let db = Database::connect("sqlite::memory:").await.unwrap();
             // 模拟旧版本：先执行原有三条迁移，保存用户全局配置，再升级。
             Migrator::up(&db, Some(3)).await.unwrap();
-            exam_allocation_repo::ensure_defaults(&db, 32, 33, "历史考试", "[]", "before")
-                .await
-                .unwrap();
+            crate::entity::exam_allocation_settings::ActiveModel {
+                id: Set(1), default_capacity: Set(32), max_capacity: Set(33),
+                exam_title: Set("历史考试".to_string()), exam_notices_json: Set("[]".to_string()),
+                updated_at: Set("before".to_string()),
+            }.insert(&db).await.unwrap();
             Migrator::up(&db, None).await.unwrap();
             Migrator::up(&db, None).await.unwrap();
             let settings = exam_allocation_repo::get_settings(&db).await.unwrap();
@@ -2746,7 +2903,9 @@ mod tests {
 
         let message = err.to_string();
         assert!(message.contains("高一 数学 考场不足"));
-        assert!(message.contains("请在 class_configs 中补充 exam_room 配置"));
+        assert!(
+            message.contains("当前可用的教学班教室和考试教室共 2 个。请在班级配置中补充考试教室。")
+        );
         assert_eq!(chosen_spaces.len(), 2);
         assert_eq!(chosen_spaces[1].space_source, ExamPlanSpaceSource::ExamRoom);
     }

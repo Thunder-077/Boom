@@ -18,13 +18,14 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
-async function renderPanel() {
+async function renderPanel(highThree = false) {
   vi.useFakeTimers();
   Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
   const store = createExamAllocationStore();
   pageStore = {
     ...store,
-    state: { ...store.viewState, sessionTimeGradeOptions: ["高一", "高二"] },
+    state: { ...store.viewState, sessionTimeGradeOptions: highThree ? ["高一", "高二", "高三"] : ["高一", "高二"],
+      settings: { ...store.viewState.settings, gradeCapacities: highThree ? [{ gradeName: "高三", defaultCapacity: 31, maxCapacity: 31 }] : [] } },
     saveSettings: vi.fn(async (defaultCapacity, maxCapacity, examTitle, examNotices, gradeCapacities) => {
       // 模拟真实保存后的设置回读，验证页面同步不会清除未保存输入。
       pageStore.state = { ...pageStore.state, settings: {
@@ -68,6 +69,21 @@ async function saveCapacity() {
 }
 
 describe("grade capacity panel", () => {
+  it("inherits the old high-three setting and saves separate group capacities", async () => {
+    await renderPanel(true);
+    await selectGrade("高三-普通");
+    expect(input("高三-普通默认人数").value).toBe("31");
+    await editCapacity("高三-普通", "30", "31");
+    await selectGrade("高三-综评");
+    expect(input("高三-综评默认人数").value).toBe("31");
+    await editCapacity("高三-综评", "47", "47");
+    await saveCapacity();
+    expect(vi.mocked(pageStore.saveSettings).mock.lastCall?.[4]).toEqual(expect.arrayContaining([
+      { gradeName: "高三", defaultCapacity: 31, maxCapacity: 31 },
+      { gradeName: "高三-regular", defaultCapacity: 30, maxCapacity: 31 },
+      { gradeName: "高三-comprehensive", defaultCapacity: 47, maxCapacity: 47 },
+    ]));
+  });
   it("saves on click or grade switch, without timed saves or mode controls", async () => {
     await renderPanel();
     expect(container.querySelectorAll(".grade-capacity-row")).toHaveLength(1);
