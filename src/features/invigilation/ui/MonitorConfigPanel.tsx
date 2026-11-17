@@ -1227,12 +1227,12 @@ export default function MonitorConfigPanel() {
 
   function getMiddleManagerStatusLabel(teacherId: number) {
     const isException = isMiddleManagerException(teacherId);
-    const enabled = isException ? !middleManagerDefaultEnabledDraft : middleManagerDefaultEnabledDraft;
-    return enabled ? "参与" : "不参与";
+    // 例外身份是固定配置，不随默认规则预览而反转；求解时仍按例外与默认相反处理。
+    return isException ? "设为参与" : "不参与";
   }
 
   function getMiddleManagerStatusClass(teacherId: number) {
-    return getMiddleManagerStatusLabel(teacherId) === "参与" ? "on" : "off";
+    return isMiddleManagerException(teacherId) ? "on" : "off";
   }
 
   async function saveMiddleManagerSetup() {
@@ -1666,7 +1666,7 @@ export default function MonitorConfigPanel() {
           </div>
 
           <section className="drawer-section soft-panel">
-            <div className="section-header"><h4>默认规则</h4></div>
+            <div className="section-header"><h4>其他中层教师默认规则</h4></div>
             <div className="segment-wrap">
               <button className={`segment-btn ${middleManagerDefaultEnabledDraft ? "active" : ""}`.trim()} type="button" onClick={() => setMiddleManagerDefaultEnabledDraft(true)}>参与监考</button>
               <button className={`segment-btn ${!middleManagerDefaultEnabledDraft ? "active" : ""}`.trim()} type="button" onClick={() => setMiddleManagerDefaultEnabledDraft(false)}>不参与监考</button>
@@ -1675,7 +1675,7 @@ export default function MonitorConfigPanel() {
 
           <section className="drawer-section">
             <div className="section-header">
-              <div className="title-stack"><h4>例外名单</h4></div>
+              <div className="title-stack"><h4>例外名单（固定设为参与监考）</h4></div>
             </div>
 
             <div className="middle-toolbar">
@@ -1724,7 +1724,7 @@ export default function MonitorConfigPanel() {
           <div className="drawer-footer">
             <div className="drawer-actions">
               <button className="secondary-btn" type="button" onClick={closeMiddleManagerDrawer}>取消</button>
-              <button className="primary-btn" type="button" onClick={() => void saveMiddleManagerSetup()}>保存例外</button>
+              <button className="primary-btn" type="button" onClick={() => void saveMiddleManagerSetup()}>保存</button>
             </div>
           </div>
         </aside>
