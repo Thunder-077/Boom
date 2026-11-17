@@ -2,12 +2,12 @@ use std::collections::{HashMap, HashSet};
 
 use sea_orm::{
     ActiveModelTrait, ColumnTrait, ConnectionTrait, DatabaseConnection, EntityTrait,
-    PaginatorTrait, QueryFilter, QueryOrder, Set, TransactionTrait,
+    IntoActiveModel, PaginatorTrait, QueryFilter, QueryOrder, Set, TransactionTrait,
 };
 
 use crate::entity::{
-    latest_teacher_assignments_v2, latest_teacher_homerooms_v2, latest_teacher_import_meta,
-    latest_teachers_v2,
+    invigilation_config_settings, latest_teacher_assignments_v2, latest_teacher_homerooms_v2,
+    latest_teacher_import_meta, latest_teachers_v2,
 };
 use crate::score::{AppError, ListResult};
 use crate::teacher::{
@@ -21,6 +21,125 @@ mod grade_tests {
     use super::*;
     use sea_orm::Database;
     use sea_orm_migration::MigratorTrait;
+
+    fn imported_teacher(name: &str, grade: &str) -> AggregatedTeacher {
+        AggregatedTeacher {
+            teacher_name: name.into(),
+            invigilation_grade_name: grade.into(),
+            is_middle_manager: true,
+            ..Default::default()
+        }
+    }
+
+    async fn exception_ids(db: &DatabaseConnection) -> Vec<i64> {
+        let row = crate::entity::invigilation_config_settings::Entity::find_by_id(1)
+            .one(db)
+            .await
+            .unwrap()
+            .unwrap();
+        serde_json::from_str(&row.middle_manager_exception_teacher_ids_json).unwrap()
+    }
+
+    #[test]
+    fn test_reimport_preserves_teacher_ids_and_removes_stale_exceptions() {
+        tauri::async_runtime::block_on(async {
+            let db = Database::connect("sqlite::memory:").await.unwrap();
+            crate::db::migration::Migrator::up(&db, None).await.unwrap();
+            replace_all(
+                &db,
+                "old",
+                "old.xls",
+                &[imported_teacher("匿名甲", "高一"), imported_teacher("匿名乙", "高二")],
+            )
+            .await
+            .unwrap();
+            let original = latest_teachers_v2::Entity::find()
+                .order_by_asc(latest_teachers_v2::Column::Id)
+                .all(&db)
+                .await
+                .unwrap();
+            let original_exception_ids = original
+                .iter()
+                .map(|teacher| teacher.id as i64)
+                .collect::<Vec<_>>();
+            crate::db::repos::exam_staff::upsert_config(
+                &db,
+                crate::entity::invigilation_config_settings::ActiveModel {
+                    id: Set(1),
+                    default_exam_room_required_count: Set(2),
+                    indoor_allowance_per_minute: Set(0.5),
+                    outdoor_allowance_per_minute: Set(0.3),
+                    floor_rover_enabled: Set(1),
+                    middle_manager_default_enabled: Set(0),
+                    middle_manager_exception_teacher_ids_json: Set(serde_json::to_string(
+                        &original_exception_ids,
+                    ).unwrap()),
+                    self_study_date: Set(String::new()),
+                    self_study_start_time: Set("12:10".into()),
+                    self_study_end_time: Set("13:40".into()),
+                    self_study_class_subjects_json: Set("[]".into()),
+                    updated_at: Set("old".into()),
+                },
+            )
+            .await
+            .unwrap();
+
+            replace_all(
+                &db,
+                "new",
+                "new.xls",
+                &[imported_teacher("匿名甲", "高三"), imported_teacher("匿名丙", "高二")],
+            )
+            .await
+            .unwrap();
+
+            let retained = latest_teachers_v2::Entity::find()
+                .filter(latest_teachers_v2::Column::TeacherName.eq("匿名甲"))
+                .one(&db)
+                .await
+                .unwrap()
+                .unwrap();
+            assert_eq!(retained.id, original[0].id);
+            assert_eq!(retained.invigilation_grade_name.as_deref(), Some("高三"));
+            assert_eq!(exception_ids(&db).await, vec![original[0].id as i64]);
+        });
+    }
+
+    #[test]
+    fn test_schedule_sync_removes_exceptions_for_deleted_teachers() {
+        tauri::async_runtime::block_on(async {
+            let db = Database::connect("sqlite::memory:").await.unwrap();
+            crate::db::migration::Migrator::up(&db, None).await.unwrap();
+            replace_all(&db, "old", "old.xls", &[imported_teacher("匿名甲", "高一")])
+                .await
+                .unwrap();
+            let teacher = latest_teachers_v2::Entity::find()
+                .one(&db)
+                .await
+                .unwrap()
+                .unwrap();
+            crate::entity::invigilation_config_settings::ActiveModel {
+                id: Set(1),
+                default_exam_room_required_count: Set(2),
+                indoor_allowance_per_minute: Set(0.5),
+                outdoor_allowance_per_minute: Set(0.3),
+                floor_rover_enabled: Set(1),
+                middle_manager_default_enabled: Set(0),
+                middle_manager_exception_teacher_ids_json: Set(format!("[{}]", teacher.id)),
+                self_study_date: Set(String::new()),
+                self_study_start_time: Set("12:10".into()),
+                self_study_end_time: Set("13:40".into()),
+                self_study_class_subjects_json: Set("[]".into()),
+                updated_at: Set("old".into()),
+            }
+            .insert(&db)
+            .await
+            .unwrap();
+
+            sync_from_course_schedule(&db, &[]).await.unwrap();
+            assert!(exception_ids(&db).await.is_empty());
+        });
+    }
 
     #[test]
     fn test_schedule_sync_preserves_invigilation_grade() {
@@ -78,6 +197,42 @@ pub struct ScheduleTeacherAssignment {
     pub class_name: String,
 }
 
+/// 教师集合变化后同步删除失效例外，避免旧自增 ID 继续作为有效配置保存。
+pub async fn remove_stale_middle_manager_exceptions<C: ConnectionTrait>(
+    db: &C,
+) -> Result<(), AppError> {
+    let Some(config) = invigilation_config_settings::Entity::find_by_id(1)
+        .one(db)
+        .await?
+    else {
+        return Ok(());
+    };
+    let parsed_ids = serde_json::from_str::<Vec<i64>>(
+        &config.middle_manager_exception_teacher_ids_json,
+    )
+    .unwrap_or_default();
+    let current_teacher_ids = latest_teachers_v2::Entity::find()
+        .all(db)
+        .await?
+        .into_iter()
+        .map(|teacher| teacher.id as i64)
+        .collect::<HashSet<_>>();
+    let mut valid_ids = parsed_ids
+        .into_iter()
+        .filter(|teacher_id| current_teacher_ids.contains(teacher_id))
+        .collect::<Vec<_>>();
+    valid_ids.sort_unstable();
+    valid_ids.dedup();
+    let valid_ids_json = serde_json::to_string(&valid_ids)
+        .map_err(|error| AppError::new(format!("中层监考例外序列化失败: {error}")))?;
+    if valid_ids_json != config.middle_manager_exception_teacher_ids_json {
+        let mut active = config.into_active_model();
+        active.middle_manager_exception_teacher_ids_json = Set(valid_ids_json);
+        active.update(db).await?;
+    }
+    Ok(())
+}
+
 #[derive(Clone)]
 struct PreservedTeacherDetails {
     invigilation_grade_name: Option<String>,
@@ -93,6 +248,13 @@ pub async fn replace_all<C: ConnectionTrait>(
     teachers: &[AggregatedTeacher],
 ) -> Result<(), AppError> {
     let tx = db;
+    // 同名教师沿用原 ID，保证例外名单及其他按 ID 关联的配置在重导后仍有效。
+    let existing_teacher_ids = latest_teachers_v2::Entity::find()
+        .all(tx)
+        .await?
+        .into_iter()
+        .map(|teacher| (teacher.teacher_name, teacher.id))
+        .collect::<HashMap<_, _>>();
     latest_teacher_assignments_v2::Entity::delete_many()
         .exec(tx)
         .await?;
@@ -115,6 +277,9 @@ pub async fn replace_all<C: ConnectionTrait>(
 
     for teacher in teachers {
         let row = latest_teachers_v2::ActiveModel {
+            id: existing_teacher_ids
+                .get(&teacher.teacher_name)
+                .map_or(sea_orm::ActiveValue::NotSet, |id| Set(*id)),
             teacher_name: Set(teacher.teacher_name.clone()),
             invigilation_grade_name: Set(Some(teacher.invigilation_grade_name.clone())),
             remark: Set(teacher.remark.clone()),
@@ -146,6 +311,7 @@ pub async fn replace_all<C: ConnectionTrait>(
         }
     }
 
+    remove_stale_middle_manager_exceptions(tx).await?;
     Ok(())
 }
 
@@ -174,6 +340,7 @@ pub async fn sync_from_course_schedule(
     let teacher_names = unique_teacher_names(assignments);
     let preserved_teacher_details = load_preserved_teacher_details(&tx).await?;
     remove_teachers_not_in_schedule(&tx, &teacher_names).await?;
+    remove_stale_middle_manager_exceptions(&tx).await?;
 
     for teacher_name in &teacher_names {
         let exists = latest_teachers_v2::Entity::find()

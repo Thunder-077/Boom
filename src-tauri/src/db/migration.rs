@@ -5,7 +5,45 @@ pub struct Migrator;
 #[cfg(test)]
 mod multi_grade_tests {
     use super::*;
-    use sea_orm::{ConnectionTrait, Database, DbBackend, Statement};
+    use sea_orm::{ActiveModelTrait, ConnectionTrait, Database, DbBackend, EntityTrait, Statement};
+
+    #[test]
+    fn test_migration_removes_stale_middle_manager_exceptions() {
+        tauri::async_runtime::block_on(async {
+            let db = Database::connect("sqlite::memory:").await.unwrap();
+            Migrator::up(&db, Some(7)).await.unwrap();
+            crate::entity::invigilation_config_settings::ActiveModel {
+                id: sea_orm::ActiveValue::Set(1),
+                default_exam_room_required_count: sea_orm::ActiveValue::Set(2),
+                indoor_allowance_per_minute: sea_orm::ActiveValue::Set(0.5),
+                outdoor_allowance_per_minute: sea_orm::ActiveValue::Set(0.3),
+                floor_rover_enabled: sea_orm::ActiveValue::Set(1),
+                middle_manager_default_enabled: sea_orm::ActiveValue::Set(0),
+                middle_manager_exception_teacher_ids_json: sea_orm::ActiveValue::Set("[]".into()),
+                self_study_date: sea_orm::ActiveValue::Set(String::new()),
+                self_study_start_time: sea_orm::ActiveValue::Set("12:10".into()),
+                self_study_end_time: sea_orm::ActiveValue::Set("13:40".into()),
+                self_study_class_subjects_json: sea_orm::ActiveValue::Set("[]".into()),
+                updated_at: sea_orm::ActiveValue::Set("old".into()),
+            }
+            .insert(&db)
+            .await
+            .unwrap();
+            db.execute_unprepared(
+                "INSERT INTO latest_teachers_v2 (id, teacher_name, is_middle_manager) VALUES (449, '匿名中层', 1);
+                 UPDATE invigilation_config_settings SET middle_manager_exception_teacher_ids_json = '[128,175,449,221,449]' WHERE id = 1;",
+            )
+            .await
+            .unwrap();
+            Migrator::up(&db, None).await.unwrap();
+            let config = crate::entity::invigilation_config_settings::Entity::find_by_id(1)
+                .one(&db)
+                .await
+                .unwrap()
+                .unwrap();
+            assert_eq!(config.middle_manager_exception_teacher_ids_json, "[449]");
+        });
+    }
 
     #[test]
     fn test_multigrade_migration_preserves_legacy_data() {
@@ -83,7 +121,36 @@ impl MigratorTrait for Migrator {
             Box::new(m20261116_000004_multi_grade::Migration),
             Box::new(m20261116_000005_floor_rover_switch::Migration),
             Box::new(m20261117_000005_export_current::Migration),
+            Box::new(m20261117_000006_teacher_exception_integrity::Migration),
         ]
+    }
+}
+
+mod m20261117_000006_teacher_exception_integrity {
+    use sea_orm_migration::prelude::*;
+
+    pub struct Migration;
+
+    impl MigrationName for Migration {
+        fn name(&self) -> &str {
+            "m20261117_000006_teacher_exception_integrity"
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl MigrationTrait for Migration {
+        async fn up(&self, manager: &SchemaManager) -> Result<(), DbErr> {
+            // 历史失效 ID 已无法还原教师身份，只保留仍存在的教师例外。
+            crate::db::repos::teacher::remove_stale_middle_manager_exceptions(
+                manager.get_connection(),
+            )
+            .await
+            .map_err(|error| DbErr::Custom(error.to_string()))
+        }
+
+        async fn down(&self, _manager: &SchemaManager) -> Result<(), DbErr> {
+            Ok(())
+        }
     }
 }
 
