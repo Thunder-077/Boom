@@ -88,10 +88,10 @@ pub(crate) fn prepare_versioned_batch(
     root: &Path,
     final_name: &str,
 ) -> Result<PreparedExportBatch, AppError> {
-    let timestamp = chrono::Local::now().format("%Y-%m-%d-%H-%M-%S");
+    let timestamp = chrono::Utc::now().timestamp();
     loop {
         let version = NEXT_VERSION.fetch_add(1, Ordering::Relaxed);
-        let name = format!("{final_name}-{timestamp}-V{version}");
+        let name = format!("{final_name}-{timestamp}-{version}");
         // 已有路径必须保留；即使另一个进程同时发布，也不能覆盖旧结果。
         match fs::symlink_metadata(root.join(&name)) {
             Ok(_) => continue,
@@ -483,13 +483,16 @@ mod tests {
     }
 
     #[test]
-    fn versioned_directory_uses_local_datetime_and_does_not_replace_existing() {
+    fn versioned_directory_uses_seconds_timestamp_and_does_not_replace_existing() {
         let root = TestDirectory::new();
+        let before = chrono::Utc::now().timestamp();
         let batch = prepare_versioned_batch(root.path(), "期中考试考场安排").unwrap();
+        let after = chrono::Utc::now().timestamp();
         let name = batch.final_dir.file_name().unwrap().to_str().unwrap();
         let suffix = name.strip_prefix("期中考试考场安排-").unwrap();
-        let (date, version) = suffix.rsplit_once("-V").unwrap();
-        chrono::NaiveDateTime::parse_from_str(date, "%Y-%m-%d-%H-%M-%S").unwrap();
+        let (timestamp, version) = suffix.rsplit_once('-').unwrap();
+        let timestamp = timestamp.parse::<i64>().unwrap();
+        assert!((before..=after).contains(&timestamp));
         assert!(version.parse::<u64>().unwrap() > 0);
         fs::create_dir(&batch.final_dir).unwrap();
         fs::write(batch.final_dir.join("old"), b"old").unwrap();
