@@ -14,7 +14,7 @@
 
 - “教师可监考年级以教师工作簿所在 Sheet 为准，任教班级编码不改变其监考归属。”
 - “同名教师跨年级 Sheet 出现时，提示具体 Sheet 和 Excel 行号，阻止整次教师导入，保留原数据库数据。”
-- “高三综评班与非综评班学生不能混场；先安排非综评组，再安排综评组，备用考场也由非综评组优先启用。”
+- “高三综评班与非综评班学生不能混场；先安排非综评组，再安排综评组，综评只使用普通组不可占用的‘综评x场’专用考试教室。”
 - “默认人数不是硬上限，最大人数才是单场上限”；保留年级容量配置。
 - “没有合格教师则保留‘待分配’并报告缺口，不能为凑数跨年级借人或安排冲突。”
 - “旧教师无法可靠恢复原 Sheet，新增归属字段允许为空，保留原数据”；生成前要求重新导入。
@@ -107,7 +107,7 @@
 - `validate_exam_plan_draft(draft: &ExamPlanDraft) -> Result<(), AppError>`校验不混组、空间唯一与容量；`replace_plan_snapshot(tx: &DatabaseTransaction, draft: &ExamPlanDraft) -> Result<(), AppError>`只写库并完成草稿索引到真实ID映射，不自行提交。
 - 教室分组只读取已导入班级属性；配置存在但全班没有成绩、无法确定组别的教学教室不自动纳入任一组，给出来源缺失诊断。显式备用考场仍通过备用资源池分配。
 
-- [x] 写`test_regular_group_claims_reserves_before_comprehensive`：普通教室1—10、综评11—12、备用13—16，两组各需2个备用，断言普通占13/14、综评占15/16；两组所有考场学生属性一致。
+- [x] 写`test_comprehensive_uses_only_sorted_dedicated_exam_rooms`：配置普通备用场及乱序“综评x场”，断言普通组不占综评专用场，综评按数字顺序选场且不使用教学班。
 - [x] 写`test_group_boundaries_survive_empty_groups_and_shortages`：综评无人则无空场；缺成绩的配置班不被猜为综评或借用为另一组资源；普通已占备用后综评不足明确失败，不借普通教室、不超容量。
 - [x] 写`test_same_named_classroom_and_reserve_are_not_two_resources`及`test_conflicting_room_names_fail_validation`：教学班`高三11班`派生名称与备用`高三11场`不能累计成44人/4监考，异物理位置同导出名称提示配置冲突。
 - [x] 写整批失败测试：前两个年级草稿可建、末年级不足时，旧考场/学生座位/监考快照全部不变。补普通与综评尾场分别计算、最大30时任何场不超30、不同开始时间但区间重叠的同名空间不可重复占用。

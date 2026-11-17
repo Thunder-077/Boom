@@ -2470,7 +2470,7 @@
   line-height: 1.65;
 }
 
-.dialog-close {
+.app-dialog .dialog-close {
   width: 34px;
   height: 34px;
   border: 1px solid transparent;
@@ -2483,13 +2483,13 @@
   cursor: pointer;
 }
 
-.dialog-close:hover {
+.app-dialog .dialog-close:hover {
   color: var(--text-primary);
   border-color: var(--border-default);
   background: var(--surface-panel);
 }
 
-.dialog-details {
+.app-dialog .dialog-details {
   display: grid;
   gap: 8px;
   margin: 0 22px 2px 80px;
@@ -2595,7 +2595,7 @@
     height: 40px;
   }
 
-  .dialog-details {
+  .app-dialog .dialog-details {
     margin: 0 18px 2px;
   }
 
@@ -5012,7 +5012,7 @@
   gap: var(--space-md);
 }
 
-.dialog-close {
+.dialog .dialog-close {
   width: 32px;
   height: 32px;
   border-radius: var(--radius-sm);
@@ -5020,7 +5020,7 @@
   cursor: pointer;
 }
 
-.dialog-details {
+.dialog .dialog-details {
   margin: 0;
   padding-left: 20px;
   color: var(--text-secondary);

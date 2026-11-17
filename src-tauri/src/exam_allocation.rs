@@ -1208,6 +1208,15 @@ fn fill_with_configured_exam_rooms(
     Ok(())
 }
 
+/// 识别“综评x场”专用考试教室，返回用于排序的正整数编号。
+fn comprehensive_room_number(room_name: &str) -> Option<u64> {
+    let number = room_name.strip_prefix("综评")?.strip_suffix('场')?;
+    if number.is_empty() || !number.bytes().all(|byte| byte.is_ascii_digit()) {
+        return None;
+    }
+    number.parse::<u64>().ok().filter(|value| *value > 0)
+}
+
 #[allow(clippy::too_many_arguments)]
 fn select_group_exam_spaces(
     grade: &str,
@@ -1224,8 +1233,11 @@ fn select_group_exam_spaces(
         return Ok(chosen);
     }
     let restricted = grade == "高三" && group == crate::exam_group::ExamGroup::Comprehensive;
-    let permitted =
-        |name: &str| !restricted || ["高三14场", "高三15场", "高三16场"].contains(&name);
+    // 综评只使用显式配置的专用考试教室，普通组也不能提前占用这些资源。
+    let permitted = |name: &str| {
+        comprehensive_room_number(name).is_some()
+            == (grade == "高三" && group == crate::exam_group::ExamGroup::Comprehensive)
+    };
     let mut classes = ctx.teaching_classes.iter().collect::<Vec<_>>();
     classes.sort_by(|a, b| sort_class_names(&a.class_name, &b.class_name));
     for class in classes {
@@ -1301,7 +1313,7 @@ fn select_group_exam_spaces(
     fill_with_configured_exam_rooms(grade, subject, &mut chosen, required, &reserves, rooms)
         .map_err(|error| {
             if restricted {
-                return AppError::new(format!("综评组：{grade} {} 考场不足：需要 {required} 个考场，高三14、15、16场中当前可用 {} 个，请检查考场占用或调整每场人数。", subject_label(subject), chosen.len()));
+                return AppError::new(format!("综评组：{grade} {} 考场不足：需要 {required} 个考场，综评专用考试教室中当前可用 {} 个。请在考试教室中配置“综评x场”，或检查考场占用、调整每场人数。", subject_label(subject), chosen.len()));
             }
             AppError::new(format!(
                 "{}组：{error}",
@@ -1374,7 +1386,7 @@ fn build_session_draft(
     let mut capacities = Vec::new();
     let mut space_groups = Vec::new();
     let mut ordered = Vec::new();
-    // 普通组按教室顺序优先选用，综评组继续使用剩余教室及备用考场。
+    // 普通组按教室顺序优先选用，综评组仅使用“综评x场”专用考试教室。
     for group in [
         crate::exam_group::ExamGroup::Regular,
         crate::exam_group::ExamGroup::Comprehensive,
@@ -2370,32 +2382,19 @@ mod tests {
                 floor: "一楼".into(),
             });
         }
+        for i in [10, 1, 2] {
+            ctx.exam_rooms.push(ExamRoomResource {
+                room_name: format!("综评{i}场"),
+                building: "教学楼".into(),
+                floor: "一楼".into(),
+            });
+        }
         ctx
     }
 
     #[test]
-    fn test_comprehensive_continues_after_regular_rooms() {
-        let mut ctx = grouped_context();
-        ctx.exam_rooms.clear();
-        for i in 13..=18 {
-            let class = format!("高三{i}班");
-            ctx.teaching_classes.push(Classroom {
-                class_name: class.clone(),
-                building: "教学楼".into(),
-                floor: "一楼".into(),
-            });
-            ctx.class_subjects
-                .insert(class.clone(), HashSet::from([Subject::Math]));
-            ctx.class_groups
-                .insert(class, crate::exam_group::ExamGroup::Comprehensive);
-        }
-        for i in 19..=21 {
-            ctx.exam_rooms.push(ExamRoomResource {
-                room_name: format!("高三{i}场"),
-                building: "教学楼".into(),
-                floor: "一楼".into(),
-            });
-        }
+    fn test_comprehensive_uses_only_sorted_dedicated_exam_rooms() {
+        let ctx = grouped_context();
         let mut teaching = HashSet::new();
         let mut rooms = HashSet::new();
         let normal = select_group_exam_spaces(
@@ -2432,8 +2431,11 @@ mod tests {
                 .iter()
                 .map(|s| s.space_name.as_str())
                 .collect::<Vec<_>>(),
-            (14..=16).map(|i| format!("高三{i}场")).collect::<Vec<_>>()
+            ["综评1场", "综评2场", "综评10场"]
         );
+        assert!(comprehensive
+            .iter()
+            .all(|space| space.space_source == ExamPlanSpaceSource::ExamRoom));
     }
 
     #[test]
@@ -2459,7 +2461,7 @@ mod tests {
             "高三",
             Subject::Math,
             crate::exam_group::ExamGroup::Regular,
-            13,
+            16,
             &ctx,
             &HashSet::new(),
             &mut teaching,
@@ -2468,6 +2470,8 @@ mod tests {
         .unwrap();
         assert!(normal.iter().any(|s| s.space_name == "高三1场"));
         assert!(normal.iter().any(|s| s.space_name == "高三11场"));
+        assert!(normal.iter().any(|s| s.space_name == "高三16场"));
+        assert!(!normal.iter().any(|s| s.space_name.starts_with("综评")));
         let comprehensive = select_group_exam_spaces(
             "高三",
             Subject::Math,
@@ -2517,7 +2521,7 @@ mod tests {
                 .iter()
                 .map(|space| space.space_name.as_str())
                 .collect::<Vec<_>>(),
-            ["高三14场", "高三15场", "高三16场"]
+            ["综评1场", "综评2场", "综评10场"]
         );
         assert!(!rooms.contains("高三9场"));
     }
@@ -2526,7 +2530,7 @@ mod tests {
     fn test_comprehensive_does_not_use_other_rooms_when_reserved_room_is_busy() {
         let ctx = grouped_context();
         let mut teaching = HashSet::new();
-        let mut rooms = HashSet::from(["高三14场".to_string()]);
+        let mut rooms = HashSet::from(["综评1场".to_string()]);
         let error = select_group_exam_spaces(
             "高三",
             Subject::Math,
@@ -2539,8 +2543,25 @@ mod tests {
         )
         .unwrap_err()
         .to_string();
-        assert!(error.contains("高三14、15、16场中当前可用 2 个"));
+        assert!(error.contains("综评专用考试教室中当前可用 2 个"));
         assert!(!rooms.contains("高三13场"));
+        assert!(!rooms.contains("高三14场"));
+    }
+
+    #[test]
+    fn test_comprehensive_room_name_must_be_exact_and_positive() {
+        assert_eq!(comprehensive_room_number("综评12场"), Some(12));
+        for name in [
+            "综评场",
+            "综评0场",
+            "综评-1场",
+            "综评1.5场",
+            "综评一场",
+            "高三综评1场",
+            "综评1场（备用）",
+        ] {
+            assert_eq!(comprehensive_room_number(name), None, "{name}");
+        }
     }
 
     #[test]

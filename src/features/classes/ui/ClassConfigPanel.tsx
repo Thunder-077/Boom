@@ -62,7 +62,11 @@ export default function ClassConfigPanel() {
   const createButtonLabel = `新建${currentTypeLabel}`;
   const saveButtonLabel = state.mode === "new" ? "创建配置" : "保存修改";
   const nameLabel = state.filters.configType === "teaching_class" ? "班级名称" : "教室名称";
-  const namePlaceholder = state.filters.configType === "teaching_class" ? "请输入班级名称" : "请输入教室名称";
+  const namePlaceholder = state.filters.configType === "teaching_class"
+    ? "请输入班级名称"
+    : state.form.gradeName.trim() === "高三"
+      ? "综评专用教室请命名为：综评1场、综评2场……"
+      : "请输入教室名称";
   const editorDescription =
     state.mode === "new"
       ? `当前正在创建新的${currentTypeLabel}配置。`
@@ -144,9 +148,9 @@ export default function ClassConfigPanel() {
         await store.update();
       }
       await dialog.alert({
+        tone: "success",
         title: "保存成功",
-        summary: wasCreating ? "配置已创建。" : "配置已更新。",
-        details: [`名称：${state.form.className || `未命名${currentTypeLabel}`}`],
+        summary: `${state.form.className || `未命名${currentTypeLabel}`}的配置已${wasCreating ? "创建" : "更新"}。`,
       });
     } catch {
       // Store already exposes error state.

@@ -104,10 +104,11 @@ async fn setup() -> (DatabaseConnection, PathBuf, ExamPlanDraft) {
                 }
                 .into()),
                 grade_name: Set(grade.into()),
-                class_name: Set(format!(
-                    "{grade}{number}{}",
-                    if teaching { "班" } else { "场" }
-                )),
+                class_name: Set(if grade == "高三" && !teaching {
+                    format!("综评{}场", number - 12)
+                } else {
+                    format!("{grade}{number}{}", if teaching { "班" } else { "场" })
+                }),
                 building: Set("测试楼".into()),
                 floor: Set("一楼".into()),
                 created_at: Set("now".into()),
