@@ -144,7 +144,8 @@ function mapClassSortNumber(className: string) {
 }
 
 function compareTeachingClasses(a: SelfStudyClassRow, b: SelfStudyClassRow) {
-  const gradeDiff = (gradeRankMap[a.gradeName] ?? 99) - (gradeRankMap[b.gradeName] ?? 99);
+  const rank = (row: SelfStudyClassRow) => row.className.trim().startsWith("综评") ? 4 : (gradeRankMap[row.gradeName] ?? 99);
+  const gradeDiff = rank(a) - rank(b);
   if (gradeDiff !== 0) {
     return gradeDiff;
   }
@@ -390,7 +391,8 @@ export default function MonitorConfigPanel() {
     [state.teachers],
   );
   const filteredClasses = useMemo(
-    () => (gradeFilter === "all" ? selfStudyClasses : selfStudyClasses.filter((item) => item.gradeName === gradeFilter)),
+    () => gradeFilter === "all" ? selfStudyClasses : selfStudyClasses.filter((item) =>
+      gradeFilter === "comprehensive" ? item.className.trim().startsWith("综评") : item.gradeName === gradeFilter),
     [gradeFilter, selfStudyClasses],
   );
   const totalPages = useMemo(() => Math.max(1, Math.ceil(filteredClasses.length / pageSize)), [filteredClasses.length]);
@@ -1606,7 +1608,8 @@ export default function MonitorConfigPanel() {
                   <div className="toolbar-filter">
                     <FluentSelect
                       modelValue={gradeFilter}
-                      options={[{ label: "全部年级", value: "all" }, ...availableGrades.map((g) => ({ label: g, value: g }))]}
+                      options={[{ label: "全部年级", value: "all" }, ...availableGrades.map((g) => ({ label: g, value: g })),
+                        ...(selfStudyClasses.some((item) => item.className.trim().startsWith("综评")) ? [{ label: "综评班", value: "comprehensive" }] : [])]}
                       className="grade-filter-select"
                       onUpdateModelValue={(value) => setGradeFilter(String(value || "all"))}
                     />
