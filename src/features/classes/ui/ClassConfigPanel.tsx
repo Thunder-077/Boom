@@ -62,11 +62,7 @@ export default function ClassConfigPanel() {
   const createButtonLabel = `新建${currentTypeLabel}`;
   const saveButtonLabel = state.mode === "new" ? "创建配置" : "保存修改";
   const nameLabel = state.filters.configType === "teaching_class" ? "班级名称" : "教室名称";
-  const namePlaceholder = state.filters.configType === "teaching_class"
-    ? "请输入班级名称"
-    : state.form.gradeName.trim() === "高三"
-      ? "综评专用教室请命名为：综评1场、综评2场……"
-      : "请输入教室名称";
+  const namePlaceholder = state.filters.configType === "teaching_class" ? "请输入班级名称" : "请输入教室名称";
   const editorDescription =
     state.mode === "new"
       ? `当前正在创建新的${currentTypeLabel}配置。`
@@ -162,6 +158,7 @@ export default function ClassConfigPanel() {
       return;
     }
     const confirmed = await dialog.confirm({
+      tone: "danger",
       title: "确认删除",
       summary: "删除后当前配置无法恢复，请确认是否继续。",
       details: [`当前记录：${state.form.className || `未命名${currentTypeLabel}`}`],

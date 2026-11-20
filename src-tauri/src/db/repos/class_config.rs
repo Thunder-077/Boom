@@ -488,8 +488,15 @@ fn class_name_number(class_name: &str) -> i32 {
 }
 
 fn compare_class_config_rows(a: &ClassConfigRow, b: &ClassConfigRow) -> Ordering {
-    grade_sort_rank(&a.grade_name)
-        .cmp(&grade_sort_rank(&b.grade_name))
+    let sort_rank = |row: &ClassConfigRow| {
+        if row.class_name.trim().starts_with("综评") {
+            4
+        } else {
+            grade_sort_rank(&row.grade_name)
+        }
+    };
+    sort_rank(a)
+        .cmp(&sort_rank(b))
         .then_with(|| class_name_number(&a.class_name).cmp(&class_name_number(&b.class_name)))
         .then_with(|| a.class_name.cmp(&b.class_name))
         .then_with(|| a.id.cmp(&b.id))
@@ -546,6 +553,24 @@ mod tests {
             names,
             vec!["高一1班", "高一2班", "高二1班", "高二2班", "高二10班", "高二11班"]
         );
+    }
+
+    #[test]
+    fn sort_places_comprehensive_rooms_after_all_high_school_grades() {
+        for suffix in ["班", "场"] {
+            let mut items = vec![
+                row("高三", &format!("综评10{suffix}"), 1),
+                row("高三", &format!("高三12{suffix}"), 2),
+                row("高三", &format!("综评2{suffix}"), 3),
+                row("高二", &format!("高二10{suffix}"), 4),
+                row("高一", &format!("高一1{suffix}"), 5),
+                row("高二", &format!("高二2{suffix}"), 6),
+                row("高三", &format!("综评1{suffix}"), 7),
+            ];
+            items.sort_by(compare_class_config_rows);
+            let names = items.iter().map(|item| item.class_name.as_str()).collect::<Vec<_>>();
+            assert_eq!(names, vec![format!("高一1{suffix}"), format!("高二2{suffix}"), format!("高二10{suffix}"), format!("高三12{suffix}"), format!("综评1{suffix}"), format!("综评2{suffix}"), format!("综评10{suffix}")]);
+        }
     }
 
     #[test]

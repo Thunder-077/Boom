@@ -384,11 +384,19 @@ struct ParsedSubjectScoreState {
 }
 
 fn extract_grade_name(class_name: &str) -> String {
+    if comprehensive_class_name(class_name) {
+        return "高三".to_string();
+    }
     let matcher = Regex::new(r"高[一二三]").expect("regex for grade should be valid");
     if let Some(m) = matcher.find(class_name) {
         return m.as_str().to_string();
     }
     "未知年级".to_string()
+}
+
+fn comprehensive_class_name(class_name: &str) -> bool {
+    class_name.strip_prefix("综评").and_then(|name| name.strip_suffix('班'))
+        .is_some_and(|number| !number.is_empty() && number.bytes().all(|byte| byte.is_ascii_digit()) && number.parse::<u64>().is_ok_and(|value| value > 0))
 }
 
 fn validate_header(header_row: &[Data]) -> Result<(), AppError> {
@@ -529,7 +537,7 @@ fn parse_score_sheet(
         let remark = remark_column
             .map(|column| cell_to_trimmed_string(row.get(column)))
             .filter(|text| !text.is_empty());
-        let exam_group = if grade == "高三" && remark.as_deref() == Some("综评班") {
+        let exam_group = if grade == "高三" && (comprehensive_class_name(&class_name) || remark.as_deref() == Some("综评班")) {
             crate::exam_group::ExamGroup::Comprehensive
         } else {
             crate::exam_group::ExamGroup::Regular
@@ -609,6 +617,10 @@ pub(crate) mod multi_sheet_tests {
                     values[7] = String::new();
                     values[14] = "10".into();
                 }
+                if kind == "named_comprehensive" && g == 3 && i > 1 {
+                    values[1] = format!("综评{}班", i - 1);
+                    values[16] = String::new();
+                }
                 if kind == "duplicate" && g == 3 && i == 0 {
                     values[0] = "g1-0".into();
                 }
@@ -634,6 +646,18 @@ pub(crate) mod multi_sheet_tests {
         book.add_worksheet().set_name("空白").unwrap();
         book.save(&path).unwrap();
         path
+    }
+
+    #[test]
+    fn test_import_named_comprehensive_classes_without_remarks() {
+        let path = fixture("named_comprehensive");
+        let students = parse_excel_rows(path.to_str().unwrap()).unwrap();
+        std::fs::remove_file(path).unwrap();
+        for name in ["综评1班", "综评2班"] {
+            let student = students.iter().find(|student| student.class_name == name).unwrap();
+            assert_eq!(student.grade_name, "高三");
+            assert_eq!(student.exam_group, crate::exam_group::ExamGroup::Comprehensive);
+        }
     }
 
     #[test]

@@ -1233,7 +1233,7 @@ fn select_group_exam_spaces(
         return Ok(chosen);
     }
     let restricted = grade == "高三" && group == crate::exam_group::ExamGroup::Comprehensive;
-    // 综评只使用显式配置的专用考试教室，普通组也不能提前占用这些资源。
+    // 综评组仅使用综评编号的教学班或考试教室，普通组不能占用。
     let permitted = |name: &str| {
         comprehensive_room_number(name).is_some()
             == (grade == "高三" && group == crate::exam_group::ExamGroup::Comprehensive)
@@ -1245,23 +1245,10 @@ fn select_group_exam_spaces(
             break;
         }
         let name = class_to_exam_room_name(&class.class_name);
-        let subjects_match = ctx
-            .class_subjects
-            .get(&class.class_name)
-            .is_some_and(|subjects| {
-                if is_foreign_subject(subject) {
-                    subjects.iter().any(|s| is_foreign_subject(*s))
-                } else {
-                    subjects.contains(&subject)
-                }
-            });
         let class_group = ctx.class_groups.get(&class.class_name);
         if !permitted(&name)
             || (group == crate::exam_group::ExamGroup::Comprehensive
                 && class_group.is_some_and(|value| *value != group))
-            || (group == crate::exam_group::ExamGroup::Comprehensive
-                && class_group.is_some()
-                && !subjects_match)
             || blocked.contains(&class.class_name)
             || teaching.contains(&class.class_name)
             || rooms.contains(&name)
@@ -1313,7 +1300,7 @@ fn select_group_exam_spaces(
     fill_with_configured_exam_rooms(grade, subject, &mut chosen, required, &reserves, rooms)
         .map_err(|error| {
             if restricted {
-                return AppError::new(format!("综评组：{grade} {} 考场不足：需要 {required} 个考场，综评专用考试教室中当前可用 {} 个。请在考试教室中配置“综评x场”，或检查考场占用、调整每场人数。", subject_label(subject), chosen.len()));
+                return AppError::new(format!("综评组：{grade} {} 考场不足：需要 {required} 个考场，综评教学班和考试教室中当前可用 {} 个。请补充“综评x班”或“综评x场”配置，或检查考场占用、调整每场人数。", subject_label(subject), chosen.len()));
             }
             AppError::new(format!(
                 "{}组：{error}",
@@ -1386,7 +1373,7 @@ fn build_session_draft(
     let mut capacities = Vec::new();
     let mut space_groups = Vec::new();
     let mut ordered = Vec::new();
-    // 普通组按教室顺序优先选用，综评组仅使用“综评x场”专用考试教室。
+    // 两组优先使用可用教学班教室，再用对应考试教室补足。
     for group in [
         crate::exam_group::ExamGroup::Regular,
         crate::exam_group::ExamGroup::Comprehensive,
@@ -2543,7 +2530,7 @@ mod tests {
         )
         .unwrap_err()
         .to_string();
-        assert!(error.contains("综评专用考试教室中当前可用 2 个"));
+        assert!(error.contains("综评教学班和考试教室中当前可用 2 个"));
         assert!(!rooms.contains("高三13场"));
         assert!(!rooms.contains("高三14场"));
     }
@@ -2562,6 +2549,27 @@ mod tests {
         ] {
             assert_eq!(comprehensive_room_number(name), None, "{name}");
         }
+    }
+
+    #[test]
+    fn test_comprehensive_classroom_alias_respects_self_study_occupancy() {
+        use crate::exam_group::ExamGroup::Comprehensive;
+        let mut ctx = grouped_context();
+        ctx.teaching_classes.push(Classroom { class_name: "综评1班".into(), building: "教学楼".into(), floor: "一楼".into() });
+        let mut teaching = HashSet::new();
+        let mut rooms = HashSet::new();
+        let selected = select_group_exam_spaces("高三", Subject::Math, Comprehensive, 1, &ctx, &HashSet::from(["综评1班".into()]), &mut teaching, &mut rooms).unwrap();
+        assert_eq!(selected[0].space_name, "综评2场");
+        assert_eq!(selected[0].space_source, ExamPlanSpaceSource::ExamRoom);
+        let mut teaching = HashSet::new();
+        let mut rooms = HashSet::new();
+        let selected = select_group_exam_spaces("高三", Subject::Math, Comprehensive, 1, &ctx, &HashSet::new(), &mut teaching, &mut rooms).unwrap();
+        assert_eq!(selected[0].space_name, "综评1场");
+        assert_eq!(selected[0].space_source, ExamPlanSpaceSource::TeachingClass);
+        ctx.exam_rooms.retain(|room| room.room_name != "综评1场");
+        let selected = select_group_exam_spaces("高三", Subject::Math, Comprehensive, 1, &ctx, &HashSet::new(), &mut HashSet::new(), &mut HashSet::new()).unwrap();
+        assert_eq!(selected[0].space_name, "综评1场");
+        assert_eq!(selected[0].space_source, ExamPlanSpaceSource::TeachingClass);
     }
 
     #[test]

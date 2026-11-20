@@ -2883,7 +2883,9 @@
   background: rgba(155, 89, 182, 0.08);
 }
 
-.tone-default {
+.section-cell.tone-default,
+.period-cell.tone-default,
+.lesson.tone-default {
   background: rgba(148, 163, 184, 0.08);
 }
 
